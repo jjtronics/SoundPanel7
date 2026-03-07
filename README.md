@@ -371,5 +371,5 @@ Si le projet vous est utile :
 
 # 📬 Contact
 
-Créé par **Jean‑Jacques Castellotti**
+Créé par **JJC**
 =======
