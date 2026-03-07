@@ -1,0 +1,34 @@
+.pio/build/soundpanel7_ota/libadd/lvgl/draw/lv_img_buf.c.o: \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/lv_img_buf.c \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/lv_img_buf.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_color.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/../lv_conf_internal.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/../lv_conf_kconfig.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_common/include/esp_attr.h \
+ src/lv_conf.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_assert.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_log.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_types.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_mem.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_math.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_area.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/lv_draw_img.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/lv_img_decoder.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../lv_conf_internal.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_fs.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_types.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_style.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/../font/lv_font.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/../font/../lv_conf_internal.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/../font/lv_symbol_def.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/../font/../misc/lv_area.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_color.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_area.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_anim.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_txt.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_printf.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_bidi.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_style_gen.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_math.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_log.h \
+ .pio/libdeps/soundpanel7_ota/lvgl/src/draw/../misc/lv_mem.h

@@ -1,0 +1,8 @@
+https://github.com/lvgl/lvgl.git#v8.4.0
+esp32async/AsyncTCP@^3.3.8
+https://github.com/esp-arduino-libs/ESP32_Display_Panel.git
+esp32async/ESPAsyncWebServer@^3.0.0
+https://github.com/esp-arduino-libs/esp-lib-utils.git#v0.2.0
+tzapu/WiFiManager@^2.0.17
+knolleary/PubSubClient@^2.8
+https://github.com/esp-arduino-libs/ESP32_IO_Expander.git#v1.1.0
