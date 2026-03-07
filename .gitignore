@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# build
+build/
+*.o
+*.elf
+*.bin
+
+# logs
+*.log
+
+# temporary files
+*.tmp
+*.swp
