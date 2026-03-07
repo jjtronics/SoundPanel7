@@ -373,5 +373,3 @@ Si le projet vous est utile :
 
 Créé par **Jean‑Jacques Castellotti**
 =======
-# SoundPanel7
-Sonomètre connecté avec écran tactile 7", historique temps réel, MQTT, OTA et interface Web.
