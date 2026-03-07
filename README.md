@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 # 🎚️ SoundPanel 7
 
@@ -373,3 +374,7 @@ Si le projet vous est utile :
 # 📬 Contact
 
 Créé par **Jean‑Jacques Castellotti**
+=======
+# SoundPanel7
+Sonomètre connecté avec écran tactile 7", historique temps réel, MQTT, OTA et interface Web.
+>>>>>>> f24babc8bc0e1ea5a294e44ea7f61aca9f9583ac
