@@ -2,7 +2,8 @@
 .DS_Store
 
 # VSCode
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 
 # PlatformIO
 .pio/
@@ -11,7 +12,6 @@
 
 # build
 build/
-*.o
 *.elf
 *.bin
 
