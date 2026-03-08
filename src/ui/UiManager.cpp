@@ -9,6 +9,7 @@
 using namespace esp_panel::board;
 
 LV_FONT_DECLARE(sp7_font_clock_170);
+LV_FONT_DECLARE(sp7_font_gauge_56);
 
 extern AudioEngine g_audio;
 
@@ -44,7 +45,7 @@ static bool isRedZone(const SettingsV1* s, float db) {
 
 static lv_obj_t* mgmtCard(lv_obj_t* parent, const char* title) {
   lv_obj_t* c = lv_obj_create(parent);
-  lv_obj_set_width(c, lv_pct(94));
+  lv_obj_set_width(c, lv_pct(100));
   lv_obj_set_height(c, LV_SIZE_CONTENT);
 
   lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
@@ -64,6 +65,30 @@ static lv_obj_t* mgmtCard(lv_obj_t* parent, const char* title) {
   lv_obj_set_style_text_color(t, lv_color_hex(0xDFE7EF), 0);
 
   return c;
+}
+
+static lv_obj_t* createSettingHeader(lv_obj_t* parent, const char* title, lv_obj_t** valueOut) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_set_width(row, lv_pct(100));
+  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* lbl = lv_label_create(row);
+  lv_label_set_text(lbl, title);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(0xB9C7D6), 0);
+  lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+  lv_obj_t* value = lv_label_create(row);
+  lv_label_set_text(value, "--");
+  lv_obj_set_style_text_color(value, lv_color_hex(0xDFE7EF), 0);
+  lv_obj_align(value, LV_ALIGN_RIGHT_MID, 0, 0);
+
+  if (valueOut) *valueOut = value;
+  return row;
 }
 
 static lv_obj_t* makeDashboardPage(lv_obj_t* parent) {
@@ -86,7 +111,6 @@ void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, 
   _history = history;
 
   buildDashboard();
-  buildManagement();
 
   if (_s) applyBacklight(_s->backlight);
   showDashboard();
@@ -198,22 +222,14 @@ void UiManager::buildDashboard() {
   lv_obj_set_style_pad_all(topRow, 0, 0);
   lv_obj_clear_flag(topRow, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(topRow, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_style_bg_opa(topRow, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(topRow, 0, 0);
 
   lv_obj_t* title = lv_label_create(topRow);
   lv_label_set_text(title, "SoundPanel 7");
   lv_obj_set_style_text_color(title, lv_color_hex(0xDFE7EF), 0);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
-  lv_obj_align(title, LV_ALIGN_LEFT_MID, 0, 0);
-
-  lv_obj_t* gear = lv_btn_create(topRow);
-  lv_obj_set_size(gear, 52, 40);
-  lv_obj_align(gear, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_set_style_radius(gear, 14, 0);
-  lv_obj_add_event_cb(gear, UiManager::onGear, LV_EVENT_CLICKED, this);
-
-  lv_obj_t* gearLbl = lv_label_create(gear);
-  lv_label_set_text(gearLbl, LV_SYMBOL_SETTINGS);
-  lv_obj_center(gearLbl);
+  lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
   lv_obj_t* tabs = lv_obj_create(top);
   lv_obj_set_size(tabs, lv_pct(100), 28);
@@ -227,10 +243,12 @@ void UiManager::buildDashboard() {
   lv_obj_clear_flag(tabs, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(tabs, LV_SCROLLBAR_MODE_OFF);
 
-  static const char* kTabTitles[DASH_PAGE_COUNT] = {"Principal", "Horloge", "Sonometre", "Calibration"};
+  static const char* kTabTitles[DASH_PAGE_COUNT] = {
+    "Principal", "Horloge", "Sonometre", "Calibration", "Parametres"
+  };
   for (uint8_t i = 0; i < DASH_PAGE_COUNT; i++) {
     _dashTabs[i] = lv_btn_create(tabs);
-    lv_obj_set_size(_dashTabs[i], 118, 30);
+    lv_obj_set_size(_dashTabs[i], 94, 30);
     lv_obj_set_style_radius(_dashTabs[i], 12, 0);
     lv_obj_set_style_bg_color(_dashTabs[i], lv_color_hex(0x0E141C), 0);
     lv_obj_set_style_bg_opa(_dashTabs[i], LV_OPA_COVER, 0);
@@ -245,7 +263,7 @@ void UiManager::buildDashboard() {
   }
 
   _dashContent = lv_obj_create(_scrDash);
-  lv_obj_set_size(_dashContent, lv_pct(100), 340);
+  lv_obj_set_size(_dashContent, lv_pct(100), 382);
   lv_obj_align(_dashContent, LV_ALIGN_TOP_MID, 0, 98);
   lv_obj_set_style_bg_opa(_dashContent, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(_dashContent, 0, 0);
@@ -262,29 +280,7 @@ void UiManager::buildDashboard() {
   buildDashboardClockPage(_dashPages[DASH_PAGE_CLOCK]);
   buildDashboardSoundPage(_dashPages[DASH_PAGE_SOUND]);
   buildDashboardCalibrationPage(_dashPages[DASH_PAGE_CALIBRATION]);
-
-  // ===== Footer =====
-  lv_obj_t* bottom = lv_obj_create(_scrDash);
-  lv_obj_set_size(bottom, lv_pct(100), 40);
-  lv_obj_align(bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_bg_color(bottom, lv_color_hex(0x0B0F14), 0);
-  lv_obj_set_style_border_width(bottom, 0, 0);
-  lv_obj_set_style_radius(bottom, 0, 0);
-  lv_obj_set_style_pad_all(bottom, 10, 0);
-  lv_obj_set_flex_flow(bottom, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(bottom, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(bottom, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_scrollbar_mode(bottom, LV_SCROLLBAR_MODE_OFF);
-
-  _lblWifi = lv_label_create(bottom);
-  lv_label_set_text(_lblWifi, "WiFi: --");
-  lv_obj_set_style_text_font(_lblWifi, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(_lblWifi, lv_color_hex(0x6F8192), 0);
-
-  _lblNtp = lv_label_create(bottom);
-  lv_label_set_text(_lblNtp, "NTP: --");
-  lv_obj_set_style_text_font(_lblNtp, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(_lblNtp, lv_color_hex(0x6F8192), 0);
+  buildDashboardSettingsPage(_dashPages[DASH_PAGE_SETTINGS]);
 
   _lblTime = nullptr;
 
@@ -293,21 +289,164 @@ void UiManager::buildDashboard() {
   redrawHistoryBars();
 }
 
+void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
+  lv_obj_t* scroll = lv_obj_create(parent);
+  lv_obj_set_size(scroll, lv_pct(100), lv_pct(100));
+  lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(scroll, 0, 0);
+  lv_obj_set_style_pad_all(scroll, 10, 0);
+  lv_obj_set_style_pad_row(scroll, 12, 0);
+  lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
+  lv_obj_set_flex_flow(scroll, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(scroll, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+  lv_obj_t* cNet = mgmtCard(scroll, "Reseau & Heure");
+
+  _lblWifiStatus = lv_label_create(cNet);
+  lv_label_set_text(_lblWifiStatus, "WiFi: --");
+  lv_obj_set_style_text_font(_lblWifiStatus, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblWifiStatus, lv_color_hex(0xDFE7EF), 0);
+
+  _lblNtpStatus = lv_label_create(cNet);
+  lv_label_set_text(_lblNtpStatus, "NTP: --");
+  lv_obj_set_style_text_font(_lblNtpStatus, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblNtpStatus, lv_color_hex(0xDFE7EF), 0);
+
+  _lblNetInfo = lv_label_create(cNet);
+  lv_label_set_text(_lblNetInfo, "-");
+  lv_obj_set_style_text_font(_lblNetInfo, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblNetInfo, lv_color_hex(0xB9C7D6), 0);
+
+  lv_obj_t* cUi = mgmtCard(scroll, "UI");
+  createSettingHeader(cUi, "Backlight", &_lblBacklightValue);
+
+  _slBacklight = lv_slider_create(cUi);
+  lv_obj_set_width(_slBacklight, lv_pct(100));
+  lv_slider_set_range(_slBacklight, 0, 100);
+  lv_slider_set_value(_slBacklight, _s ? _s->backlight : 80, LV_ANIM_OFF);
+  lv_obj_add_event_cb(_slBacklight, UiManager::onSliderBacklight, LV_EVENT_VALUE_CHANGED, this);
+
+  lv_obj_t* cTh = mgmtCard(scroll, "Seuils dB");
+  createSettingHeader(cTh, "Vert <=", &_lblGreenValue);
+
+  _slGreen = lv_slider_create(cTh);
+  lv_obj_set_width(_slGreen, lv_pct(100));
+  lv_slider_set_range(_slGreen, 0, 100);
+  lv_slider_set_value(_slGreen, _s ? _s->th.greenMax : 55, LV_ANIM_OFF);
+  lv_obj_add_event_cb(_slGreen, UiManager::onSliderThresholds, LV_EVENT_VALUE_CHANGED, this);
+  createSettingHeader(cTh, "Orange <=", &_lblOrangeValue);
+
+  _slOrange = lv_slider_create(cTh);
+  lv_obj_set_width(_slOrange, lv_pct(100));
+  lv_slider_set_range(_slOrange, 0, 100);
+  lv_slider_set_value(_slOrange, _s ? _s->th.orangeMax : 70, LV_ANIM_OFF);
+  lv_obj_add_event_cb(_slOrange, UiManager::onSliderThresholds, LV_EVENT_VALUE_CHANGED, this);
+
+  createSettingHeader(cTh, "Reponse", &_lblResponseValue);
+
+  lv_obj_t* responseRow = lv_obj_create(cTh);
+  lv_obj_set_width(responseRow, lv_pct(100));
+  lv_obj_set_height(responseRow, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(responseRow, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(responseRow, 0, 0);
+  lv_obj_set_style_pad_all(responseRow, 0, 0);
+  lv_obj_set_style_pad_column(responseRow, 10, 0);
+  lv_obj_set_layout(responseRow, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(responseRow, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(responseRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_clear_flag(responseRow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(responseRow, LV_SCROLLBAR_MODE_OFF);
+
+  _btnResponseFast = lv_btn_create(responseRow);
+  lv_obj_set_size(_btnResponseFast, 96, 40);
+  lv_obj_set_style_radius(_btnResponseFast, 14, 0);
+  lv_obj_set_user_data(_btnResponseFast, (void*)(uintptr_t)0);
+  lv_obj_add_event_cb(_btnResponseFast, UiManager::onResponseMode, LV_EVENT_CLICKED, this);
+  lv_obj_t* fastLbl = lv_label_create(_btnResponseFast);
+  lv_label_set_text(fastLbl, "Fast");
+  lv_obj_center(fastLbl);
+
+  _btnResponseSlow = lv_btn_create(responseRow);
+  lv_obj_set_size(_btnResponseSlow, 96, 40);
+  lv_obj_set_style_radius(_btnResponseSlow, 14, 0);
+  lv_obj_set_user_data(_btnResponseSlow, (void*)(uintptr_t)1);
+  lv_obj_add_event_cb(_btnResponseSlow, UiManager::onResponseMode, LV_EVENT_CLICKED, this);
+  lv_obj_t* slowLbl = lv_label_create(_btnResponseSlow);
+  lv_label_set_text(slowLbl, "Slow");
+  lv_obj_center(slowLbl);
+
+  lv_obj_t* cHist = mgmtCard(scroll, "Historique");
+  createSettingHeader(cHist, "Minutes", &_lblHistoryValue);
+
+  _slHistory = lv_slider_create(cHist);
+  lv_obj_set_width(_slHistory, lv_pct(100));
+  lv_slider_set_range(_slHistory, 1, 60);
+  lv_slider_set_value(_slHistory, _s ? _s->historyMinutes : 5, LV_ANIM_OFF);
+  lv_obj_add_event_cb(_slHistory, UiManager::onSliderHistory, LV_EVENT_VALUE_CHANGED, this);
+
+  lv_obj_t* cMaint = mgmtCard(scroll, "Maintenance");
+  lv_obj_t* actions = lv_obj_create(cMaint);
+  lv_obj_set_width(actions, lv_pct(100));
+  lv_obj_set_height(actions, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(actions, 0, 0);
+  lv_obj_set_style_pad_all(actions, 0, 0);
+  lv_obj_set_style_pad_column(actions, 10, 0);
+  lv_obj_set_style_pad_row(actions, 10, 0);
+  lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
+  lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(actions, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* reboot = lv_btn_create(actions);
+  lv_obj_set_height(reboot, 42);
+  lv_obj_add_event_cb(reboot, UiManager::onReboot, LV_EVENT_CLICKED, this);
+  lv_obj_t* rebootLbl = lv_label_create(reboot);
+  lv_label_set_text(rebootLbl, "Reboot");
+  lv_obj_center(rebootLbl);
+  lv_obj_update_layout(reboot);
+  lv_obj_set_width(reboot, lv_obj_get_width(reboot) + 28);
+
+  lv_obj_t* poweroff = lv_btn_create(actions);
+  lv_obj_set_height(poweroff, 42);
+  lv_obj_add_event_cb(poweroff, UiManager::onPowerOff, LV_EVENT_CLICKED, this);
+  lv_obj_t* poweroffLbl = lv_label_create(poweroff);
+  lv_label_set_text(poweroffLbl, "Eteindre");
+  lv_obj_center(poweroffLbl);
+  lv_obj_update_layout(poweroff);
+  lv_obj_set_width(poweroff, lv_obj_get_width(poweroff) + 28);
+
+  lv_obj_t* reset = lv_btn_create(actions);
+  lv_obj_set_height(reset, 42);
+  lv_obj_add_event_cb(reset, UiManager::onFactoryReset, LV_EVENT_CLICKED, this);
+  lv_obj_t* resetLbl = lv_label_create(reset);
+  lv_label_set_text(resetLbl, "Factory reset");
+  lv_obj_center(resetLbl);
+  lv_obj_update_layout(reset);
+  lv_obj_set_width(reset, lv_obj_get_width(reset) + 28);
+
+  refreshSettingsControls();
+}
+
 void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_t* upper = lv_obj_create(parent);
-  lv_obj_set_size(upper, lv_pct(100), 224);
-  lv_obj_align(upper, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_size(upper, 780, 244);
+  lv_obj_align(upper, LV_ALIGN_TOP_MID, 0, 10);
   lv_obj_set_style_bg_opa(upper, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(upper, 0, 0);
   lv_obj_set_style_pad_all(upper, 0, 0);
   lv_obj_clear_flag(upper, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(upper, LV_SCROLLBAR_MODE_OFF);
 
-  lv_obj_t* clockCard = makeCard(upper, 170, 204);
-  lv_obj_align(clockCard, LV_ALIGN_LEFT_MID, 24, 0);
+  lv_obj_t* clockCard = makeCard(upper, 245, 244);
+  lv_obj_align(clockCard, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_set_style_bg_color(clockCard, lv_color_hex(0x101A28), 0);
   lv_obj_set_style_radius(clockCard, 22, 0);
   lv_obj_set_style_pad_all(clockCard, 16, 0);
+  lv_obj_add_flag(clockCard, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_user_data(clockCard, (void*)(uintptr_t)DASH_PAGE_CLOCK);
+  lv_obj_add_event_cb(clockCard, UiManager::onOverviewCard, LV_EVENT_CLICKED, this);
 
   _lblClockDate = lv_label_create(clockCard);
   lv_label_set_text(_lblClockDate, "--/--/----");
@@ -323,7 +462,7 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
 
   lv_obj_t* secBadge = lv_obj_create(clockCard);
   lv_obj_set_size(secBadge, 78, 34);
-  lv_obj_align(secBadge, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_align(secBadge, LV_ALIGN_BOTTOM_RIGHT, 0, -50);
   lv_obj_set_style_bg_color(secBadge, lv_color_hex(0x7A1E2C), 0);
   lv_obj_set_style_border_width(secBadge, 0, 0);
   lv_obj_set_style_radius(secBadge, 12, 0);
@@ -337,37 +476,40 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblClockSec, lv_color_hex(0xDFE7EF), 0);
   lv_obj_center(_lblClockSec);
 
-  _dbCard = makeCard(upper, 250, 204);
+  _dbCard = makeCard(upper, 270, 244);
   lv_obj_align(_dbCard, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(_dbCard, lv_color_hex(0x111824), 0);
   lv_obj_set_style_radius(_dbCard, 24, 0);
   lv_obj_set_style_pad_all(_dbCard, 0, 0);
+  lv_obj_add_flag(_dbCard, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_user_data(_dbCard, (void*)(uintptr_t)DASH_PAGE_SOUND);
+  lv_obj_add_event_cb(_dbCard, UiManager::onOverviewCard, LV_EVENT_CLICKED, this);
 
   _arc = lv_arc_create(_dbCard);
-  lv_obj_set_size(_arc, 188, 188);
-  lv_obj_align(_arc, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_size(_arc, 240, 240);
+  lv_obj_align(_arc, LV_ALIGN_CENTER, 0, 15);
   lv_arc_set_range(_arc, 0, 100);
   lv_arc_set_value(_arc, 0);
   lv_arc_set_rotation(_arc, 135);
   lv_arc_set_bg_angles(_arc, 0, 270);
   lv_obj_remove_style(_arc, nullptr, LV_PART_KNOB);
   lv_obj_clear_flag(_arc, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(_arc, 20, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(_arc, 20, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(_arc, 24, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(_arc, 24, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(_arc, lv_color_hex(0x1A2332), LV_PART_MAIN);
   lv_obj_set_style_arc_color(_arc, lv_color_hex(0x23C552), LV_PART_INDICATOR);
 
   _lblDb = lv_label_create(_dbCard);
   lv_label_set_text(_lblDb, "--.-");
-  lv_obj_set_style_text_font(_lblDb, &lv_font_montserrat_48, 0);
+  lv_obj_set_style_text_font(_lblDb, &sp7_font_gauge_56, 0);
   lv_obj_set_style_text_color(_lblDb, lv_color_hex(0xDFE7EF), 0);
-  lv_obj_align_to(_lblDb, _arc, LV_ALIGN_CENTER, 0, -10);
+  lv_obj_align_to(_lblDb, _arc, LV_ALIGN_CENTER, -20, -10);
 
   lv_obj_t* unit = lv_label_create(_dbCard);
   lv_label_set_text(unit, "dB");
   lv_obj_set_style_text_font(unit, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(unit, lv_color_hex(0x8EA1B3), 0);
-  lv_obj_align_to(unit, _lblDb, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
+  lv_obj_align_to(unit, _arc, LV_ALIGN_CENTER, 0, 54);
 
   _dot = lv_obj_create(_dbCard);
   lv_obj_set_size(_dot, 14, 14);
@@ -379,19 +521,19 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_set_scrollbar_mode(_dot, LV_SCROLLBAR_MODE_OFF);
 
   lv_obj_t* rightCol = lv_obj_create(upper);
-  lv_obj_set_size(rightCol, 170, 204);
-  lv_obj_align(rightCol, LV_ALIGN_RIGHT_MID, -24, 0);
+  lv_obj_set_size(rightCol, 245, 244);
+  lv_obj_align(rightCol, LV_ALIGN_RIGHT_MID, 0, 0);
   lv_obj_set_style_bg_opa(rightCol, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(rightCol, 0, 0);
   lv_obj_set_style_pad_all(rightCol, 0, 0);
-  lv_obj_set_style_pad_row(rightCol, 14, 0);
+  lv_obj_set_style_pad_row(rightCol, 10, 0);
   lv_obj_set_flex_flow(rightCol, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(rightCol, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_clear_flag(rightCol, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(rightCol, LV_SCROLLBAR_MODE_OFF);
 
-  lv_obj_t* c1 = makeCard(rightCol, 170, 95);
-  lv_obj_t* c2 = makeCard(rightCol, 170, 95);
+  lv_obj_t* c1 = makeCard(rightCol, 245, 117);
+  lv_obj_t* c2 = makeCard(rightCol, 245, 117);
 
   lv_obj_t* t1 = lv_label_create(c1);
   lv_label_set_text(t1, "Leq");
@@ -403,7 +545,7 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_label_set_text(_lblLeq, "--.-");
   lv_obj_set_style_text_font(_lblLeq, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(_lblLeq, lv_color_hex(0xDFE7EF), 0);
-  lv_obj_align(_lblLeq, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_align(_lblLeq, LV_ALIGN_CENTER, 0, 16);
 
   lv_obj_t* t2 = lv_label_create(c2);
   lv_label_set_text(t2, "Peak");
@@ -415,15 +557,15 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_label_set_text(_lblPeak, "--.-");
   lv_obj_set_style_text_font(_lblPeak, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(_lblPeak, lv_color_hex(0xDFE7EF), 0);
-  lv_obj_align(_lblPeak, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+  lv_obj_align(_lblPeak, LV_ALIGN_CENTER, 0, 16);
 
   buildHistoryCard(parent, 0, 108, &_histWrap, &_lblHist, &_lblHistTLeft, &_lblHistTMid, &_lblHistTRight, _histBars);
-  lv_obj_set_width(_histWrap, lv_pct(92));
-  lv_obj_align(_histWrap, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_width(_histWrap, 780);
+  lv_obj_align(_histWrap, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
 void UiManager::buildDashboardClockPage(lv_obj_t* parent) {
-  lv_obj_t* card = makeCard(parent, 752, 330);
+  lv_obj_t* card = makeCard(parent, 780, 362);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 10);
   lv_obj_set_style_bg_color(card, lv_color_hex(0x101A28), 0);
   lv_obj_set_style_radius(card, 26, 0);
@@ -442,8 +584,8 @@ void UiManager::buildDashboardClockPage(lv_obj_t* parent) {
   lv_obj_set_scrollbar_mode(topRule, LV_SCROLLBAR_MODE_OFF);
 
   lv_obj_t* clockWrap = lv_obj_create(card);
-  lv_obj_set_size(clockWrap, 720, 224);
-  lv_obj_align(clockWrap, LV_ALIGN_CENTER, 0, 18);
+  lv_obj_set_size(clockWrap, 720, 266);
+  lv_obj_align(clockWrap, LV_ALIGN_CENTER, 0, 30);
   lv_obj_set_style_bg_opa(clockWrap, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(clockWrap, 0, 0);
   lv_obj_set_style_pad_all(clockWrap, 0, 0);
@@ -483,9 +625,7 @@ void UiManager::buildDashboardClockPage(lv_obj_t* parent) {
 }
 
 void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
-  const lv_coord_t cardGap = 12;
-
-  lv_obj_t* mainCard = makeCard(parent, 752, 212);
+  lv_obj_t* mainCard = makeCard(parent, 780, 240);
   _dbCardFocus = mainCard;
   lv_obj_align(mainCard, LV_ALIGN_TOP_MID, 0, 10);
   lv_obj_set_style_bg_color(mainCard, lv_color_hex(0x111824), 0);
@@ -510,32 +650,32 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_center(_lblAlertBadgeFocus);
 
   _arcFocus = lv_arc_create(mainCard);
-  lv_obj_set_size(_arcFocus, 196, 196);
-  lv_obj_align(_arcFocus, LV_ALIGN_LEFT_MID, 14, 8);
+  lv_obj_set_size(_arcFocus, 240, 240);
+  lv_obj_align(_arcFocus, LV_ALIGN_LEFT_MID, 12, 15);
   lv_arc_set_range(_arcFocus, 0, 100);
   lv_arc_set_value(_arcFocus, 0);
   lv_arc_set_rotation(_arcFocus, 135);
   lv_arc_set_bg_angles(_arcFocus, 0, 270);
   lv_obj_remove_style(_arcFocus, nullptr, LV_PART_KNOB);
   lv_obj_clear_flag(_arcFocus, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(_arcFocus, 22, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(_arcFocus, 22, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(_arcFocus, 24, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(_arcFocus, 24, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(_arcFocus, lv_color_hex(0x1A2332), LV_PART_MAIN);
   lv_obj_set_style_arc_color(_arcFocus, lv_color_hex(0x23C552), LV_PART_INDICATOR);
-  lv_obj_align_to(_alertBadgeFocus, _arcFocus, LV_ALIGN_OUT_RIGHT_MID, 20, -44);
+  lv_obj_align_to(_alertBadgeFocus, _arcFocus, LV_ALIGN_OUT_RIGHT_MID, 18, -46);
   lv_obj_move_foreground(_alertBadgeFocus);
 
   _lblDbFocus = lv_label_create(mainCard);
   lv_label_set_text(_lblDbFocus, "--.-");
-  lv_obj_set_style_text_font(_lblDbFocus, &lv_font_montserrat_48, 0);
+  lv_obj_set_style_text_font(_lblDbFocus, &sp7_font_gauge_56, 0);
   lv_obj_set_style_text_color(_lblDbFocus, lv_color_hex(0xDFE7EF), 0);
-  lv_obj_align_to(_lblDbFocus, _arcFocus, LV_ALIGN_CENTER, 0, -8);
+  lv_obj_align_to(_lblDbFocus, _arcFocus, LV_ALIGN_CENTER, -20, -8);
 
   lv_obj_t* unit = lv_label_create(mainCard);
   lv_label_set_text(unit, "dB");
   lv_obj_set_style_text_font(unit, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(unit, lv_color_hex(0x8EA1B3), 0);
-  lv_obj_align_to(unit, _lblDbFocus, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
+  lv_obj_align_to(unit, _arcFocus, LV_ALIGN_CENTER, 0, 54);
 
   _dotFocus = lv_obj_create(mainCard);
   lv_obj_set_size(_dotFocus, 16, 16);
@@ -547,8 +687,8 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_set_scrollbar_mode(_dotFocus, LV_SCROLLBAR_MODE_OFF);
 
   lv_obj_t* metricsWrap = lv_obj_create(mainCard);
-  lv_obj_set_size(metricsWrap, 318, 160);
-  lv_obj_align(metricsWrap, LV_ALIGN_RIGHT_MID, 0, 10);
+  lv_obj_set_size(metricsWrap, 318, 188);
+  lv_obj_align(metricsWrap, LV_ALIGN_RIGHT_MID, 0, 8);
   lv_obj_set_style_bg_opa(metricsWrap, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(metricsWrap, 0, 0);
   lv_obj_set_style_pad_all(metricsWrap, 0, 0);
@@ -559,7 +699,7 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_clear_flag(metricsWrap, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(metricsWrap, LV_SCROLLBAR_MODE_OFF);
 
-  lv_obj_t* leqCard = makeCard(metricsWrap, 152, 160);
+  lv_obj_t* leqCard = makeCard(metricsWrap, 152, 188);
   lv_obj_set_style_bg_color(leqCard, lv_color_hex(0x0E141C), 0);
   lv_obj_set_style_radius(leqCard, 22, 0);
   lv_obj_set_style_pad_all(leqCard, 18, 0);
@@ -576,7 +716,7 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblLeqFocus, lv_color_hex(0xDFE7EF), 0);
   lv_obj_align(_lblLeqFocus, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-  lv_obj_t* peakCard = makeCard(metricsWrap, 152, 160);
+  lv_obj_t* peakCard = makeCard(metricsWrap, 152, 188);
   lv_obj_set_style_bg_color(peakCard, lv_color_hex(0x0E141C), 0);
   lv_obj_set_style_radius(peakCard, 22, 0);
   lv_obj_set_style_pad_all(peakCard, 18, 0);
@@ -593,9 +733,9 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblPeakFocus, lv_color_hex(0xDFE7EF), 0);
   lv_obj_align(_lblPeakFocus, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-  buildHistoryCard(parent, 752, 112, &_histWrapFocus, &_lblHistFocus, &_lblHistTLeftFocus,
+  buildHistoryCard(parent, 780, 112, &_histWrapFocus, &_lblHistFocus, &_lblHistTLeftFocus,
                    &_lblHistTMidFocus, &_lblHistTRightFocus, _histBarsFocus);
-  lv_obj_align(_histWrapFocus, LV_ALIGN_TOP_MID, 0, 10 + 212 + cardGap);
+  lv_obj_align(_histWrapFocus, LV_ALIGN_TOP_MID, 0, 260);
 }
 
 void UiManager::buildHistoryCard(lv_obj_t* parent,
@@ -691,7 +831,7 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
 void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
   const lv_coord_t cardTopOffset = 10;
 
-  lv_obj_t* card = makeCard(parent, 752, 330);
+  lv_obj_t* card = makeCard(parent, 780, 362);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, cardTopOffset);
   lv_obj_set_style_bg_color(card, lv_color_hex(0x111824), 0);
   lv_obj_set_style_radius(card, 26, 0);
@@ -884,6 +1024,50 @@ void UiManager::refreshCalibrationView() {
 
 }
 
+void UiManager::refreshSettingsControls() {
+  if (!_s) return;
+
+  if (_lblBacklightValue) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u %%", (unsigned)_s->backlight);
+    lv_label_set_text(_lblBacklightValue, buf);
+  }
+
+  if (_lblGreenValue) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u dB", (unsigned)_s->th.greenMax);
+    lv_label_set_text(_lblGreenValue, buf);
+  }
+
+  if (_lblOrangeValue) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u dB", (unsigned)_s->th.orangeMax);
+    lv_label_set_text(_lblOrangeValue, buf);
+  }
+
+  if (_lblHistoryValue) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u min", (unsigned)_s->historyMinutes);
+    lv_label_set_text(_lblHistoryValue, buf);
+  }
+
+  if (_lblResponseValue) {
+    lv_label_set_text(_lblResponseValue, AudioEngine::responseModeLabel(_s->audioResponseMode));
+  }
+
+  if (_btnResponseFast) {
+    const bool active = _s->audioResponseMode == 0;
+    lv_obj_set_style_bg_color(_btnResponseFast, active ? lv_color_hex(0x7A1E2C) : lv_color_hex(0x16202E), 0);
+    lv_obj_set_style_text_color(_btnResponseFast, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
+  }
+
+  if (_btnResponseSlow) {
+    const bool active = _s->audioResponseMode == 1;
+    lv_obj_set_style_bg_color(_btnResponseSlow, active ? lv_color_hex(0x7A1E2C) : lv_color_hex(0x16202E), 0);
+    lv_obj_set_style_text_color(_btnResponseSlow, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
+  }
+}
+
 void UiManager::onCalibrationCapture(lv_event_t* e) {
   UiManager* self = selfFromEvent(e);
   if (!self || !self->_s || !self->_store) return;
@@ -952,125 +1136,8 @@ void UiManager::layoutClockFocus() {
   lv_obj_align(_clockSecBadgeFocus, LV_ALIGN_CENTER, badgeX, y);
 }
 
-void UiManager::buildManagement() {
-  _scrMgmt = lv_obj_create(nullptr);
-  lv_obj_set_style_bg_color(_scrMgmt, lv_color_hex(0x0B0F14), 0);
-  lv_obj_set_style_bg_opa(_scrMgmt, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(_scrMgmt, 0, 0);
-
-  lv_obj_t* top = lv_obj_create(_scrMgmt);
-  lv_obj_set_size(top, lv_pct(100), 70);
-  lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(top, lv_color_hex(0x111824), 0);
-  lv_obj_set_style_border_width(top, 0, 0);
-  lv_obj_set_style_pad_all(top, 14, 0);
-  lv_obj_set_style_radius(top, 0, 0);
-
-  lv_obj_t* back = lv_btn_create(top);
-  lv_obj_set_size(back, 72, 40);
-  lv_obj_align(back, LV_ALIGN_LEFT_MID, 0, 0);
-  lv_obj_set_style_radius(back, 14, 0);
-  lv_obj_add_event_cb(back, UiManager::onBack, LV_EVENT_CLICKED, this);
-
-  lv_obj_t* backLbl = lv_label_create(back);
-  lv_label_set_text(backLbl, LV_SYMBOL_LEFT);
-  lv_obj_center(backLbl);
-
-  lv_obj_t* title = lv_label_create(top);
-  lv_label_set_text(title, "Management");
-  lv_obj_set_style_text_font(title, &lv_font_montserrat_24, 0);
-  lv_obj_set_style_text_color(title, lv_color_hex(0xDFE7EF), 0);
-  lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-
-  lv_obj_t* scroll = lv_obj_create(_scrMgmt);
-  lv_obj_set_size(scroll, lv_pct(100), 408);
-  lv_obj_align(scroll, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_bg_opa(scroll, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(scroll, 0, 0);
-  lv_obj_set_style_pad_all(scroll, 10, 0);
-  lv_obj_set_scroll_dir(scroll, LV_DIR_VER);
-  lv_obj_set_flex_flow(scroll, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(scroll, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(scroll, 12, 0);
-
-  lv_obj_t* cUi = mgmtCard(scroll, "UI");
-
-  lv_obj_t* blLbl = lv_label_create(cUi);
-  lv_label_set_text(blLbl, "Backlight");
-  lv_obj_set_style_text_color(blLbl, lv_color_hex(0xB9C7D6), 0);
-
-  _slBacklight = lv_slider_create(cUi);
-  lv_slider_set_range(_slBacklight, 0, 100);
-  lv_slider_set_value(_slBacklight, _s ? _s->backlight : 80, LV_ANIM_OFF);
-  lv_obj_add_event_cb(_slBacklight, UiManager::onSliderBacklight, LV_EVENT_VALUE_CHANGED, this);
-
-  lv_obj_t* cTh = mgmtCard(scroll, "Seuils dB");
-
-  lv_obj_t* g = lv_label_create(cTh);
-  lv_label_set_text(g, "Vert <= ");
-  lv_obj_set_style_text_color(g, lv_color_hex(0xB9C7D6), 0);
-
-  _slGreen = lv_slider_create(cTh);
-  lv_slider_set_range(_slGreen, 0, 100);
-  lv_slider_set_value(_slGreen, _s ? _s->th.greenMax : 55, LV_ANIM_OFF);
-  lv_obj_add_event_cb(_slGreen, UiManager::onSliderThresholds, LV_EVENT_VALUE_CHANGED, this);
-
-  lv_obj_t* o = lv_label_create(cTh);
-  lv_label_set_text(o, "Orange <= ");
-  lv_obj_set_style_text_color(o, lv_color_hex(0xB9C7D6), 0);
-
-  _slOrange = lv_slider_create(cTh);
-  lv_slider_set_range(_slOrange, 0, 100);
-  lv_slider_set_value(_slOrange, _s ? _s->th.orangeMax : 70, LV_ANIM_OFF);
-  lv_obj_add_event_cb(_slOrange, UiManager::onSliderThresholds, LV_EVENT_VALUE_CHANGED, this);
-
-  lv_obj_t* cHist = mgmtCard(scroll, "Historique");
-
-  lv_obj_t* hLbl = lv_label_create(cHist);
-  lv_label_set_text(hLbl, "Minutes");
-  lv_obj_set_style_text_color(hLbl, lv_color_hex(0xB9C7D6), 0);
-
-  _slHistory = lv_slider_create(cHist);
-  lv_slider_set_range(_slHistory, 1, 60);
-  lv_slider_set_value(_slHistory, _s ? _s->historyMinutes : 5, LV_ANIM_OFF);
-  lv_obj_add_event_cb(_slHistory, UiManager::onSliderHistory, LV_EVENT_VALUE_CHANGED, this);
-
-  lv_obj_t* cNet = mgmtCard(scroll, "Reseau & Heure");
-  _lblNetInfo = lv_label_create(cNet);
-  lv_label_set_text(_lblNetInfo, "-");
-  lv_obj_set_style_text_font(_lblNetInfo, &lv_font_montserrat_16, 0);
-  lv_obj_set_style_text_color(_lblNetInfo, lv_color_hex(0xB9C7D6), 0);
-
-  lv_obj_t* cMaint = mgmtCard(scroll, "Maintenance");
-
-  lv_obj_t* reboot = lv_btn_create(cMaint);
-  lv_obj_set_width(reboot, lv_pct(100));
-  lv_obj_add_event_cb(reboot, UiManager::onReboot, LV_EVENT_CLICKED, this);
-  lv_obj_t* rebootLbl = lv_label_create(reboot);
-  lv_label_set_text(rebootLbl, "Reboot");
-  lv_obj_center(rebootLbl);
-
-  lv_obj_t* poweroff = lv_btn_create(cMaint);
-  lv_obj_set_width(poweroff, lv_pct(100));
-  lv_obj_add_event_cb(poweroff, UiManager::onPowerOff, LV_EVENT_CLICKED, this);
-  lv_obj_t* poweroffLbl = lv_label_create(poweroff);
-  lv_label_set_text(poweroffLbl, "Eteindre");
-  lv_obj_center(poweroffLbl);
-
-  lv_obj_t* reset = lv_btn_create(cMaint);
-  lv_obj_set_width(reset, lv_pct(100));
-  lv_obj_add_event_cb(reset, UiManager::onFactoryReset, LV_EVENT_CLICKED, this);
-  lv_obj_t* resetLbl = lv_label_create(reset);
-  lv_label_set_text(resetLbl, "Factory reset");
-  lv_obj_center(resetLbl);
-}
-
 void UiManager::showDashboard() {
   lv_scr_load(_scrDash);
-}
-
-void UiManager::showManagement() {
-  lv_scr_load(_scrMgmt);
 }
 
 void UiManager::applyBacklight(uint8_t percent) {
@@ -1308,15 +1375,6 @@ void UiManager::tick() {
   recordRedHistorySample(now);
   applyAlertVisuals(now);
 
-  if (_lblWifi && _net) {
-    if (_net->isWifiConnected()) {
-      String s = "WiFi: OK  " + _net->ipString() + "  (RSSI " + String(_net->rssi()) + " dBm)";
-      lv_label_set_text(_lblWifi, s.c_str());
-    } else {
-      lv_label_set_text(_lblWifi, "WiFi: OFF");
-    }
-  }
-
   struct tm ti;
   bool hasTime = _net && _net->localTime(&ti);
   bool timeLocked = _net && _net->timeIsValid();
@@ -1353,13 +1411,20 @@ void UiManager::tick() {
     }
   }
 
-  if (_lblNtp) {
-    if (timeLocked) {
-      lv_label_set_text(_lblNtp, "NTP: LOCK");
-      if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC LOCK");
+  if (timeLocked) {
+    if (_lblNtpStatus) lv_label_set_text(_lblNtpStatus, "NTP: LOCK");
+    if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC LOCK");
+  } else {
+    if (_lblNtpStatus) lv_label_set_text(_lblNtpStatus, "NTP: WAIT");
+    if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC WAIT");
+  }
+
+  if (_lblWifiStatus && _net) {
+    if (_net->isWifiConnected()) {
+      String s = "WiFi: OK  " + _net->ipString() + "  (RSSI " + String(_net->rssi()) + " dBm)";
+      lv_label_set_text(_lblWifiStatus, s.c_str());
     } else {
-      lv_label_set_text(_lblNtp, "NTP: WAIT");
-      if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC WAIT");
+      lv_label_set_text(_lblWifiStatus, "WiFi: OFF");
     }
   }
 
@@ -1392,10 +1457,6 @@ void UiManager::tick() {
   refreshCalibrationView();
 }
 
-void UiManager::onGear(lv_event_t* e) {
-  selfFromEvent(e)->showManagement();
-}
-
 void UiManager::onDashTab(lv_event_t* e) {
   UiManager* self = selfFromEvent(e);
   lv_obj_t* target = lv_event_get_target(e);
@@ -1417,8 +1478,13 @@ void UiManager::onDashGesture(lv_event_t* e) {
   }
 }
 
-void UiManager::onBack(lv_event_t* e) {
-  selfFromEvent(e)->showDashboard();
+void UiManager::onOverviewCard(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  lv_obj_t* target = lv_event_get_target(e);
+  if (!self || !target) return;
+
+  uintptr_t page = (uintptr_t)lv_obj_get_user_data(target);
+  self->setDashboardPage((uint8_t)page);
 }
 
 void UiManager::onSliderBacklight(lv_event_t* e) {
@@ -1426,6 +1492,7 @@ void UiManager::onSliderBacklight(lv_event_t* e) {
   int v = lv_slider_get_value(self->_slBacklight);
 
   if (self->_s) self->_s->backlight = (uint8_t)v;
+  self->refreshSettingsControls();
   self->applyBacklight((uint8_t)v);
 
   if (self->_store && self->_s) self->_store->save(*self->_s);
@@ -1446,6 +1513,7 @@ void UiManager::onSliderThresholds(lv_event_t* e) {
     self->_s->th.greenMax = (uint8_t)g;
     self->_s->th.orangeMax = (uint8_t)o;
   }
+  self->refreshSettingsControls();
 
   self->redrawHistoryBars();
   self->_orangeZoneSinceMs = 0;
@@ -1464,11 +1532,24 @@ void UiManager::onSliderHistory(lv_event_t* e) {
   int v = lv_slider_get_value(self->_slHistory);
 
   if (self->_s) self->_s->historyMinutes = (uint8_t)v;
+  self->refreshSettingsControls();
   self->redrawHistoryBars();
   if (self->_history) self->_history->settingsChanged();
   self->refreshCalibrationView();
 
   if (self->_store && self->_s) self->_store->save(*self->_s);
+}
+
+void UiManager::onResponseMode(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  lv_obj_t* btn = lv_event_get_target(e);
+  if (!self || !self->_s || !self->_store || !btn) return;
+
+  uint8_t mode = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
+  if (mode > 1) mode = 0;
+  self->_s->audioResponseMode = mode;
+  self->refreshSettingsControls();
+  self->_store->save(*self->_s);
 }
 
 void UiManager::onReboot(lv_event_t* e) {

@@ -17,14 +17,13 @@ public:
              SharedHistory* history);
 
   void showDashboard();
-  void showManagement();
 
   void tick();
   void setDb(float dbInstant, float leq, float peak);
 
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = SharedHistory::POINT_COUNT;
-  static constexpr uint8_t DASH_PAGE_COUNT = 4;
+  static constexpr uint8_t DASH_PAGE_COUNT = 5;
   static constexpr uint16_t RED_HISTORY_SAMPLE_COUNT = 3600;
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
 
@@ -33,6 +32,7 @@ private:
     DASH_PAGE_CLOCK = 1,
     DASH_PAGE_SOUND = 2,
     DASH_PAGE_CALIBRATION = 3,
+    DASH_PAGE_SETTINGS = 4,
   };
 
   esp_panel::board::Board* _board = nullptr;
@@ -41,7 +41,6 @@ private:
   NetManager* _net = nullptr;
 
   lv_obj_t* _scrDash = nullptr;
-  lv_obj_t* _scrMgmt = nullptr;
   lv_obj_t* _dashContent = nullptr;
   lv_obj_t* _dashPages[DASH_PAGE_COUNT] = {nullptr};
   lv_obj_t* _dashTabs[DASH_PAGE_COUNT] = {nullptr};
@@ -109,6 +108,15 @@ private:
   lv_obj_t* _slGreen = nullptr;
   lv_obj_t* _slOrange = nullptr;
   lv_obj_t* _slHistory = nullptr;
+  lv_obj_t* _btnResponseFast = nullptr;
+  lv_obj_t* _btnResponseSlow = nullptr;
+  lv_obj_t* _lblBacklightValue = nullptr;
+  lv_obj_t* _lblGreenValue = nullptr;
+  lv_obj_t* _lblOrangeValue = nullptr;
+  lv_obj_t* _lblHistoryValue = nullptr;
+  lv_obj_t* _lblResponseValue = nullptr;
+  lv_obj_t* _lblWifiStatus = nullptr;
+  lv_obj_t* _lblNtpStatus = nullptr;
   lv_obj_t* _lblNetInfo = nullptr;
 
   SharedHistory* _history = nullptr;
@@ -127,11 +135,11 @@ private:
   uint16_t _redHistorySum = 0;
 
   void buildDashboard();
-  void buildManagement();
   void buildDashboardOverviewPage(lv_obj_t* parent);
   void buildDashboardClockPage(lv_obj_t* parent);
   void buildDashboardSoundPage(lv_obj_t* parent);
   void buildDashboardCalibrationPage(lv_obj_t* parent);
+  void buildDashboardSettingsPage(lv_obj_t* parent);
   void buildHistoryCard(lv_obj_t* parent,
                         int width,
                         int height,
@@ -143,6 +151,7 @@ private:
                         lv_obj_t* barsOut[HISTORY_BAR_COUNT]);
   void setDashboardPage(uint8_t page);
   void refreshCalibrationView();
+  void refreshSettingsControls();
   void updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                           const char* dateText, const char* mainText, const char* secText);
   void layoutClockFocus();
@@ -157,13 +166,13 @@ private:
 
   void redrawHistoryBars();
 
-  static void onGear(lv_event_t* e);
   static void onDashTab(lv_event_t* e);
   static void onDashGesture(lv_event_t* e);
-  static void onBack(lv_event_t* e);
+  static void onOverviewCard(lv_event_t* e);
   static void onSliderBacklight(lv_event_t* e);
   static void onSliderThresholds(lv_event_t* e);
   static void onSliderHistory(lv_event_t* e);
+  static void onResponseMode(lv_event_t* e);
   static void onReboot(lv_event_t* e);
   static void onFactoryReset(lv_event_t* e);
   static void onConfirmResetYes(lv_event_t* e);
