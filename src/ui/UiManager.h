@@ -83,6 +83,7 @@ private:
   lv_obj_t* _lblHistTRightFocus = nullptr;
   lv_obj_t* _histBarsFocus[HISTORY_BAR_COUNT] = {nullptr};
   lv_obj_t* _lblCalStatus = nullptr;
+  lv_obj_t* _lblCalLive = nullptr;
   lv_obj_t* _lblCalPoint[3] = {nullptr};
   lv_obj_t* _btnCalRefMinus[3] = {nullptr};
   lv_obj_t* _btnCalRefPlus[3] = {nullptr};

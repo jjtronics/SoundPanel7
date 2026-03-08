@@ -709,9 +709,15 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblCalStatus, lv_color_hex(0xF0A202), 0);
   lv_obj_align(_lblCalStatus, LV_ALIGN_TOP_RIGHT, 0, 6);
 
+  _lblCalLive = lv_label_create(card);
+  lv_label_set_text(_lblCalLive, "Micro live: --");
+  lv_obj_set_style_text_font(_lblCalLive, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_lblCalLive, lv_color_hex(0x8EA1B3), 0);
+  lv_obj_align(_lblCalLive, LV_ALIGN_TOP_LEFT, 0, 30);
+
   lv_obj_t* pointsWrap = lv_obj_create(card);
   lv_obj_set_size(pointsWrap, lv_pct(100), 194);
-  lv_obj_align(pointsWrap, LV_ALIGN_TOP_MID, 0, 52);
+  lv_obj_align(pointsWrap, LV_ALIGN_TOP_MID, 0, 70);
   lv_obj_set_style_bg_color(pointsWrap, lv_color_hex(0x0E141C), 0);
   lv_obj_set_style_border_width(pointsWrap, 0, 0);
   lv_obj_set_style_radius(pointsWrap, 22, 0);
@@ -835,6 +841,19 @@ void UiManager::setDashboardPage(uint8_t page) {
 
 void UiManager::refreshCalibrationView() {
   if (!_s) return;
+
+  if (_lblCalLive) {
+    const AudioMetrics& m = g_audio.metrics();
+    char liveBuf[96];
+    if (m.analogOk) {
+      snprintf(liveBuf, sizeof(liveBuf), "Micro live: rms=%0.2f | log=%0.4f",
+               m.rawRms,
+               log10f(m.rawRms + 0.0001f));
+    } else {
+      snprintf(liveBuf, sizeof(liveBuf), "Micro live: indisponible");
+    }
+    lv_label_set_text(_lblCalLive, liveBuf);
+  }
 
   uint8_t validCount = 0;
   for (uint8_t i = 0; i < 3; i++) {

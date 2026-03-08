@@ -255,9 +255,10 @@ String WebManager::liveMetricsJson() const {
   bool hasTime = getLocalTime(&ti, 0);
   char tbuf[32] = {0};
   if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
+  const AudioMetrics& am = g_audio.metrics();
 
   String json;
-  json.reserve(288);
+  json.reserve(416);
   json += "{";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
@@ -270,6 +271,11 @@ String WebManager::liveMetricsJson() const {
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
+  json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
+  json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
+  json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
+  json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
+  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
   json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\"";
   json += "}";
@@ -1376,6 +1382,8 @@ R"HTML(
       <div class="hint">
         Mets le vrai sonomètre à côté, saisis la valeur réelle, puis clique sur Capture.
       </div>
+      <div class="hint" id="calLiveMic" style="margin-top:8px">Micro live: —</div>
+      <div class="hint" id="calLiveLog">Log calibration live: —</div>
 
       <div class="calrow">
         <div class="field">
@@ -1518,6 +1526,8 @@ R"HTML(
 
 <script>
   const $ = (id)=>document.getElementById(id);
+  let liveEvents = null;
+  let liveReconnectTimer = null;
 
   let uiDirty = false;
   let uiLastInteraction = 0;
@@ -1599,22 +1609,66 @@ R"HTML(
     }
   }
 
+  function applyAdminLive(st) {
+    if ("wifi" in st) {
+      $("pill").textContent = st.wifi ? "En ligne" : "Hors ligne";
+      $("wifi").textContent = st.wifi ? "Connecté" : "Déconnecté";
+      $("wifiBadge").textContent = st.wifi ? "OK" : "OFF";
+      $("wifiBadge").className = "badge " + (st.wifi ? "ok" : "bad");
+    }
+    if ("ip" in st) $("ip").textContent = st.ip || "—";
+    if ("rssi" in st) $("rssi").textContent = st.wifi ? (st.rssi + " dBm") : "—";
+    if ("uptime_s" in st) $("up").textContent = fmtUptime(st.uptime_s || 0);
+    if ("time_ok" in st) $("time").textContent = st.time_ok ? st.time : "NTP…";
+
+    if ("rawRms" in st) $("rawRms").textContent = Number(st.rawRms ?? 0).toFixed(2);
+    if ("rawPseudoDb" in st) $("rawPseudoDb").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
+    if ("rawAdcMean" in st) $("rawAdcMean").textContent = String(st.rawAdcMean ?? "—");
+    if ("rawAdcLast" in st) $("rawAdcLast").textContent = String(st.rawAdcLast ?? "—");
+
+    if (st.analogOk) {
+      $("calLiveMic").textContent = `Micro live: rms=${Number(st.rawRms ?? 0).toFixed(2)} | pseudo dB=${Number(st.rawPseudoDb ?? 0).toFixed(1)} | ADC=${String(st.rawAdcLast ?? "—")}`;
+      $("calLiveLog").textContent = `Log calibration live: ${Math.log10(Math.max(Number(st.rawRms ?? 0), 0) + 0.0001).toFixed(4)}`;
+    } else if ("analogOk" in st) {
+      $("calLiveMic").textContent = "Micro live: indisponible";
+      $("calLiveLog").textContent = "Log calibration live: indisponible";
+    }
+  }
+
+  function scheduleAdminLiveReconnect(){
+    if (liveReconnectTimer) return;
+    liveReconnectTimer = setTimeout(() => {
+      liveReconnectTimer = null;
+      connectAdminLiveFeed();
+    }, 1500);
+  }
+
+  function connectAdminLiveFeed(){
+    if (liveEvents) {
+      liveEvents.close();
+      liveEvents = null;
+    }
+
+    const liveUrl = `${location.protocol}//${location.hostname}:81/api/events`;
+    liveEvents = new EventSource(liveUrl);
+
+    liveEvents.addEventListener("metrics", (ev) => {
+      applyAdminLive(JSON.parse(ev.data));
+    });
+
+    liveEvents.onerror = () => {
+      if (liveEvents) {
+        liveEvents.close();
+        liveEvents = null;
+      }
+      scheduleAdminLiveReconnect();
+    };
+  }
+
   async function refresh(){
     try{
       const st = await apiGet("/api/status");
-      $("pill").textContent = st.wifi ? "En ligne" : "Hors ligne";
-      $("wifi").textContent = st.wifi ? "Connecté" : "Déconnecté";
-      $("ip").textContent = st.ip || "—";
-      $("rssi").textContent = st.wifi ? (st.rssi + " dBm") : "—";
-      $("up").textContent = fmtUptime(st.uptime_s || 0);
-      $("time").textContent = st.time_ok ? st.time : "NTP…";
-      $("wifiBadge").textContent = st.wifi ? "OK" : "OFF";
-      $("wifiBadge").className = "badge " + (st.wifi ? "ok" : "bad");
-
-      $("rawRms").textContent = Number(st.rawRms ?? 0).toFixed(2);
-      $("rawPseudoDb").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
-      $("rawAdcMean").textContent = String(st.rawAdcMean ?? "—");
-      $("rawAdcLast").textContent = String(st.rawAdcLast ?? "—");
+      applyAdminLive(st);
 
       showCalState(st);
 
@@ -1811,6 +1865,7 @@ R"HTML(
   };
 
   refresh();
+  connectAdminLiveFeed();
   loadTime();
   loadOta();
   loadMqtt();
