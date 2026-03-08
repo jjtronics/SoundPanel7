@@ -80,6 +80,7 @@ public:
   String exportJson(const SettingsV1& s) const;
   bool importJson(SettingsV1& s, const String& json, String* err = nullptr);
   bool saveBackup(const SettingsV1& s);
+  uint32_t backupTimestamp() const;
   bool restoreBackup(SettingsV1& out, String* err = nullptr);
   bool resetSection(SettingsV1& s, const String& scope, String* err = nullptr);
 

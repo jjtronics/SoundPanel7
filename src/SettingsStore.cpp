@@ -1,6 +1,7 @@
 #include "SettingsStore.h"
 
 #include <cstring>
+#include <ctime>
 
 static int jsonIntLocal(const String& body, const char* key, int def) {
   String k = String("\"") + key + "\":";
@@ -499,8 +500,19 @@ bool SettingsStore::saveBackup(const SettingsV1& s) {
   String backupNs = _ns + "_bak";
   if (!backupPrefs.begin(backupNs.c_str(), false)) return false;
   backupPrefs.putString("cfg", exportJson(s));
+  time_t now = time(nullptr);
+  backupPrefs.putUInt("ts", now > 946684800 ? (uint32_t)now : 0U);
   backupPrefs.end();
   return true;
+}
+
+uint32_t SettingsStore::backupTimestamp() const {
+  Preferences backupPrefs;
+  String backupNs = _ns + "_bak";
+  if (!backupPrefs.begin(backupNs.c_str(), true)) return 0;
+  uint32_t ts = backupPrefs.getUInt("ts", 0);
+  backupPrefs.end();
+  return ts;
 }
 
 bool SettingsStore::restoreBackup(SettingsV1& out, String* err) {

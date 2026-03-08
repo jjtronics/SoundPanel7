@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <esp_sntp.h>
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
 #include <ctime>
 #include <math.h>
 #include <cstring>
@@ -160,6 +162,7 @@ void WebManager::routes() {
   });
 
   _srv.on("/api/reboot", HTTP_POST, [this]() { handleReboot(); });
+  _srv.on("/api/shutdown", HTTP_POST, [this]() { handleShutdown(); });
   _srv.on("/api/factory_reset", HTTP_POST, [this]() { handleFactoryReset(); });
 
   _srv.onNotFound([this]() { replyText(404, "404\n"); });
@@ -205,6 +208,7 @@ String WebManager::statusJson() const {
   String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
   int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
   uint32_t up = (millis() - g_bootMs) / 1000;
+  uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
   const float mcuTempC = temperatureRead();
   const bool mcuTempOk = !isnan(mcuTempC);
 
@@ -216,12 +220,13 @@ String WebManager::statusJson() const {
   const AudioMetrics& am = g_audio.metrics();
 
   String json;
-  json.reserve(768);
+  json.reserve(832);
   json += "{";
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
   json += "\"uptime_s\":"; json += String(up); json += ",";
+  json += "\"backupTs\":"; json += String(backupTs); json += ",";
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
   json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\",";
   json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
@@ -652,6 +657,27 @@ void WebManager::handleReboot() {
   replyJson(200, "{\"ok\":true}\n");
   delay(150);
   ESP.restart();
+}
+
+void WebManager::handleShutdown() {
+  replyJson(200, "{\"ok\":true}\n");
+  delay(150);
+
+  applyBacklightNow(0);
+  delay(80);
+
+  gpio_hold_dis(GPIO_NUM_0);
+  rtc_gpio_pullup_dis(GPIO_NUM_0);
+  rtc_gpio_pulldown_en(GPIO_NUM_0);
+
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+
+  Serial0.println("[PWR] Deep sleep - wake on BOOT(GPIO0)");
+  Serial0.flush();
+  delay(50);
+
+  esp_deep_sleep_start();
 }
 
 void WebManager::handleFactoryReset() {
@@ -1641,10 +1667,11 @@ R"HTML(
                 </select>
               </div>
               <div class="btnRow">
-                <button class="btn" id="backupConfigBtn">Backup usine</button>
+                <button class="btn" id="backupConfigBtn">Backup</button>
                 <button class="btn" id="restoreConfigBtn">Restore</button>
                 <button class="btn danger" id="partialResetBtn">Reset partiel</button>
               </div>
+              <div class="hint mono" id="backupInfo">Dernier backup: --</div>
               <div class="toast" id="configToast"></div>
             </article>
 
@@ -1657,6 +1684,7 @@ R"HTML(
               </div>
               <div class="btnRow">
                 <button class="btn" id="rebootBtn">Reboot</button>
+                <button class="btn" id="shutdownBtn">Shutdown</button>
                 <button class="btn danger" id="factoryResetBtn">Factory reset</button>
               </div>
               <div class="toast" id="actionsToast"></div>
@@ -1797,6 +1825,14 @@ R"HTML(
       return `${days}j ${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
     }
     return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+  }
+
+  function formatBackupDate(ts) {
+    const seconds = Number(ts || 0);
+    if (!seconds) return "--";
+    const d = new Date(seconds * 1000);
+    if (Number.isNaN(d.getTime())) return "--";
+    return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   }
 
   function zoneColor(db, greenMax, orangeMax) {
@@ -2038,6 +2074,7 @@ R"HTML(
     $("rawPseudoDbAdv").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
     $("rawAdcMeanAdv").textContent = String(st.rawAdcMean ?? "--");
     $("rawAdcLastAdv").textContent = String(st.rawAdcLast ?? "--");
+    $("backupInfo").textContent = `Dernier backup: ${formatBackupDate(st.backupTs)}`;
 
     const systemBadge = $("settingsSystemBadge");
     systemBadge.textContent = "En ligne";
@@ -2328,14 +2365,18 @@ R"HTML(
     $("configToast").textContent = "Backup...";
     try {
       await apiPost("/api/config/backup", {});
-      $("configToast").textContent = "Backup usine enregistre.";
+      $("configToast").textContent = "Backup enregistre.";
+      await refreshStatus();
     } catch (err) {
       $("configToast").textContent = `Erreur: ${err.message}`;
     }
   }
 
   async function restoreConfig() {
-    if (!confirm("Restaurer le backup usine ?")) return;
+    const backupDate = formatBackupDate(state.status?.backupTs);
+    if (!confirm(backupDate === "--"
+      ? "Restaurer le dernier backup ?"
+      : `Restaurer le dernier backup ?\n${backupDate}`)) return;
     $("configToast").textContent = "Restore...";
     try {
       const r = await apiPost("/api/config/restore", {});
@@ -2485,6 +2526,16 @@ R"HTML(
     }
   }
 
+  async function shutdown() {
+    if (!confirm("Eteindre le systeme ? Reveil via bouton BOOT.")) return;
+    try {
+      await apiPost("/api/shutdown", {});
+      $("actionsToast").textContent = "Shutdown demande.";
+    } catch (err) {
+      $("actionsToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
   async function factoryReset() {
     if (!confirm("Factory reset ?")) return;
     try {
@@ -2541,6 +2592,7 @@ R"HTML(
   $("partialResetBtn").addEventListener("click", partialReset);
   $("clearCalibration").addEventListener("click", clearCalibration);
   $("rebootBtn").addEventListener("click", reboot);
+  $("shutdownBtn").addEventListener("click", shutdown);
   $("factoryResetBtn").addEventListener("click", factoryReset);
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);

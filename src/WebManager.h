@@ -68,6 +68,7 @@ private:
   void handleConfigResetPartial();
 
   void handleReboot();
+  void handleShutdown();
   void handleFactoryReset();
 
   void applyBacklightNow(uint8_t percent);

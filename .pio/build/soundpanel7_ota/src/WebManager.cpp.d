@@ -372,4 +372,6 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip6.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip6.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_driver_gpio/include/driver/rtc_io.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/hal/include/hal/rtc_io_types.h \
  src/AudioEngine.h include/AppConfig.h
