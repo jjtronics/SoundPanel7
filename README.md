@@ -103,6 +103,16 @@ Permet de configurer :
 
 Publication des métriques audio vers un broker MQTT.
 
+Home Assistant est pris en charge nativement via **MQTT Discovery**.
+Une fois MQTT activé sur le SoundPanel 7 et l'intégration MQTT configurée dans Home Assistant,
+les entités sont créées automatiquement :
+
+- niveau instantané
+- Leq
+- Peak
+- RSSI WiFi
+- adresse IP WiFi
+
 Exemples de topics :
 
 soundpanel7/db  
@@ -119,6 +129,107 @@ Paramètres configurables :
 - topic base
 - publish interval
 - retain flag
+
+---
+
+## 🏠 Home Assistant
+
+Le projet propose maintenant deux modes d'intégration :
+
+- **MQTT Discovery** pour créer automatiquement les entités via le broker MQTT
+- **intégration native Home Assistant** via **Zeroconf/mDNS** pour faire apparaître le SoundPanel 7 dans `Appareils et services`
+
+### Quelle différence ?
+
+Avec **MQTT Discovery**, Home Assistant crée les entités via l'intégration MQTT, mais l'appareil n'apparaît pas comme un nouvel équipement réseau détecté automatiquement dans `Paramètres > Appareils et services`.
+
+Si l'objectif est d'obtenir le comportement classique :
+
+- le SoundPanel 7 apparaît tout seul sur le réseau
+- Home Assistant affiche une carte de découverte
+- il suffit de cliquer sur **Ajouter**
+
+alors il faut utiliser l'**intégration native Home Assistant** fournie dans ce projet.
+
+### Détection native dans Home Assistant
+
+Le firmware annonce le service réseau :
+
+- `_soundpanel7._tcp.local.`
+
+Une intégration Home Assistant custom est fournie dans :
+
+- `custom_components/soundpanel7`
+
+L'intégration interroge ensuite l'API HTTP du panneau sur :
+
+- `/api/status`
+
+### Installation dans Home Assistant
+
+Le dossier `custom_components/soundpanel7` doit être copié dans le dossier de configuration de Home Assistant, à cet emplacement :
+
+- `config/custom_components/soundpanel7`
+
+Selon votre installation Home Assistant, le dossier `config` correspond généralement à :
+
+- **Home Assistant OS / Supervisor** : `/config`
+- **Container** : le volume monté comme configuration Home Assistant
+- **Core en venv** : le dossier contenant `configuration.yaml`
+
+Arborescence attendue :
+
+```text
+config/
+  custom_components/
+    soundpanel7/
+      __init__.py
+      manifest.json
+      config_flow.py
+      sensor.py
+      ...
+```
+
+Méthodes possibles pour copier les fichiers dans Home Assistant :
+
+- via l'addon **Samba Share**
+- via l'addon **File editor**
+- via **SSH / Terminal**
+- en copiant le dossier depuis un partage réseau ou un montage du répertoire `config`
+
+Exemple en SSH :
+
+```bash
+mkdir -p /config/custom_components
+cp -R /chemin/vers/soundpanel7/custom_components/soundpanel7 /config/custom_components/
+```
+
+Étapes complètes :
+
+1. copier le dossier `custom_components/soundpanel7` dans `config/custom_components/`
+2. vérifier que `manifest.json` est bien présent dans `config/custom_components/soundpanel7/`
+3. redémarrer Home Assistant
+4. flasher/redémarrer le SoundPanel 7 avec ce firmware
+5. s'assurer que Home Assistant et le SoundPanel 7 sont sur le même réseau local
+6. ouvrir `Paramètres > Appareils et services`
+7. attendre la détection automatique puis cliquer sur **Ajouter**
+
+Si l'appareil n'apparaît pas immédiatement, vérifier :
+
+- que le dossier a bien été copié au bon emplacement
+- que Home Assistant a bien été redémarré
+- que le SoundPanel 7 répond sur `http://adresse-ip-du-soundpanel/`
+- que le mDNS fonctionne sur le réseau local
+- que Home Assistant et le SoundPanel 7 ne sont pas isolés sur deux VLAN/réseaux séparés
+
+Entités créées par l'intégration native :
+
+- dB instantané
+- Leq
+- Peak
+- RSSI WiFi
+- IP WiFi
+- uptime
 
 ---
 

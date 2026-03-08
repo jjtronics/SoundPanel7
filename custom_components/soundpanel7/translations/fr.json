@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ajouter SoundPanel 7",
+        "description": "Connecte manuellement un SoundPanel 7 avec son adresse IP.",
+        "data": {
+          "host": "Hôte ou adresse IP",
+          "port": "Port",
+          "api_path": "Chemin de l'API status"
+        }
+      },
+      "zeroconf_confirm": {
+        "title": "SoundPanel 7 détecté",
+        "description": "Ajouter {name} sur {host} ?"
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à l'appareil."
+    },
+    "abort": {
+      "already_configured": "Ce SoundPanel 7 est déjà configuré."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "db": {
+        "name": "dB instantané"
+      },
+      "leq": {
+        "name": "Leq"
+      },
+      "peak": {
+        "name": "Peak"
+      },
+      "wifi_rssi": {
+        "name": "RSSI WiFi"
+      },
+      "wifi_ip": {
+        "name": "IP WiFi"
+      },
+      "uptime": {
+        "name": "Temps de fonctionnement"
+      }
+    }
+  }
+}

@@ -1,8 +1,9 @@
 #include "MqttManager.h"
+#include "AppConfig.h"
 
 bool MqttManager::begin(SettingsV1* settings) {
   _s = settings;
-  _client.setBufferSize(1024);
+  _client.setBufferSize(2048);
 
   if (!_s) {
     _lastError = "settings=null";
@@ -30,11 +31,133 @@ void MqttManager::updateMetrics(float dbInstant, float leq, float peak) {
   _peak = peak;
 }
 
+String MqttManager::jsonEscape(const String& in) {
+  String out;
+  out.reserve(in.length() + 8);
+  for (size_t i = 0; i < in.length(); ++i) {
+    const char c = in[i];
+    if (c == '\\' || c == '"') {
+      out += '\\';
+      out += c;
+      continue;
+    }
+    if (c == '\n') {
+      out += "\\n";
+      continue;
+    }
+    if (c == '\r') {
+      out += "\\r";
+      continue;
+    }
+    if (c == '\t') {
+      out += "\\t";
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
 String MqttManager::topic(const char* suffix) const {
   String t = _s ? String(_s->mqttBaseTopic) : String("soundpanel7");
   if (!t.endsWith("/")) t += "/";
   t += suffix;
   return t;
+}
+
+String MqttManager::availabilityTopic() const {
+  return topic("availability");
+}
+
+String MqttManager::deviceId() const {
+  String mac = WiFi.macAddress();
+  mac.replace(":", "");
+  mac.toLowerCase();
+
+  String base = (_s && _s->mqttClientId[0] != '\0') ? String(_s->mqttClientId) : String("soundpanel7");
+  base.replace(" ", "_");
+  base.toLowerCase();
+  return base + "_" + mac;
+}
+
+String MqttManager::deviceName() const {
+  if (_s && _s->hostname[0] != '\0') return String(_s->hostname);
+  if (_s && _s->mqttClientId[0] != '\0') return String(_s->mqttClientId);
+  return String("soundpanel7");
+}
+
+String MqttManager::uniqueId(const char* objectId) const {
+  return deviceId() + "_" + objectId;
+}
+
+String MqttManager::discoveryTopic(const char* component, const char* objectId) const {
+  String t = "homeassistant/";
+  t += component;
+  t += "/";
+  t += deviceId();
+  t += "/";
+  t += objectId;
+  t += "/config";
+  return t;
+}
+
+bool MqttManager::publishDiscoverySensor(const char* objectId,
+                                         const char* name,
+                                         const char* stateTopic,
+                                         const char* unit,
+                                         const char* deviceClass,
+                                         const char* stateClass,
+                                         const char* entityCategory,
+                                         const char* icon) {
+  String payload;
+  payload.reserve(1024);
+  payload += "{";
+  payload += "\"name\":\""; payload += jsonEscape(String(name)); payload += "\",";
+  payload += "\"unique_id\":\""; payload += jsonEscape(uniqueId(objectId)); payload += "\",";
+  payload += "\"state_topic\":\""; payload += jsonEscape(String(stateTopic)); payload += "\",";
+  payload += "\"availability_topic\":\""; payload += jsonEscape(availabilityTopic()); payload += "\",";
+  payload += "\"payload_available\":\"online\",";
+  payload += "\"payload_not_available\":\"offline\",";
+  if (unit && unit[0] != '\0') {
+    payload += "\"unit_of_measurement\":\""; payload += jsonEscape(String(unit)); payload += "\",";
+  }
+  if (deviceClass && deviceClass[0] != '\0') {
+    payload += "\"device_class\":\""; payload += jsonEscape(String(deviceClass)); payload += "\",";
+  }
+  if (stateClass && stateClass[0] != '\0') {
+    payload += "\"state_class\":\""; payload += jsonEscape(String(stateClass)); payload += "\",";
+  }
+  if (entityCategory && entityCategory[0] != '\0') {
+    payload += "\"entity_category\":\""; payload += jsonEscape(String(entityCategory)); payload += "\",";
+  }
+  if (icon && icon[0] != '\0') {
+    payload += "\"icon\":\""; payload += jsonEscape(String(icon)); payload += "\",";
+  }
+  payload += "\"device\":{";
+  payload += "\"identifiers\":[\""; payload += jsonEscape(deviceId()); payload += "\"],";
+  payload += "\"name\":\""; payload += jsonEscape(deviceName()); payload += "\",";
+  payload += "\"manufacturer\":\"JJ\",";
+  payload += "\"model\":\"SoundPanel 7\",";
+  payload += "\"sw_version\":\""; payload += jsonEscape(String(SOUNDPANEL7_VERSION)); payload += "\",";
+  payload += "\"serial_number\":\""; payload += jsonEscape(WiFi.macAddress()); payload += "\",";
+  payload += "\"configuration_url\":\"http://"; payload += WiFi.localIP().toString(); payload += "\"";
+  payload += "}";
+  payload += "}";
+
+  return _client.publish(discoveryTopic("sensor", objectId).c_str(), payload.c_str(), true);
+}
+
+bool MqttManager::publishDiscovery() {
+  if (!_client.connected() || !_s) return false;
+
+  bool ok = true;
+  ok &= publishDiscoverySensor("db", "dB Instant", topic("db").c_str(), "dB", "sound_pressure", "measurement", "", "mdi:waveform");
+  ok &= publishDiscoverySensor("leq", "Leq", topic("leq").c_str(), "dB", "sound_pressure", "measurement", "", "mdi:chart-bell-curve");
+  ok &= publishDiscoverySensor("peak", "Peak", topic("peak").c_str(), "dB", "sound_pressure", "measurement", "", "mdi:signal-peak");
+  ok &= publishDiscoverySensor("wifi_rssi", "WiFi RSSI", topic("wifi/rssi").c_str(), "dBm", "signal_strength", "measurement", "diagnostic", "mdi:wifi");
+  ok &= publishDiscoverySensor("wifi_ip", "WiFi IP", topic("wifi/ip").c_str(), "", "", "", "diagnostic", "mdi:ip-network");
+  _discoveryPublished = ok;
+  return ok;
 }
 
 bool MqttManager::connectIfNeeded() {
@@ -51,16 +174,30 @@ bool MqttManager::connectIfNeeded() {
 
   _client.setServer(_s->mqttHost, _s->mqttPort);
 
+  const String willTopic = availabilityTopic();
   bool ok = false;
   if (strlen(_s->mqttUsername) > 0) {
-    ok = _client.connect(_s->mqttClientId, _s->mqttUsername, _s->mqttPassword);
+    ok = _client.connect(_s->mqttClientId,
+                         _s->mqttUsername,
+                         _s->mqttPassword,
+                         willTopic.c_str(),
+                         0,
+                         true,
+                         "offline");
   } else {
-    ok = _client.connect(_s->mqttClientId);
+    ok = _client.connect(_s->mqttClientId,
+                         willTopic.c_str(),
+                         0,
+                         true,
+                         "offline");
   }
 
   if (ok) {
     _lastError = "";
+    _discoveryPublished = false;
     Serial0.println("[MQTT] connected");
+    _client.publish(availabilityTopic().c_str(), "online", true);
+    publishDiscovery();
     publishState();
     return true;
   }
@@ -87,6 +224,7 @@ bool MqttManager::publishState() {
   bool retain = _s->mqttRetain ? true : false;
 
   bool ok = true;
+  ok &= _client.publish(availabilityTopic().c_str(), "online", true);
   ok &= _client.publish(topic("state").c_str(), payload.c_str(), retain);
   ok &= _client.publish(topic("db").c_str(), String(_db, 1).c_str(), retain);
   ok &= _client.publish(topic("leq").c_str(), String(_leq, 1).c_str(), retain);
@@ -102,6 +240,7 @@ void MqttManager::loop() {
 
   if (!connectIfNeeded()) return;
   _client.loop();
+  if (!_discoveryPublished) publishDiscovery();
 
   uint32_t period = _s->mqttPublishPeriodMs;
   if (period < 250) period = 250;

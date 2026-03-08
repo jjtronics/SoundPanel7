@@ -2,15 +2,19 @@
 #include "NetManager.h"
 
 #include <WiFiManager.h>   // tzapu WiFiManager (AutoConnect portal)
+#include <ESPmDNS.h>
 #include <esp_sntp.h>
 #include <time.h>
 #include <sys/time.h>
+
+#include "AppConfig.h"
 
 static WiFiManager g_wm;
 
 bool NetManager::begin(SettingsV1* settings) {
   _s = settings;
   _started = true;
+  _mdnsStarted = false;
 
   // Hostname (STA)
   if (_s && _s->hostname[0] != '\0') {
@@ -43,6 +47,31 @@ bool NetManager::begin(SettingsV1* settings) {
   _ntpConfigured = false;
 
   return true;
+}
+
+void NetManager::ensureMdns() {
+  if (_mdnsStarted || !isWifiConnected()) return;
+
+  const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : "soundpanel7";
+  if (!MDNS.begin(hostname)) {
+    Serial0.printf("[Net] mDNS start failed for %s\n", hostname);
+    return;
+  }
+
+  const String mac = WiFi.macAddress();
+  MDNS.setInstanceName(String("SoundPanel 7 ") + mac);
+  MDNS.addService("soundpanel7", "tcp", 80);
+  MDNS.addServiceTxt("soundpanel7", "tcp", "path", "/");
+  MDNS.addServiceTxt("soundpanel7", "tcp", "api_path", "/api/status");
+  MDNS.addServiceTxt("soundpanel7", "tcp", "name", hostname);
+  MDNS.addServiceTxt("soundpanel7", "tcp", "model", "SoundPanel 7");
+  MDNS.addServiceTxt("soundpanel7", "tcp", "manufacturer", "JJ");
+  MDNS.addServiceTxt("soundpanel7", "tcp", "version", SOUNDPANEL7_VERSION);
+  MDNS.addServiceTxt("soundpanel7", "tcp", "mac", mac);
+  MDNS.addServiceTxt("soundpanel7", "tcp", "id", mac);
+  _mdnsStarted = true;
+
+  Serial0.printf("[Net] mDNS ready: http://%s.local/ (_soundpanel7._tcp)\n", hostname);
 }
 
 void NetManager::loop() {
@@ -85,6 +114,8 @@ void NetManager::loop() {
                    (unsigned long)sntp_get_sync_interval());
     _ntpConfigured = true;
   }
+
+  ensureMdns();
 }
 
 bool NetManager::isWifiConnected() const {

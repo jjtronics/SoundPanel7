@@ -203,4 +203,5 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
  .pio/libdeps/soundpanel7_ota/PubSubClient/src/PubSubClient.h \
  src/SettingsStore.h \
- /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src/Preferences.h
+ /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src/Preferences.h \
+ include/AppConfig.h

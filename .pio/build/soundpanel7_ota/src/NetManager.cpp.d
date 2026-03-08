@@ -226,6 +226,8 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/AsyncUDP/src/AsyncUDP.h \
  .pio/libdeps/soundpanel7_ota/WiFiManager/wm_strings_en.h \
  .pio/libdeps/soundpanel7_ota/WiFiManager/wm_consts_en.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/ESPmDNS/src/ESPmDNS.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/espressif__mdns/include/mdns.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/include/apps/esp_sntp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/err.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip.h \
@@ -241,4 +243,5 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip4.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip6.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip6.h \
- /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip.h
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip.h \
+ include/AppConfig.h

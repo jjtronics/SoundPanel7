@@ -28,8 +28,11 @@ private:
 
   bool _started = false;
   bool _ntpConfigured = false;
+  bool _mdnsStarted = false;
 
   // quick cache to avoid spamming logs
   uint32_t _lastPrint = 0;
   mutable time_t _lastValidEpoch = 0;
+
+  void ensureMdns();
 };
