@@ -23,8 +23,6 @@ public:
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = 96;
   static constexpr uint8_t DASH_PAGE_COUNT = 4;
-  static constexpr uint32_t ORANGE_ALERT_HOLD_MS = 3000;
-  static constexpr uint32_t RED_ALERT_HOLD_MS = 2000;
   static constexpr uint16_t RED_HISTORY_SAMPLE_COUNT = 3600;
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
 

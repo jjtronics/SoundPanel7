@@ -18,6 +18,8 @@ void SettingsStore::load(SettingsV1 &out) {
   out.th.greenMax    = (uint8_t)_prefs.getUChar("th_g", out.th.greenMax);
   out.th.orangeMax   = (uint8_t)_prefs.getUChar("th_o", out.th.orangeMax);
   out.historyMinutes = (uint8_t)_prefs.getUChar("hist_m", out.historyMinutes);
+  out.orangeAlertHoldMs = _prefs.getUInt("ui_ow_ms", out.orangeAlertHoldMs);
+  out.redAlertHoldMs = _prefs.getUInt("ui_rw_ms", out.redAlertHoldMs);
 
   _prefs.getString("tz", out.tz, sizeof(out.tz));
   _prefs.getString("ntp", out.ntpServer, sizeof(out.ntpServer));
@@ -68,6 +70,9 @@ void SettingsStore::load(SettingsV1 &out) {
   if (out.historyMinutes < 1) out.historyMinutes = 1;
   if (out.historyMinutes > 60) out.historyMinutes = 60;
 
+  if (out.orangeAlertHoldMs > 60000UL) out.orangeAlertHoldMs = 60000UL;
+  if (out.redAlertHoldMs > 60000UL) out.redAlertHoldMs = 60000UL;
+
   if (out.analogRmsSamples < 32) out.analogRmsSamples = 32;
   if (out.analogRmsSamples > 1024) out.analogRmsSamples = 1024;
 
@@ -89,6 +94,8 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("th_g", s.th.greenMax);
   _prefs.putUChar("th_o", s.th.orangeMax);
   _prefs.putUChar("hist_m", s.historyMinutes);
+  _prefs.putUInt("ui_ow_ms", s.orangeAlertHoldMs);
+  _prefs.putUInt("ui_rw_ms", s.redAlertHoldMs);
 
   _prefs.putString("tz", s.tz);
   _prefs.putString("ntp", s.ntpServer);

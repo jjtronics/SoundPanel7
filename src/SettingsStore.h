@@ -19,6 +19,8 @@ struct SettingsV1 {
   uint8_t backlight = 80;
   ThresholdsV1 th;
   uint8_t historyMinutes = 5;
+  uint32_t orangeAlertHoldMs = 3000;
+  uint32_t redAlertHoldMs = 2000;
 
   // Time / locale
   char tz[64]        = "CET-1CEST,M3.5.0/2,M10.5.0/3";

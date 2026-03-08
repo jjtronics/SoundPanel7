@@ -64,6 +64,12 @@ const SP7 = {
     document.getElementById("backlight").value = String(s.backlight);
     document.getElementById("th_green").value = String(s.th_green);
     document.getElementById("th_orange").value = String(s.th_orange);
+    document.getElementById("warning_hold_sec").value = String(
+      s.warning_hold_sec ?? s.warningHoldSec ?? 3
+    );
+    document.getElementById("critical_hold_sec").value = String(
+      s.critical_hold_sec ?? s.criticalHoldSec ?? 2
+    );
   },
 
   async saveSettings() {
@@ -85,6 +91,8 @@ const SP7 = {
       backlight: document.getElementById("backlight").value,
       th_green: document.getElementById("th_green").value,
       th_orange: document.getElementById("th_orange").value,
+      warning_hold_sec: document.getElementById("warning_hold_sec").value,
+      critical_hold_sec: document.getElementById("critical_hold_sec").value,
     };
     await this._post("/api/settings", data);
     alert("Saved");

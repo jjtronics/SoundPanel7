@@ -363,7 +363,7 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_set_style_pad_all(_dbCard, 0, 0);
 
   _arc = lv_arc_create(_dbCard);
-  lv_obj_set_size(_arc, 206, 206);
+  lv_obj_set_size(_arc, 188, 188);
   lv_obj_align(_arc, LV_ALIGN_CENTER, 0, 0);
   lv_arc_set_range(_arc, 0, 100);
   lv_arc_set_value(_arc, 0);
@@ -1149,8 +1149,10 @@ uint16_t UiManager::redSecondsWithinWindow() const {
 }
 
 void UiManager::applyAlertVisuals(uint32_t now) {
-  const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= ORANGE_ALERT_HOLD_MS;
-  const bool redAlert = _redZoneSinceMs != 0 && (now - _redZoneSinceMs) >= RED_ALERT_HOLD_MS;
+  const uint32_t orangeAlertHoldMs = _s ? _s->orangeAlertHoldMs : 3000UL;
+  const uint32_t redAlertHoldMs = _s ? _s->redAlertHoldMs : 2000UL;
+  const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= orangeAlertHoldMs;
+  const bool redAlert = _redZoneSinceMs != 0 && (now - _redZoneSinceMs) >= redAlertHoldMs;
 
   lv_color_t screenBase = lv_color_hex(0x0B0F14);
   lv_color_t screenRed = lv_color_hex(0x22080B);

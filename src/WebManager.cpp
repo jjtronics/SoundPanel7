@@ -276,6 +276,8 @@ void WebManager::handleStatus() {
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
+  json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
   json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
@@ -313,6 +315,8 @@ void WebManager::handleUiSave() {
   int g  = jsonInt(body, "greenMax",  (int)_s->th.greenMax);
   int o  = jsonInt(body, "orangeMax", (int)_s->th.orangeMax);
   int hm = jsonInt(body, "historyMinutes", (int)_s->historyMinutes);
+  int whs = jsonInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / 1000UL));
+  int chs = jsonInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / 1000UL));
 
   if (bl < 0) bl = 0;
   if (bl > 100) bl = 100;
@@ -322,16 +326,23 @@ void WebManager::handleUiSave() {
   if (o > 100) o = 100;
   if (hm < 1) hm = 1;
   if (hm > 60) hm = 60;
+  if (whs < 0) whs = 0;
+  if (whs > 60) whs = 60;
+  if (chs < 0) chs = 0;
+  if (chs > 60) chs = 60;
 
   _s->backlight = (uint8_t)bl;
   _s->th.greenMax = (uint8_t)g;
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
+  _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
+  _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d\n", bl, g, o, hm);
+  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d warn=%ds crit=%ds\n",
+                 bl, g, o, hm, whs, chs);
   replyJson(200, "{\"ok\":true}\n");
 }
 
@@ -1073,6 +1084,18 @@ R"HTML(
         <input id="hist" type="range" min="1" max="60" value="5"/>
       </div>
 
+      <div class="field">
+        <label>Délai warning (orange)</label>
+        <input id="warnHoldSec" type="number" min="0" max="60" step="1" value="3"/>
+        <div class="hint">Temps en secondes avant alerte warning.</div>
+      </div>
+
+      <div class="field">
+        <label>Délai critique (rouge)</label>
+        <input id="critHoldSec" type="number" min="0" max="60" step="1" value="2"/>
+        <div class="hint">Temps en secondes avant alerte critique.</div>
+      </div>
+
       <div class="btns" style="margin-top:10px">
         <button id="saveUi">Sauver UI</button>
       </div>
@@ -1312,6 +1335,10 @@ R"HTML(
   bindRange("g","gVal");
   bindRange("o","oVal");
   bindRange("hist","hVal");
+  $("warnHoldSec").addEventListener("input", markUiDirty);
+  $("warnHoldSec").addEventListener("change", markUiDirty);
+  $("critHoldSec").addEventListener("input", markUiDirty);
+  $("critHoldSec").addEventListener("change", markUiDirty);
 
   async function loadTime(){
     try{
@@ -1372,6 +1399,12 @@ R"HTML(
           $("hist").value = st.historyMinutes;
           $("hVal").textContent = st.historyMinutes;
         }
+        if (typeof st.warningHoldSec === "number") {
+          $("warnHoldSec").value = String(st.warningHoldSec);
+        }
+        if (typeof st.criticalHoldSec === "number") {
+          $("critHoldSec").value = String(st.criticalHoldSec);
+        }
       }
     } catch(e){
       $("pill").textContent = "Erreur";
@@ -1393,7 +1426,9 @@ R"HTML(
         backlight: parseInt($("bl").value,10),
         greenMax: g,
         orangeMax: o,
-        historyMinutes: parseInt($("hist").value,10)
+        historyMinutes: parseInt($("hist").value,10),
+        warningHoldSec: parseInt($("warnHoldSec").value,10),
+        criticalHoldSec: parseInt($("critHoldSec").value,10)
       });
 
       clearUiDirty();
