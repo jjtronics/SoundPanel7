@@ -54,6 +54,8 @@
 
 ---
 
+<a id="francais" name="francais"></a>
+
 ## 🇫🇷 Francais
 
 ### ✨ Vision
@@ -463,6 +465,8 @@ Point d'entree recommande :
 5. tester MQTT, OTA et Home Assistant
 
 ---
+
+<a id="english" name="english"></a>
 
 ## 🇬🇧 English
 
