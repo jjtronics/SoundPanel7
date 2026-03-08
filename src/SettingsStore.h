@@ -76,8 +76,14 @@ public:
   void load(SettingsV1 &out);
   void save(const SettingsV1 &s);
   void factoryReset();
+  String exportJson(const SettingsV1& s) const;
+  bool importJson(SettingsV1& s, const String& json, String* err = nullptr);
+  bool saveBackup(const SettingsV1& s);
+  bool restoreBackup(SettingsV1& out, String* err = nullptr);
+  bool resetSection(SettingsV1& s, const String& scope, String* err = nullptr);
 
 private:
   Preferences _prefs;
   String _ns;
+  static void sanitize(SettingsV1& s);
 };

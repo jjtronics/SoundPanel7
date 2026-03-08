@@ -61,11 +61,17 @@ private:
 
   void handleTimeGet();
   void handleTimeSave();
+  void handleConfigExport();
+  void handleConfigImport();
+  void handleConfigBackup();
+  void handleConfigRestore();
+  void handleConfigResetPartial();
 
   void handleReboot();
   void handleFactoryReset();
 
   void applyBacklightNow(uint8_t percent);
+  void applySettingsRuntimeState();
   String historyJson() const;
 
   void handleCalPoint();

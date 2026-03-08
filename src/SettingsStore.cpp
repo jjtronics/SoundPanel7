@@ -1,5 +1,191 @@
 #include "SettingsStore.h"
 
+#include <cstring>
+
+static int jsonIntLocal(const String& body, const char* key, int def) {
+  String k = String("\"") + key + "\":";
+  int p = body.indexOf(k);
+  if (p < 0) return def;
+  p += k.length();
+
+  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+
+  bool neg = false;
+  if (p < (int)body.length() && body[p] == '-') {
+    neg = true;
+    p++;
+  }
+
+  long v = 0;
+  bool ok = false;
+  while (p < (int)body.length()) {
+    char c = body[p];
+    if (c < '0' || c > '9') break;
+    ok = true;
+    v = v * 10 + (c - '0');
+    p++;
+  }
+
+  if (!ok) return def;
+  return neg ? (int)-v : (int)v;
+}
+
+static float jsonFloatLocal(const String& body, const char* key, float def) {
+  String k = String("\"") + key + "\":";
+  int p = body.indexOf(k);
+  if (p < 0) return def;
+  p += k.length();
+
+  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+
+  bool neg = false;
+  if (p < (int)body.length() && body[p] == '-') {
+    neg = true;
+    p++;
+  }
+
+  String num;
+  bool dotSeen = false;
+  while (p < (int)body.length()) {
+    char c = body[p];
+    if (c >= '0' && c <= '9') {
+      num += c;
+      p++;
+      continue;
+    }
+    if (c == '.' && !dotSeen) {
+      dotSeen = true;
+      num += c;
+      p++;
+      continue;
+    }
+    break;
+  }
+
+  if (num.isEmpty()) return def;
+  float v = num.toFloat();
+  return neg ? -v : v;
+}
+
+static String jsonStrLocal(const String& body, const char* key, const String& def) {
+  String k = String("\"") + key + "\":";
+  int p = body.indexOf(k);
+  if (p < 0) return def;
+  p += k.length();
+
+  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+  if (p >= (int)body.length() || body[p] != '"') return def;
+  p++;
+
+  String out;
+  while (p < (int)body.length()) {
+    char c = body[p++];
+    if (c == '\\' && p < (int)body.length()) {
+      char n = body[p++];
+      if (n == '"' || n == '\\' || n == '/') out += n;
+      else if (n == 'n') out += '\n';
+      else if (n == 'r') out += '\r';
+      else if (n == 't') out += '\t';
+      else out += n;
+      continue;
+    }
+    if (c == '"') break;
+    out += c;
+  }
+
+  return out;
+}
+
+static bool jsonBoolLocal(const String& body, const char* key, bool def) {
+  String k = String("\"") + key + "\":";
+  int p = body.indexOf(k);
+  if (p < 0) return def;
+  p += k.length();
+
+  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+  if (body.startsWith("true", p)) return true;
+  if (body.startsWith("false", p)) return false;
+  if (p < (int)body.length() && body[p] == '1') return true;
+  if (p < (int)body.length() && body[p] == '0') return false;
+  return def;
+}
+
+static bool jsonFloatArray3Local(const String& body, const char* key, float out[3]) {
+  String k = String("\"") + key + "\":";
+  int p = body.indexOf(k);
+  if (p < 0) return false;
+  p += k.length();
+
+  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+  if (p >= (int)body.length() || body[p] != '[') return false;
+  p++;
+
+  for (int i = 0; i < 3; i++) {
+    while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+
+    bool neg = false;
+    if (p < (int)body.length() && body[p] == '-') {
+      neg = true;
+      p++;
+    }
+
+    String num;
+    bool dotSeen = false;
+    while (p < (int)body.length()) {
+      char c = body[p];
+      if (c >= '0' && c <= '9') {
+        num += c;
+        p++;
+        continue;
+      }
+      if (c == '.' && !dotSeen) {
+        dotSeen = true;
+        num += c;
+        p++;
+        continue;
+      }
+      break;
+    }
+
+    if (num.isEmpty()) return false;
+    out[i] = neg ? -num.toFloat() : num.toFloat();
+
+    while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+    if (i < 2) {
+      if (p >= (int)body.length() || body[p] != ',') return false;
+      p++;
+    }
+  }
+
+  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+  return p < (int)body.length() && body[p] == ']';
+}
+
+static bool jsonU8Array3Local(const String& body, const char* key, uint8_t out[3]) {
+  float vals[3] = {0.0f, 0.0f, 0.0f};
+  if (!jsonFloatArray3Local(body, key, vals)) return false;
+  for (int i = 0; i < 3; i++) out[i] = vals[i] > 0.5f ? 1 : 0;
+  return true;
+}
+
+static String jsonEscapeLocal(const char* src) {
+  String out;
+  if (!src) return out;
+  for (size_t i = 0; src[i]; i++) {
+    char c = src[i];
+    if (c == '\\' || c == '"') out += '\\';
+    out += c;
+  }
+  return out;
+}
+
+static bool safeCopyLocal(char* dst, size_t dstSize, const String& src) {
+  if (!dst || dstSize == 0) return false;
+  if (src.length() >= dstSize) return false;
+  memcpy(dst, src.c_str(), src.length() + 1);
+  return true;
+}
+
 bool SettingsStore::begin(const char* nvsNamespace) {
   _ns = nvsNamespace ? nvsNamespace : "sp7";
   return _prefs.begin(_ns.c_str(), false);
@@ -63,29 +249,7 @@ void SettingsStore::load(SettingsV1 &out) {
     out.calPointValid[i]     = (uint8_t)_prefs.getUChar(keyVal, out.calPointValid[i]);
   }
 
-  if (out.backlight > 100) out.backlight = 100;
-  if (out.th.greenMax > 100) out.th.greenMax = 100;
-  if (out.th.orangeMax > 100) out.th.orangeMax = 100;
-  if (out.th.orangeMax < out.th.greenMax) out.th.orangeMax = out.th.greenMax;
-
-  if (out.historyMinutes < 1) out.historyMinutes = 1;
-  if (out.historyMinutes > 60) out.historyMinutes = 60;
-
-  if (out.orangeAlertHoldMs > 60000UL) out.orangeAlertHoldMs = 60000UL;
-  if (out.redAlertHoldMs > 60000UL) out.redAlertHoldMs = 60000UL;
-
-  if (out.analogRmsSamples < 32) out.analogRmsSamples = 32;
-  if (out.analogRmsSamples > 1024) out.analogRmsSamples = 1024;
-  if (out.audioResponseMode > 1) out.audioResponseMode = 0;
-
-  if (out.emaAlpha < 0.01f) out.emaAlpha = 0.01f;
-  if (out.emaAlpha > 0.95f) out.emaAlpha = 0.95f;
-
-  if (out.peakHoldMs < 500) out.peakHoldMs = 500;
-  if (out.peakHoldMs > 30000) out.peakHoldMs = 30000;
-
-  if (out.ntpSyncIntervalMs < 60000UL) out.ntpSyncIntervalMs = 60000UL;
-  if (out.ntpSyncIntervalMs > 86400000UL) out.ntpSyncIntervalMs = 86400000UL;
+  sanitize(out);
 }
 
 void SettingsStore::save(const SettingsV1 &s) {
@@ -144,4 +308,261 @@ void SettingsStore::save(const SettingsV1 &s) {
 
 void SettingsStore::factoryReset() {
   _prefs.clear();
+}
+
+void SettingsStore::sanitize(SettingsV1& s) {
+  if (s.backlight > 100) s.backlight = 100;
+  if (s.th.greenMax > 100) s.th.greenMax = 100;
+  if (s.th.orangeMax > 100) s.th.orangeMax = 100;
+  if (s.th.orangeMax < s.th.greenMax) s.th.orangeMax = s.th.greenMax;
+
+  if (s.historyMinutes < 1) s.historyMinutes = 1;
+  if (s.historyMinutes > 60) s.historyMinutes = 60;
+
+  if (s.orangeAlertHoldMs > 60000UL) s.orangeAlertHoldMs = 60000UL;
+  if (s.redAlertHoldMs > 60000UL) s.redAlertHoldMs = 60000UL;
+
+  if (s.audioSource > 1) s.audioSource = 1;
+  if (s.analogRmsSamples < 32) s.analogRmsSamples = 32;
+  if (s.analogRmsSamples > 1024) s.analogRmsSamples = 1024;
+  if (s.audioResponseMode > 1) s.audioResponseMode = 0;
+  if (s.emaAlpha < 0.01f) s.emaAlpha = 0.01f;
+  if (s.emaAlpha > 0.95f) s.emaAlpha = 0.95f;
+  if (s.peakHoldMs < 500) s.peakHoldMs = 500;
+  if (s.peakHoldMs > 30000UL) s.peakHoldMs = 30000UL;
+
+  if (s.ntpSyncIntervalMs < 60000UL) s.ntpSyncIntervalMs = 60000UL;
+  if (s.ntpSyncIntervalMs > 86400000UL) s.ntpSyncIntervalMs = 86400000UL;
+
+  if (s.otaPort == 0) s.otaPort = 3232;
+  if (s.mqttPort == 0) s.mqttPort = 1883;
+  if (s.mqttPublishPeriodMs < 250) s.mqttPublishPeriodMs = 250;
+  if (s.mqttPublishPeriodMs > 60000) s.mqttPublishPeriodMs = 60000;
+  s.otaEnabled = s.otaEnabled ? 1 : 0;
+  s.mqttEnabled = s.mqttEnabled ? 1 : 0;
+  s.mqttRetain = s.mqttRetain ? 1 : 0;
+
+  for (int i = 0; i < 3; i++) s.calPointValid[i] = s.calPointValid[i] ? 1 : 0;
+}
+
+String SettingsStore::exportJson(const SettingsV1& s) const {
+  String json;
+  json.reserve(2048);
+  json += "{";
+  json += "\"type\":\"soundpanel7-config\",";
+  json += "\"version\":"; json += String(SETTINGS_VERSION); json += ",";
+  json += "\"backlight\":"; json += String(s.backlight); json += ",";
+  json += "\"greenMax\":"; json += String(s.th.greenMax); json += ",";
+  json += "\"orangeMax\":"; json += String(s.th.orangeMax); json += ",";
+  json += "\"historyMinutes\":"; json += String(s.historyMinutes); json += ",";
+  json += "\"warningHoldSec\":"; json += String(s.orangeAlertHoldMs / 1000UL); json += ",";
+  json += "\"criticalHoldSec\":"; json += String(s.redAlertHoldMs / 1000UL); json += ",";
+  json += "\"tz\":\""; json += jsonEscapeLocal(s.tz); json += "\",";
+  json += "\"ntpServer\":\""; json += jsonEscapeLocal(s.ntpServer); json += "\",";
+  json += "\"ntpSyncMinutes\":"; json += String(s.ntpSyncIntervalMs / 60000UL); json += ",";
+  json += "\"hostname\":\""; json += jsonEscapeLocal(s.hostname); json += "\",";
+  json += "\"audioSource\":"; json += String(s.audioSource); json += ",";
+  json += "\"analogPin\":"; json += String(s.analogPin); json += ",";
+  json += "\"analogRmsSamples\":"; json += String(s.analogRmsSamples); json += ",";
+  json += "\"audioResponseMode\":"; json += String(s.audioResponseMode); json += ",";
+  json += "\"emaAlpha\":"; json += String(s.emaAlpha, 4); json += ",";
+  json += "\"peakHoldMs\":"; json += String(s.peakHoldMs); json += ",";
+  json += "\"analogBaseOffsetDb\":"; json += String(s.analogBaseOffsetDb, 4); json += ",";
+  json += "\"analogExtraOffsetDb\":"; json += String(s.analogExtraOffsetDb, 4); json += ",";
+  json += "\"calPointRefDb\":["; json += String(s.calPointRefDb[0], 2); json += ","; json += String(s.calPointRefDb[1], 2); json += ","; json += String(s.calPointRefDb[2], 2); json += "],";
+  json += "\"calPointRawLogRms\":["; json += String(s.calPointRawLogRms[0], 4); json += ","; json += String(s.calPointRawLogRms[1], 4); json += ","; json += String(s.calPointRawLogRms[2], 4); json += "],";
+  json += "\"calPointValid\":["; json += String(s.calPointValid[0]); json += ","; json += String(s.calPointValid[1]); json += ","; json += String(s.calPointValid[2]); json += "],";
+  json += "\"otaEnabled\":"; json += (s.otaEnabled ? "true" : "false"); json += ",";
+  json += "\"otaPort\":"; json += String(s.otaPort); json += ",";
+  json += "\"otaHostname\":\""; json += jsonEscapeLocal(s.otaHostname); json += "\",";
+  json += "\"otaPassword\":\""; json += jsonEscapeLocal(s.otaPassword); json += "\",";
+  json += "\"mqttEnabled\":"; json += (s.mqttEnabled ? "true" : "false"); json += ",";
+  json += "\"mqttHost\":\""; json += jsonEscapeLocal(s.mqttHost); json += "\",";
+  json += "\"mqttPort\":"; json += String(s.mqttPort); json += ",";
+  json += "\"mqttUsername\":\""; json += jsonEscapeLocal(s.mqttUsername); json += "\",";
+  json += "\"mqttPassword\":\""; json += jsonEscapeLocal(s.mqttPassword); json += "\",";
+  json += "\"mqttClientId\":\""; json += jsonEscapeLocal(s.mqttClientId); json += "\",";
+  json += "\"mqttBaseTopic\":\""; json += jsonEscapeLocal(s.mqttBaseTopic); json += "\",";
+  json += "\"mqttPublishPeriodMs\":"; json += String(s.mqttPublishPeriodMs); json += ",";
+  json += "\"mqttRetain\":"; json += (s.mqttRetain ? "true" : "false");
+  json += "}";
+  return json;
+}
+
+bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
+  SettingsV1 next = s;
+
+  next.backlight = (uint8_t)jsonIntLocal(json, "backlight", next.backlight);
+  next.th.greenMax = (uint8_t)jsonIntLocal(json, "greenMax", next.th.greenMax);
+  next.th.orangeMax = (uint8_t)jsonIntLocal(json, "orangeMax", next.th.orangeMax);
+  next.historyMinutes = (uint8_t)jsonIntLocal(json, "historyMinutes", next.historyMinutes);
+  next.orangeAlertHoldMs = (uint32_t)jsonIntLocal(json, "warningHoldSec", (int)(next.orangeAlertHoldMs / 1000UL)) * 1000UL;
+  next.redAlertHoldMs = (uint32_t)jsonIntLocal(json, "criticalHoldSec", (int)(next.redAlertHoldMs / 1000UL)) * 1000UL;
+
+  String tz = jsonStrLocal(json, "tz", String(next.tz));
+  String ntp = jsonStrLocal(json, "ntpServer", String(next.ntpServer));
+  String hostname = jsonStrLocal(json, "hostname", String(next.hostname));
+  if (!safeCopyLocal(next.tz, sizeof(next.tz), tz)) {
+    if (err) *err = "tz too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.ntpServer, sizeof(next.ntpServer), ntp)) {
+    if (err) *err = "ntpServer too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.hostname, sizeof(next.hostname), hostname)) {
+    if (err) *err = "hostname too long";
+    return false;
+  }
+  next.ntpSyncIntervalMs = (uint32_t)jsonIntLocal(json, "ntpSyncMinutes", (int)(next.ntpSyncIntervalMs / 60000UL)) * 60000UL;
+
+  next.audioSource = (uint8_t)jsonIntLocal(json, "audioSource", next.audioSource);
+  next.analogPin = (uint8_t)jsonIntLocal(json, "analogPin", next.analogPin);
+  next.analogRmsSamples = (uint16_t)jsonIntLocal(json, "analogRmsSamples", next.analogRmsSamples);
+  next.audioResponseMode = (uint8_t)jsonIntLocal(json, "audioResponseMode", next.audioResponseMode);
+  next.emaAlpha = jsonFloatLocal(json, "emaAlpha", next.emaAlpha);
+  next.peakHoldMs = (uint32_t)jsonIntLocal(json, "peakHoldMs", next.peakHoldMs);
+  next.analogBaseOffsetDb = jsonFloatLocal(json, "analogBaseOffsetDb", next.analogBaseOffsetDb);
+  next.analogExtraOffsetDb = jsonFloatLocal(json, "analogExtraOffsetDb", next.analogExtraOffsetDb);
+
+  float calRef[3];
+  if (jsonFloatArray3Local(json, "calPointRefDb", calRef)) {
+    for (int i = 0; i < 3; i++) next.calPointRefDb[i] = calRef[i];
+  }
+  float calRaw[3];
+  if (jsonFloatArray3Local(json, "calPointRawLogRms", calRaw)) {
+    for (int i = 0; i < 3; i++) next.calPointRawLogRms[i] = calRaw[i];
+  }
+  uint8_t calValid[3];
+  if (jsonU8Array3Local(json, "calPointValid", calValid)) {
+    for (int i = 0; i < 3; i++) next.calPointValid[i] = calValid[i];
+  }
+
+  next.otaEnabled = jsonBoolLocal(json, "otaEnabled", next.otaEnabled != 0) ? 1 : 0;
+  next.otaPort = (uint16_t)jsonIntLocal(json, "otaPort", next.otaPort);
+  String otaHostname = jsonStrLocal(json, "otaHostname", String(next.otaHostname));
+  String otaPassword = jsonStrLocal(json, "otaPassword", String(next.otaPassword));
+  if (!safeCopyLocal(next.otaHostname, sizeof(next.otaHostname), otaHostname)) {
+    if (err) *err = "otaHostname too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.otaPassword, sizeof(next.otaPassword), otaPassword)) {
+    if (err) *err = "otaPassword too long";
+    return false;
+  }
+
+  next.mqttEnabled = jsonBoolLocal(json, "mqttEnabled", next.mqttEnabled != 0) ? 1 : 0;
+  next.mqttPort = (uint16_t)jsonIntLocal(json, "mqttPort", next.mqttPort);
+  next.mqttPublishPeriodMs = (uint16_t)jsonIntLocal(json, "mqttPublishPeriodMs", next.mqttPublishPeriodMs);
+  next.mqttRetain = jsonBoolLocal(json, "mqttRetain", next.mqttRetain != 0) ? 1 : 0;
+
+  String mqttHost = jsonStrLocal(json, "mqttHost", String(next.mqttHost));
+  String mqttUsername = jsonStrLocal(json, "mqttUsername", String(next.mqttUsername));
+  String mqttPassword = jsonStrLocal(json, "mqttPassword", String(next.mqttPassword));
+  String mqttClientId = jsonStrLocal(json, "mqttClientId", String(next.mqttClientId));
+  String mqttBaseTopic = jsonStrLocal(json, "mqttBaseTopic", String(next.mqttBaseTopic));
+
+  if (!safeCopyLocal(next.mqttHost, sizeof(next.mqttHost), mqttHost)) {
+    if (err) *err = "mqttHost too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.mqttUsername, sizeof(next.mqttUsername), mqttUsername)) {
+    if (err) *err = "mqttUsername too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.mqttPassword, sizeof(next.mqttPassword), mqttPassword)) {
+    if (err) *err = "mqttPassword too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.mqttClientId, sizeof(next.mqttClientId), mqttClientId)) {
+    if (err) *err = "mqttClientId too long";
+    return false;
+  }
+  if (!safeCopyLocal(next.mqttBaseTopic, sizeof(next.mqttBaseTopic), mqttBaseTopic)) {
+    if (err) *err = "mqttBaseTopic too long";
+    return false;
+  }
+
+  sanitize(next);
+  s = next;
+  return true;
+}
+
+bool SettingsStore::saveBackup(const SettingsV1& s) {
+  Preferences backupPrefs;
+  String backupNs = _ns + "_bak";
+  if (!backupPrefs.begin(backupNs.c_str(), false)) return false;
+  backupPrefs.putString("cfg", exportJson(s));
+  backupPrefs.end();
+  return true;
+}
+
+bool SettingsStore::restoreBackup(SettingsV1& out, String* err) {
+  Preferences backupPrefs;
+  String backupNs = _ns + "_bak";
+  if (!backupPrefs.begin(backupNs.c_str(), true)) {
+    if (err) *err = "backup unavailable";
+    return false;
+  }
+  String json = backupPrefs.getString("cfg", "");
+  backupPrefs.end();
+
+  if (!json.length()) {
+    if (err) *err = "backup empty";
+    return false;
+  }
+
+  return importJson(out, json, err);
+}
+
+bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err) {
+  SettingsV1 def;
+
+  if (scope == "ui") {
+    s.backlight = def.backlight;
+    s.th = def.th;
+    s.historyMinutes = def.historyMinutes;
+    s.orangeAlertHoldMs = def.orangeAlertHoldMs;
+    s.redAlertHoldMs = def.redAlertHoldMs;
+    s.audioResponseMode = def.audioResponseMode;
+  } else if (scope == "time") {
+    memcpy(s.tz, def.tz, sizeof(s.tz));
+    memcpy(s.ntpServer, def.ntpServer, sizeof(s.ntpServer));
+    s.ntpSyncIntervalMs = def.ntpSyncIntervalMs;
+    memcpy(s.hostname, def.hostname, sizeof(s.hostname));
+  } else if (scope == "audio") {
+    s.audioSource = def.audioSource;
+    s.analogPin = def.analogPin;
+    s.analogRmsSamples = def.analogRmsSamples;
+    s.audioResponseMode = def.audioResponseMode;
+    s.emaAlpha = def.emaAlpha;
+    s.peakHoldMs = def.peakHoldMs;
+    s.analogBaseOffsetDb = def.analogBaseOffsetDb;
+    s.analogExtraOffsetDb = def.analogExtraOffsetDb;
+  } else if (scope == "calibration") {
+    memcpy(s.calPointRefDb, def.calPointRefDb, sizeof(s.calPointRefDb));
+    memcpy(s.calPointRawLogRms, def.calPointRawLogRms, sizeof(s.calPointRawLogRms));
+    memcpy(s.calPointValid, def.calPointValid, sizeof(s.calPointValid));
+  } else if (scope == "ota") {
+    s.otaEnabled = def.otaEnabled;
+    s.otaPort = def.otaPort;
+    memcpy(s.otaHostname, def.otaHostname, sizeof(s.otaHostname));
+    memcpy(s.otaPassword, def.otaPassword, sizeof(s.otaPassword));
+  } else if (scope == "mqtt") {
+    s.mqttEnabled = def.mqttEnabled;
+    memcpy(s.mqttHost, def.mqttHost, sizeof(s.mqttHost));
+    s.mqttPort = def.mqttPort;
+    memcpy(s.mqttUsername, def.mqttUsername, sizeof(s.mqttUsername));
+    memcpy(s.mqttPassword, def.mqttPassword, sizeof(s.mqttPassword));
+    memcpy(s.mqttClientId, def.mqttClientId, sizeof(s.mqttClientId));
+    memcpy(s.mqttBaseTopic, def.mqttBaseTopic, sizeof(s.mqttBaseTopic));
+    s.mqttPublishPeriodMs = def.mqttPublishPeriodMs;
+    s.mqttRetain = def.mqttRetain;
+  } else {
+    if (err) *err = "unknown scope";
+    return false;
+  }
+
+  sanitize(s);
+  return true;
 }

@@ -105,6 +105,11 @@ void WebManager::routes() {
 
   _srv.on("/api/time", HTTP_GET,  [this]() { handleTimeGet(); });
   _srv.on("/api/time", HTTP_POST, [this]() { handleTimeSave(); });
+  _srv.on("/api/config/export", HTTP_GET, [this]() { handleConfigExport(); });
+  _srv.on("/api/config/import", HTTP_POST, [this]() { handleConfigImport(); });
+  _srv.on("/api/config/backup", HTTP_POST, [this]() { handleConfigBackup(); });
+  _srv.on("/api/config/restore", HTTP_POST, [this]() { handleConfigRestore(); });
+  _srv.on("/api/config/reset_partial", HTTP_POST, [this]() { handleConfigResetPartial(); });
 
   _srv.on("/api/ota", HTTP_GET,  [this]() { handleOtaGet(); });
   _srv.on("/api/ota", HTTP_POST, [this]() { handleOtaSave(); });
@@ -404,6 +409,21 @@ void WebManager::applyBacklightNow(uint8_t percent) {
   Serial0.printf("[WEB] Backlight ON (%u%%)\n", percent);
 }
 
+void WebManager::applySettingsRuntimeState() {
+  if (!_s) return;
+
+  applyBacklightNow(_s->backlight);
+
+  if (_history) _history->settingsChanged();
+
+  setenv("TZ", _s->tz, 1);
+  tzset();
+  configTzTime(_s->tz, _s->ntpServer);
+  sntp_set_sync_interval(_s->ntpSyncIntervalMs);
+  sntp_restart();
+  WiFi.setHostname(_s->hostname);
+}
+
 String WebManager::historyJson() const {
   return _history ? _history->toJson() : String("[]");
 }
@@ -528,18 +548,98 @@ void WebManager::handleTimeSave() {
   _s->ntpSyncIntervalMs = (uint32_t)ntpSyncMinutes * 60000UL;
 
   _store->save(*_s);
-
-  setenv("TZ", _s->tz, 1);
-  tzset();
-  configTzTime(_s->tz, _s->ntpServer);
-  sntp_set_sync_interval(_s->ntpSyncIntervalMs);
-  sntp_restart();
-  WiFi.setHostname(_s->hostname);
+  applySettingsRuntimeState();
 
   Serial0.printf("[WEB] TIME saved: tz='%s' ntp='%s' interval=%lu ms hostname='%s'\n",
                  _s->tz, _s->ntpServer, (unsigned long)_s->ntpSyncIntervalMs, _s->hostname);
 
   replyJson(200, "{\"ok\":true}\n");
+}
+
+void WebManager::handleConfigExport() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  replyJson(200, _store->exportJson(*_s));
+}
+
+void WebManager::handleConfigImport() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  String err;
+  String body = _srv.arg("plain");
+  if (!_store->importJson(*_s, body, &err)) {
+    String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
+    replyJson(400, json);
+    return;
+  }
+
+  _store->save(*_s);
+  applySettingsRuntimeState();
+  pushLiveMetrics(true);
+  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+}
+
+void WebManager::handleConfigBackup() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  if (!_store->saveBackup(*_s)) {
+    replyJson(500, "{\"ok\":false,\"error\":\"backup failed\"}");
+    return;
+  }
+
+  replyJson(200, "{\"ok\":true}");
+}
+
+void WebManager::handleConfigRestore() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  String err;
+  if (!_store->restoreBackup(*_s, &err)) {
+    String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
+    replyJson(400, json);
+    return;
+  }
+
+  _store->save(*_s);
+  applySettingsRuntimeState();
+  pushLiveMetrics(true);
+  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+}
+
+void WebManager::handleConfigResetPartial() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  String body = _srv.arg("plain");
+  String scope = jsonStr(body, "scope", "");
+  scope.trim();
+  scope.toLowerCase();
+
+  String err;
+  if (!_store->resetSection(*_s, scope, &err)) {
+    String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
+    replyJson(400, json);
+    return;
+  }
+
+  _store->save(*_s);
+  applySettingsRuntimeState();
+  pushLiveMetrics(true);
+  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
 }
 
 void WebManager::handleReboot() {
@@ -989,10 +1089,11 @@ R"HTML(
     }
     .switch.active{background:var(--accent);border-color:transparent}
     .switch.active .switchTrack::after{transform:translateX(26px);background:#fff}
-    input[type="number"], input[type="text"], select{
+    input[type="number"], input[type="text"], input[type="file"], select, textarea{
       width:100%;border:1px solid var(--line);background:var(--panel3);color:var(--txt);
       border-radius:12px;padding:10px 12px;outline:none;font-weight:700;
     }
+    textarea{min-height:220px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
     .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
     .btn{
       appearance:none;border:1px solid var(--line);background:#172133;color:var(--txt);
@@ -1493,6 +1594,45 @@ R"HTML(
           </div>
 
           <div class="settingsRail">
+            <article class="card settingsCardSoft">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Sauvegarde</div>
+                  <h2 class="sectionTitle">Configuration JSON</h2>
+                </div>
+              </div>
+              <div class="field">
+                <label>JSON config</label>
+                <textarea id="configJsonBox" placeholder='{"type":"soundpanel7-config", ...}'></textarea>
+              </div>
+              <div class="field">
+                <label>Importer depuis un fichier JSON</label>
+                <input id="configFile" type="file" accept=".json,application/json"/>
+              </div>
+              <div class="hint">L'export inclut aussi les mots de passe OTA et MQTT.</div>
+              <div class="btnRow">
+                <button class="btn" id="exportConfigBtn">Exporter JSON</button>
+                <button class="btn accent" id="importConfigBtn">Importer JSON</button>
+              </div>
+              <div class="field">
+                <label>Reset partiel</label>
+                <select id="configResetScope">
+                  <option value="ui">UI</option>
+                  <option value="time">Heure / hostname</option>
+                  <option value="audio">Audio</option>
+                  <option value="calibration">Calibration</option>
+                  <option value="ota">OTA</option>
+                  <option value="mqtt">MQTT</option>
+                </select>
+              </div>
+              <div class="btnRow">
+                <button class="btn" id="backupConfigBtn">Backup usine</button>
+                <button class="btn" id="restoreConfigBtn">Restore</button>
+                <button class="btn danger" id="partialResetBtn">Reset partiel</button>
+              </div>
+              <div class="toast" id="configToast"></div>
+            </article>
+
             <article class="card actionsCard settingsCardSoft">
               <div class="sectionHead">
                 <div>
@@ -2068,6 +2208,15 @@ R"HTML(
     }
   }
 
+  async function refreshSettingsPanels() {
+    state.uiDirty = false;
+    state.calRefsDirty = [false, false, false];
+    await refreshStatus();
+    await loadTimeSettings();
+    await loadOtaSettings();
+    await loadMqttSettings();
+  }
+
   async function toggleBacklight() {
     const wasOn = $("bl").classList.contains("active");
     const nextOn = !wasOn;
@@ -2084,6 +2233,97 @@ R"HTML(
       $("bl").classList.toggle("active", wasOn);
       syncUiLabels();
       $("uiToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  function downloadTextFile(filename, text) {
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportFilename() {
+    const d = new Date();
+    const pad = (v) => String(v).padStart(2, "0");
+    return `soundpanel7-config-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+  }
+
+  async function exportConfig() {
+    $("configToast").textContent = "Export...";
+    try {
+      const cfg = await apiGet("/api/config/export");
+      const text = JSON.stringify(cfg, null, 2);
+      $("configJsonBox").value = text;
+      downloadTextFile(exportFilename(), text);
+      $("configToast").textContent = "Config exportee.";
+    } catch (err) {
+      $("configToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function importConfig() {
+    const raw = ($("configJsonBox").value || "").trim();
+    if (!raw) {
+      $("configToast").textContent = "Colle un JSON ou charge un fichier.";
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (err) {
+      $("configToast").textContent = `JSON invalide: ${err.message}`;
+      return;
+    }
+
+    $("configToast").textContent = "Import...";
+    try {
+      const r = await apiPost("/api/config/import", payload);
+      $("configToast").textContent = r.rebootRecommended ? "Config importee. Reboot recommande." : "Config importee.";
+      await refreshSettingsPanels();
+    } catch (err) {
+      $("configToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function backupConfig() {
+    $("configToast").textContent = "Backup...";
+    try {
+      await apiPost("/api/config/backup", {});
+      $("configToast").textContent = "Backup usine enregistre.";
+    } catch (err) {
+      $("configToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function restoreConfig() {
+    if (!confirm("Restaurer le backup usine ?")) return;
+    $("configToast").textContent = "Restore...";
+    try {
+      const r = await apiPost("/api/config/restore", {});
+      $("configToast").textContent = r.rebootRecommended ? "Backup restaure. Reboot recommande." : "Backup restaure.";
+      await refreshSettingsPanels();
+    } catch (err) {
+      $("configToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function partialReset() {
+    const scope = $("configResetScope").value;
+    if (!confirm(`Reset partiel ${scope} ?`)) return;
+    $("configToast").textContent = "Reset...";
+    try {
+      const r = await apiPost("/api/config/reset_partial", { scope });
+      $("configToast").textContent = r.rebootRecommended ? `Section ${scope} reset. Reboot recommande.` : `Section ${scope} reset.`;
+      await refreshSettingsPanels();
+    } catch (err) {
+      $("configToast").textContent = `Erreur: ${err.message}`;
     }
   }
 
@@ -2262,12 +2502,27 @@ R"HTML(
   window.addEventListener("resize", drawHistory);
 
   $("saveUi").addEventListener("click", saveUi);
+  $("exportConfigBtn").addEventListener("click", exportConfig);
+  $("importConfigBtn").addEventListener("click", importConfig);
+  $("backupConfigBtn").addEventListener("click", backupConfig);
+  $("restoreConfigBtn").addEventListener("click", restoreConfig);
+  $("partialResetBtn").addEventListener("click", partialReset);
   $("clearCalibration").addEventListener("click", clearCalibration);
   $("rebootBtn").addEventListener("click", reboot);
   $("factoryResetBtn").addEventListener("click", factoryReset);
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+  $("configFile").addEventListener("change", async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    try {
+      $("configJsonBox").value = await file.text();
+      $("configToast").textContent = `Fichier charge: ${file.name}`;
+    } catch (err) {
+      $("configToast").textContent = `Erreur lecture fichier: ${err.message}`;
+    }
+  });
 
   async function initPage() {
     syncUiLabels();
