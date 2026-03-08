@@ -15,48 +15,38 @@
 
 ---
 
-## Table Of Contents
+## Navigation
 
-- [Francais](#francais)
-- [Vision](#vision)
-- [Points forts](#points-forts)
-- [Cas d'usage](#cas-dusage)
-- [Fonctionnalites](#fonctionnalites)
-- [Materiel cible](#materiel-cible)
-- [Demarrage rapide](#demarrage-rapide)
-- [Configuration par defaut](#configuration-par-defaut)
-- [Interface web](#interface-web)
-- [Horloge NTP](#horloge-ntp)
-- [MQTT](#mqtt)
-- [Home Assistant](#home-assistant)
-- [OTA](#ota)
-- [Calibration](#calibration)
-- [Architecture](#architecture)
-- [Arborescence](#arborescence)
-- [Etat du projet](#etat-du-projet)
-- [Contribution](#contribution)
-- [English](#english)
-- [Overview](#overview)
-- [Key features](#key-features)
-- [Use cases](#use-cases)
-- [Hardware target](#hardware-target)
-- [Quick start](#quick-start)
-- [Default configuration](#default-configuration)
-- [Web interface](#web-interface)
-- [NTP clock](#ntp-clock)
-- [MQTT and Home Assistant](#mqtt-and-home-assistant)
-- [OTA updates](#ota-updates)
-- [Calibration workflow](#calibration-workflow)
-- [Firmware architecture](#firmware-architecture)
-- [Project layout](#project-layout)
-- [Project status](#project-status)
-- [License](#license)
+- [🇫🇷 Aller a la version francaise](#francais)
+- [🇬🇧 Go to the English version](#english)
 
 ---
 
 <a id="francais" name="francais"></a>
 
 ## 🇫🇷 Francais
+
+### Menu Francais
+
+- [Vision](#fr-vision)
+- [Points forts](#fr-points-forts)
+- [Cas d'usage](#fr-cas-dusage)
+- [Fonctionnalites](#fr-fonctionnalites)
+- [Materiel cible](#fr-materiel-cible)
+- [Demarrage rapide](#fr-demarrage-rapide)
+- [Configuration par defaut](#fr-configuration-par-defaut)
+- [Interface web](#fr-interface-web)
+- [Horloge NTP](#fr-horloge-ntp)
+- [MQTT](#fr-mqtt)
+- [Home Assistant](#fr-home-assistant)
+- [OTA](#fr-ota)
+- [Calibration](#fr-calibration)
+- [Architecture](#fr-architecture)
+- [Arborescence](#fr-arborescence)
+- [Etat du projet](#fr-etat-du-projet)
+- [Contribution](#fr-contribution)
+
+<a id="fr-vision"></a>
 
 ### ✨ Vision
 
@@ -82,6 +72,8 @@ et de s'integrer proprement dans un environnement connecte.
 
 ![SoundPanel 7 product overview](docs/images/soundpanel7-hero-overview.jpg)
 
+<a id="fr-points-forts"></a>
+
 ### 🚀 Points forts
 
 - Grand affichage tactile 7" lisible a distance
@@ -92,6 +84,8 @@ et de s'integrer proprement dans un environnement connecte.
 - **Home Assistant** via MQTT Discovery ou integration native
 - Mises a jour **OTA**
 - Stockage persistant des reglages
+
+<a id="fr-cas-dusage"></a>
 
 ### 🎯 Cas d'usage
 
@@ -105,6 +99,8 @@ et de s'integrer proprement dans un environnement connecte.
 ![SoundPanel 7 wall mounted in open space](docs/images/soundpanel7-wall-mounted-open-space.jpg)
 
 ![SoundPanel 7 in studio showing clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
+
+<a id="fr-fonctionnalites"></a>
 
 ### 🧩 Fonctionnalites
 
@@ -148,6 +144,8 @@ et de s'integrer proprement dans un environnement connecte.
 - integration Home Assistant native via Zeroconf/mDNS
 - OTA via `espota`
 
+<a id="fr-materiel-cible"></a>
+
 ### 🛠️ Materiel cible
 
 #### 🧠 Carte principale
@@ -179,6 +177,8 @@ Dans [`platformio.ini`](platformio.ini), le flag suivant est actif par defaut :
 ```
 
 Si tu branches une vraie entree analogique, verifie ce point avant d'evaluer le comportement du panneau.
+
+<a id="fr-demarrage-rapide"></a>
 
 ### ⚡ Demarrage rapide
 
@@ -228,6 +228,8 @@ Au boot, le firmware initialise successivement :
 6. l'interface web
 7. le moteur audio
 
+<a id="fr-configuration-par-defaut"></a>
+
 ### ⚙️ Configuration par defaut
 
 Valeurs actuelles du firmware :
@@ -243,6 +245,8 @@ Valeurs actuelles du firmware :
 - source audio par defaut : capteur analogique
 
 Ces reglages sont definis dans [`src/SettingsStore.h`](src/SettingsStore.h).
+
+<a id="fr-interface-web"></a>
 
 ### 🌐 Interface web
 
@@ -266,6 +270,8 @@ L'interface permet notamment de regler :
 
 ![SoundPanel 7 admin web interface](docs/images/soundpanel7-admin-web-interface.png)
 
+<a id="fr-horloge-ntp"></a>
+
 ### 🕒 Horloge NTP
 
 SoundPanel 7 est aussi une **grande horloge reseau**.
@@ -285,6 +291,8 @@ Le firmware gere :
 Par defaut, le serveur NTP configure est `fr.pool.ntp.org`.
 
 ![SoundPanel 7 studio clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
+
+<a id="fr-mqtt"></a>
 
 ### 📶 MQTT
 
@@ -311,6 +319,8 @@ soundpanel7/uptime
 soundpanel7/wifi/rssi
 soundpanel7/wifi/ip
 ```
+
+<a id="fr-home-assistant"></a>
 
 ### 🏠 Home Assistant
 
@@ -367,6 +377,8 @@ Si rien n'apparait, verifier en priorite :
 
 ![SoundPanel 7 Home Assistant discovery](docs/images/soundpanel7-home-assistant-discovery.png)
 
+<a id="fr-ota"></a>
+
 ### 🚀 OTA
 
 Quand l'OTA est configuree et activee sur l'appareil :
@@ -382,6 +394,8 @@ L'environnement OTA de [`platformio.ini`](platformio.ini) repose sur :
 - mot de passe OTA configurable
 
 Pense a ajuster `upload_port` a l'adresse IP reelle de ton appareil.
+
+<a id="fr-calibration"></a>
 
 ### 🎚️ Calibration
 
@@ -404,6 +418,8 @@ Le firmware stocke ensuite les points et corrige la lecture.
 
 ![SoundPanel 7 calibration workflow](docs/images/soundpanel7-calibration-workflow.png)
 
+<a id="fr-architecture"></a>
+
 ### 🧠 Architecture
 
 Le coeur du projet reste volontairement simple :
@@ -424,6 +440,8 @@ Composants principaux :
 - [`src/OtaManager.cpp`](src/OtaManager.cpp) : OTA
 - [`src/SettingsStore.cpp`](src/SettingsStore.cpp) : persistance NVS
 
+<a id="fr-arborescence"></a>
+
 ### 📁 Arborescence
 
 ```text
@@ -435,6 +453,8 @@ Composants principaux :
 └── platformio.ini             Build, flash et environnements
 ```
 
+<a id="fr-etat-du-projet"></a>
+
 ### 🔧 Etat du projet
 
 Le projet est deja exploitable, mais reste evolutif :
@@ -445,6 +465,8 @@ Le projet est deja exploitable, mais reste evolutif :
 - certains parametres de `platformio.ini` sont ajustes pour la machine de dev actuelle
 
 En clair : c'est un projet serieux, vivant, et deja tres utile.
+
+<a id="fr-contribution"></a>
 
 ### 🤝 Contribution
 
@@ -470,6 +492,26 @@ Point d'entree recommande :
 
 ## 🇬🇧 English
 
+### English Menu
+
+- [Overview](#en-overview)
+- [Key features](#en-key-features)
+- [Use cases](#en-use-cases)
+- [Hardware target](#en-hardware-target)
+- [Quick start](#en-quick-start)
+- [Default configuration](#en-default-configuration)
+- [Web interface](#en-web-interface)
+- [NTP clock](#en-ntp-clock)
+- [MQTT and Home Assistant](#en-mqtt-and-home-assistant)
+- [OTA updates](#en-ota-updates)
+- [Calibration workflow](#en-calibration-workflow)
+- [Firmware architecture](#en-firmware-architecture)
+- [Project layout](#en-project-layout)
+- [Project status](#en-project-status)
+- [License](#en-license)
+
+<a id="en-overview"></a>
+
 ### ✨ Overview
 
 SoundPanel 7 is a connected wall panel that makes two things instantly visible:
@@ -494,6 +536,8 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 
 ![SoundPanel 7 product overview](docs/images/soundpanel7-hero-overview.jpg)
 
+<a id="en-key-features"></a>
+
 ### 🚀 Key features
 
 - Large 7" touchscreen display readable from a distance
@@ -504,6 +548,8 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 - **Home Assistant** through MQTT Discovery or native custom integration
 - **OTA** firmware updates
 - Persistent settings storage
+
+<a id="en-use-cases"></a>
 
 ### 🎯 Use cases
 
@@ -517,6 +563,8 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 ![SoundPanel 7 wall mounted in open space](docs/images/soundpanel7-wall-mounted-open-space.jpg)
 
 ![SoundPanel 7 in studio showing clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
+
+<a id="en-hardware-target"></a>
 
 ### 🛠️ Hardware target
 
@@ -549,6 +597,8 @@ In [`platformio.ini`](platformio.ini), this flag is enabled by default:
 ```
 
 If you connect a real analog input, check that setting first before judging the panel's behavior.
+
+<a id="en-quick-start"></a>
 
 ### ⚡ Quick start
 
@@ -598,6 +648,8 @@ At boot, the firmware initializes:
 6. web interface
 7. audio engine
 
+<a id="en-default-configuration"></a>
+
 ### ⚙️ Default configuration
 
 Current firmware defaults:
@@ -613,6 +665,8 @@ Current firmware defaults:
 - default audio source: analog sensor
 
 These settings are defined in [`src/SettingsStore.h`](src/SettingsStore.h).
+
+<a id="en-web-interface"></a>
 
 ### 🌐 Web interface
 
@@ -636,6 +690,8 @@ The interface lets you configure:
 
 ![SoundPanel 7 admin web interface](docs/images/soundpanel7-admin-web-interface.png)
 
+<a id="en-ntp-clock"></a>
+
 ### 🕒 NTP clock
 
 SoundPanel 7 is also a **large network clock**.
@@ -655,6 +711,8 @@ The firmware handles:
 The default NTP server is `fr.pool.ntp.org`.
 
 ![SoundPanel 7 studio clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
+
+<a id="en-mqtt-and-home-assistant"></a>
 
 ### 📶 MQTT and Home Assistant
 
@@ -726,6 +784,8 @@ If the device does not show up, check:
 
 ![SoundPanel 7 Home Assistant discovery](docs/images/soundpanel7-home-assistant-discovery.png)
 
+<a id="en-ota-updates"></a>
+
 ### 🚀 OTA updates
 
 Once OTA is configured and enabled on the device:
@@ -741,6 +801,8 @@ The OTA environment in [`platformio.ini`](platformio.ini) uses:
 - configurable OTA password
 
 Remember to adjust `upload_port` to the real IP address of your device.
+
+<a id="en-calibration-workflow"></a>
 
 ### 🎚️ Calibration workflow
 
@@ -763,6 +825,8 @@ Typical useful values:
 
 The firmware stores those points and applies the correction curve accordingly.
 
+<a id="en-firmware-architecture"></a>
+
 ### 🧠 Firmware architecture
 
 The core flow remains intentionally simple:
@@ -783,6 +847,8 @@ Main components:
 - [`src/OtaManager.cpp`](src/OtaManager.cpp): OTA updates
 - [`src/SettingsStore.cpp`](src/SettingsStore.cpp): NVS persistence
 
+<a id="en-project-layout"></a>
+
 ### 📁 Project layout
 
 ```text
@@ -794,6 +860,8 @@ Main components:
 └── platformio.ini             Build, flash, and environments
 ```
 
+<a id="en-project-status"></a>
+
 ### 🔧 Project status
 
 The project is already useful and operational, but still evolving:
@@ -804,6 +872,8 @@ The project is already useful and operational, but still evolving:
 - some `platformio.ini` values are tuned for the current development machine
 
 In short: this is a serious project, a living one, and already a very practical tool.
+
+<a id="en-license"></a>
 
 ## 📜 License
 
