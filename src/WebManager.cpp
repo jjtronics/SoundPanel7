@@ -93,7 +93,6 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
 
 void WebManager::routes() {
   _srv.on("/", HTTP_GET, [this]() { handleRoot(); });
-  _srv.on("/admin", HTTP_GET, [this]() { handleAdmin(); });
 
   _srv.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
 
@@ -534,7 +533,8 @@ void WebManager::handleOtaGet() {
   json += "{";
   json += "\"enabled\":"; json += (_s->otaEnabled ? "true" : "false"); json += ",";
   json += "\"port\":"; json += String(_s->otaPort); json += ",";
-  json += "\"hostname\":\""; json += String(_s->otaHostname); json += "\"";
+  json += "\"hostname\":\""; json += String(_s->otaHostname); json += "\",";
+  json += "\"passwordConfigured\":"; json += (strlen(_s->otaPassword) ? "true" : "false");
   json += "}";
 
   replyJson(200, json);
@@ -601,7 +601,8 @@ void WebManager::handleMqttGet() {
   json += "\"clientId\":\""; json += String(_s->mqttClientId); json += "\",";
   json += "\"baseTopic\":\""; json += String(_s->mqttBaseTopic); json += "\",";
   json += "\"publishPeriodMs\":"; json += String(_s->mqttPublishPeriodMs); json += ",";
-  json += "\"retain\":"; json += (_s->mqttRetain ? "true" : "false");
+  json += "\"retain\":"; json += (_s->mqttRetain ? "true" : "false"); json += ",";
+  json += "\"passwordConfigured\":"; json += (strlen(_s->mqttPassword) ? "true" : "false");
   json += "}";
 
   replyJson(200, json);
@@ -716,45 +717,106 @@ R"HTML(
   <title>SoundPanel 7</title>
   <style>
     :root{
-      --bg:#0B0F14; --panel:#111824; --panel2:#0F1722; --txt:#DFE7EF; --muted:#8EA1B3;
-      --line:#1E2A38; --green:#23C552; --orange:#F0A202; --red:#E53935;
-      --radius:18px;
+      --bg:#0B0F14; --screenRed:#22080B; --panel:#111824; --panel2:#0F1722; --panel3:#0E141C;
+      --txt:#DFE7EF; --muted:#8EA1B3; --line:#1E2A38;
+      --green:#23C552; --orange:#F0A202; --red:#E53935; --accent:#7A1E2C;
+      --radius:22px;
       font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
     }
     *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--txt)}
-    .wrap{max-width:980px;margin:0 auto;padding:16px}
+    body{margin:0;background:var(--bg);color:var(--txt);transition:background .2s ease}
+    .shell{max-width:1120px;margin:0 auto;padding:0 16px 24px}
     .top{
-      height:70px;background:var(--panel2);border-bottom:1px solid var(--line);
-      display:flex;align-items:center;justify-content:space-between;padding:0 16px;
-      position:sticky;top:0;z-index:10;
+      position:sticky;top:0;z-index:20;
+      background:rgba(15,23,34,.92);backdrop-filter:blur(14px);
+      border-bottom:1px solid var(--line);
     }
+    .topInner{
+      max-width:1120px;margin:0 auto;padding:14px 16px 12px;
+      display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;
+    }
+    .brand{display:flex;flex-direction:column;gap:3px}
     .title{font-size:22px;font-weight:700;letter-spacing:.2px}
-    .gear{
-      width:52px;height:42px;border-radius:14px;border:1px solid var(--line);
-      display:flex;align-items:center;justify-content:center;
-      background:#172133;color:var(--txt);text-decoration:none;font-size:22px;
+    .subtitle{font-size:12px;color:var(--muted)}
+    .tabs{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+    .tab{
+      appearance:none;border:0;cursor:pointer;
+      padding:10px 14px;border-radius:12px;
+      background:var(--panel3);color:var(--muted);font-weight:700;font-size:13px;
+      transition:background .15s ease,color .15s ease,transform .15s ease;
     }
-
-    .dash{
-      min-height:calc(100vh - 70px);
-      display:flex;flex-direction:column;gap:14px;
-      padding:18px 0;
+    .tab.active{background:var(--accent);color:#fff}
+    .tab:active{transform:translateY(1px)}
+    .pages{padding-top:18px}
+    .page{display:none}
+    .page.active{display:block}
+    .stack{display:flex;flex-direction:column;gap:14px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .gridOverview{
+      display:grid;grid-template-columns:245px minmax(280px,1fr) 245px;gap:14px;align-items:stretch;
     }
-
+    .rightCol{display:grid;grid-template-rows:1fr 1fr;gap:14px}
+    .card{
+      position:relative;
+      background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;
+      box-shadow:0 12px 34px rgba(0,0,0,.24);
+    }
+    .card.clockCard{background:#101A28}
+    .card.soundCard.alertOrange{
+      background:#3D2810;border-color:#F0A202;box-shadow:0 0 0 2px rgba(240,162,2,.18), 0 12px 34px rgba(0,0,0,.24);
+    }
+    .card.soundCard.alertRed{
+      background:#4A161B;border-color:#FF5A5F;box-shadow:0 0 0 3px rgba(255,90,95,.28), 0 12px 34px rgba(0,0,0,.3);
+    }
+    .sectionTitle{font-size:24px;font-weight:800;margin:0}
+    .k{font-size:14px;color:var(--muted)}
+    .v{font-size:30px;font-weight:800;margin-top:10px}
+    .metricCard{
+      background:var(--panel3);border:1px solid rgba(255,255,255,.03);
+      border-radius:22px;padding:18px;
+    }
+    .clockMiniDate,.clockDate{color:var(--muted);font-variant-numeric:tabular-nums}
+    .clockMiniDate{font-size:16px;text-align:center}
+    .clockMiniMain{
+      font-size:56px;font-weight:800;letter-spacing:-2px;text-align:center;
+      margin-top:34px;font-variant-numeric:tabular-nums;
+    }
+    .clockMiniSec{
+      width:78px;height:34px;border-radius:12px;background:var(--accent);color:#fff;
+      display:grid;place-items:center;margin:30px 0 0 auto;font-weight:800;font-variant-numeric:tabular-nums;
+    }
+    .clockHero{
+      min-height:362px;padding:28px;background:#101A28;
+      display:flex;flex-direction:column;justify-content:center;overflow:hidden;
+    }
+    .clockRule{height:2px;background:#243244;border-radius:99px;margin-top:12px}
+    .clockHeroDate{position:absolute;top:24px;right:28px;font-size:24px}
+    .clockHeroRow{
+      display:flex;align-items:center;justify-content:center;gap:12px;
+      margin-top:18px;
+    }
+    .clockHeroMain{
+      font-size:clamp(72px,14vw,170px);font-weight:800;line-height:.9;letter-spacing:-5px;
+      font-variant-numeric:tabular-nums;
+    }
+    .clockHeroSec{
+      width:min(29vw,262px);height:min(17vw,156px);border-radius:24px;background:var(--accent);
+      display:grid;place-items:center;font-size:clamp(42px,9vw,120px);font-weight:800;
+      font-variant-numeric:tabular-nums;line-height:1;color:#fff;flex:0 0 auto;
+    }
     .gaugeWrap{
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      gap:10px;padding-top:8px;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+      height:100%;
     }
-
     .gauge{
-      width:min(78vw,420px);height:min(78vw,420px);border-radius:50%;
-      display:grid;place-items:center;position:relative;
+      width:min(72vw,240px);height:min(72vw,240px);border-radius:50%;
+      display:grid;place-items:center;position:relative;flex:0 0 auto;
       background:
         radial-gradient(circle at center, #0B0F14 0 57%, transparent 58%),
         conic-gradient(var(--gaugeColor, var(--green)) calc(var(--pct)*1%), #1A2332 0);
       transform:rotate(135deg);
     }
+    .gauge.large{width:min(58vw,240px);height:min(58vw,240px)}
     .gauge::before{
       content:"";position:absolute;inset:18px;border-radius:50%;
       background:radial-gradient(circle at center, #0B0F14 0 61%, transparent 62%);
@@ -764,29 +826,26 @@ R"HTML(
       transform:rotate(-135deg);z-index:2;
     }
     .db{font-size:clamp(52px,10vw,88px);font-weight:800;line-height:1;color:var(--txt);}
+    .db.large{font-size:56px}
     .unit{font-size:clamp(18px,3vw,24px);color:var(--muted);margin-top:4px;}
     .dot{width:14px;height:14px;border-radius:50%;background:var(--gaugeColor, var(--green));margin-top:14px;}
-
-    .cards{
-      display:grid;grid-template-columns:1fr 1fr;gap:12px;width:min(92vw,760px);margin-top:8px;
+    .soundHero{
+      display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:center;min-height:240px;
     }
-    .card{
-      background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;
-      box-shadow:0 10px 30px rgba(0,0,0,.22);
+    .soundMetrics{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .alertBadge{
+      position:absolute;top:18px;left:258px;
+      min-width:112px;height:34px;padding:0 16px;border-radius:17px;background:var(--red);
+      display:none;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:800;
     }
-    .card .k{color:var(--muted);font-size:14px}
-    .card .v{font-size:30px;font-weight:800;margin-top:10px}
-
-    .histCard{
-      width:min(92vw,760px);
-      background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;
-      box-shadow:0 10px 30px rgba(0,0,0,.22);
-      overflow:hidden;
-    }
+    .alertBadge.show{display:flex}
+    .histCard{overflow:hidden}
     .histTop{
-      display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;
+      display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin-bottom:10px;
     }
     .histMeta{font-size:12px;color:var(--muted)}
+    .histMeta.center{text-align:center}
+    .histMeta.right{text-align:right}
     .chartWrap{
       position:relative;width:100%;height:220px;overflow:visible;
       padding:0;
@@ -800,6 +859,7 @@ R"HTML(
       padding:10px 10px 14px;
       display:flex;align-items:flex-end;
       overflow:hidden;
+      min-width:0;
     }
     .histScale{
       position:relative;width:64px;height:100%;
@@ -840,10 +900,10 @@ R"HTML(
       font-variant-numeric:tabular-nums;
     }
     .histBars{
-      width:100%;height:100%;display:flex;align-items:flex-end;gap:2px;
+      width:100%;height:100%;display:flex;align-items:flex-end;gap:2px;min-width:0;
     }
     .histBar{
-      flex:1 1 0;min-width:2px;height:4px;border-radius:3px 3px 0 0;
+      flex:1 1 0;min-width:0;height:4px;border-radius:3px 3px 0 0;
       background:#1A2332;
     }
     .histAxis{
@@ -854,1022 +914,1250 @@ R"HTML(
     .histAxisMid{
       position:absolute;left:50%;transform:translateX(-50%);
     }
-
-    .bottom{
-      display:flex;justify-content:space-between;align-items:center;
-      color:#6F8192;font-size:16px;padding:0 6px;margin-top:4px;
+    .settingsPage{display:grid;grid-template-columns:minmax(0,1.35fr) 360px;gap:14px}
+    .settingsMain,.settingsRail{display:flex;flex-direction:column;gap:14px}
+    .settingsHero{
+      background:
+        radial-gradient(circle at top right, rgba(122,30,44,.34), transparent 34%),
+        linear-gradient(135deg, #131d2b 0%, #111824 58%, #0f1621 100%);
     }
-
+    .sectionHead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+    .sectionKicker{
+      font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#93a4b6;
+    }
+    .sectionLead{font-size:13px;color:var(--muted);max-width:52ch;line-height:1.5}
+    .sectionMeta{
+      display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
+      background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05);font-size:12px;color:#d8e0e8;
+    }
+    .settingsCardSoft{background:linear-gradient(180deg, #111824 0%, #0f1621 100%)}
+    .settingsCardFlat{background:#101722}
+    .field{display:flex;flex-direction:column;gap:6px}
+    .field + .field{margin-top:12px}
+    label{font-size:12px;color:var(--muted)}
+    input[type="range"]{width:100%}
+    input[type="number"], input[type="text"], select{
+      width:100%;border:1px solid var(--line);background:var(--panel3);color:var(--txt);
+      border-radius:12px;padding:10px 12px;outline:none;font-weight:700;
+    }
+    .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .btn{
+      appearance:none;border:1px solid var(--line);background:#172133;color:var(--txt);
+      padding:10px 14px;border-radius:12px;font-weight:800;cursor:pointer;
+    }
+    .btn.accent{background:var(--accent);border-color:transparent}
+    .btn.danger{background:#341419;border-color:#4A161B}
+    .btn.ghost{background:transparent}
+    .choiceRow{display:flex;gap:10px;flex-wrap:wrap}
+    .choice{flex:1 1 120px}
+    .choice.active{background:var(--accent);color:#fff;border-color:transparent}
+    .statusList{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+    .statusItem{
+      background:var(--panel3);border:1px solid rgba(255,255,255,.03);border-radius:16px;padding:14px;
+    }
+    .statusItem .v{
+      font-size:18px;
+      line-height:1.2;
+      margin-top:8px;
+      font-weight:700;
+      letter-spacing:-.01em;
+    }
+    .healthBadge{
+      display:inline-flex;align-items:center;justify-content:center;
+      min-height:32px;padding:6px 12px;border-radius:999px;
+      font-size:12px;font-weight:800;letter-spacing:.02em;
+      border:1px solid transparent;
+      width:fit-content;margin:10px auto 0;
+    }
+    .healthBadge.ok{background:rgba(35,197,82,.12);color:#7ee2a0;border-color:rgba(35,197,82,.2)}
+    .healthBadge.bad{background:rgba(229,57,53,.12);color:#ff8f8a;border-color:rgba(229,57,53,.2)}
+    .statusList.compact .statusItem{padding:12px 13px}
+    .settingsSplit{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .actionsCard .btnRow{margin-top:10px}
+    .hint,.toast,.footerLine{font-size:12px;color:var(--muted);line-height:1.45}
+    .calHeader{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
+    }
+    .calRows{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+    .calRow{
+      display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;gap:10px;align-items:center;
+      background:var(--panel3);border-radius:18px;padding:12px 14px;
+    }
+    .calTitle{font-size:15px;font-weight:800}
+    .badge{
+      min-width:74px;height:34px;border-radius:12px;background:#16202E;
+      display:grid;place-items:center;font-size:14px;font-weight:800;
+    }
+    .mono{font-variant-numeric:tabular-nums}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
+      border:1px solid var(--line);background:var(--panel3);font-size:12px;color:var(--muted);
+    }
+    @media (max-width:1024px){
+      .gridOverview{grid-template-columns:1fr}
+      .rightCol{grid-template-columns:1fr 1fr;grid-template-rows:none}
+      .settingsPage{grid-template-columns:1fr}
+    }
+    @media (max-width:760px){
+      .topInner{grid-template-columns:1fr;justify-items:start}
+      .tabs{justify-content:flex-start}
+      .soundHero{grid-template-columns:1fr}
+      .soundMetrics{grid-template-columns:1fr}
+      .statusList{grid-template-columns:1fr}
+      .settingsSplit{grid-template-columns:1fr}
+      .grid2{grid-template-columns:1fr}
+      .calRow{grid-template-columns:1fr 34px 74px 34px 110px}
+      .clockHeroDate{position:static;margin-top:6px}
+      .clockHeroRow{justify-content:flex-start;flex-wrap:wrap}
+      .alertBadge{left:auto;right:18px;top:18px}
+    }
     @media (max-width:700px){
-      .cards{grid-template-columns:1fr}
-      .bottom{flex-direction:column;gap:8px}
       .title{font-size:18px}
       .chartWrap{height:180px}
+      .histScale{width:52px;flex-basis:52px}
+      .histBars{gap:1px}
     }
   </style>
 </head>
 <body>
   <div class="top">
-    <div class="title">SoundPanel 7</div>
-    <a class="gear" href="/admin" title="Administration">⚙</a>
-  </div>
-
-  <div class="wrap">
-    <div class="dash">
-      <div class="gaugeWrap">
-        <div class="gauge" id="gauge" style="--pct:0;--gaugeColor:var(--green);">
-          <div class="gaugeInner">
-            <div class="db" id="db">--.-</div>
-            <div class="unit">dB</div>
-            <div class="dot" id="dot"></div>
-          </div>
-        </div>
-
-        <div class="cards">
-          <div class="card">
-            <div class="k">Leq</div>
-            <div class="v" id="leq">--.-</div>
-          </div>
-          <div class="card">
-            <div class="k">Peak</div>
-            <div class="v" id="peak">--.-</div>
-          </div>
-        </div>
-
-        <div class="histCard">
-          <div class="histTop">
-            <div class="histMeta" id="histMeta">Dernières minutes</div>
-          </div>
-          <div class="chartWrap">
-            <div class="chartPlot">
-              <div class="histBars" id="histBars"></div>
-            </div>
-            <div class="histScale">
-              <div class="histScaleTopTick"></div>
-              <div class="histScaleTopLabel">130 dB</div>
-              <div class="histScaleRow mid" style="bottom:68.4%">
-                <span class="histScaleTick"></span><span class="histScaleLabel">100 dB</span>
-              </div>
-              <div class="histScaleRow mid" style="bottom:36.8%">
-                <span class="histScaleTick"></span><span class="histScaleLabel">70 dB</span>
-              </div>
-              <div class="histScaleRow bottom35" style="bottom:0%">
-                <span class="histScaleTick"></span><span class="histScaleLabel">35 dB</span>
-              </div>
-            </div>
-          </div>
-          <div class="histAxis">
-            <div id="histLeft">-5m</div>
-            <div class="histAxisMid" id="histMid">-2m</div>
-            <div id="histRight">0</div>
-          </div>
-        </div>
+    <div class="topInner">
+      <div class="brand">
+        <div class="title">SoundPanel 7</div>
+        <div class="subtitle">Sonometre & Horloge connecte</div>
       </div>
-
-      <div class="bottom">
-        <div id="wifi">WiFi: --</div>
-        <div id="time">--:--:--</div>
+      <div class="tabs">
+        <button class="tab active" data-page="overview">Principal</button>
+        <button class="tab" data-page="clock">Horloge</button>
+        <button class="tab" data-page="sound">Sonometre</button>
+        <button class="tab" data-page="calibration">Calibration</button>
+        <button class="tab" data-page="settings">Parametres</button>
       </div>
     </div>
   </div>
 
+  <main class="shell">
+    <div class="pages">
+      <section class="page active" data-page="overview">
+        <div class="stack">
+          <div class="gridOverview">
+            <article class="card clockCard">
+              <div class="clockMiniDate mono" id="overviewClockDate">--/--/----</div>
+              <div class="clockMiniMain mono" id="overviewClockMain">--:--</div>
+              <div class="clockMiniSec mono" id="overviewClockSec">:--</div>
+            </article>
+
+            <article class="card soundCard" id="overviewSoundCard">
+              <div class="gaugeWrap">
+                <div class="gauge large" id="overviewGauge" style="--pct:0;--gaugeColor:var(--green);">
+                  <div class="gaugeInner">
+                    <div class="db large mono" id="overviewDb">--.-</div>
+                    <div class="unit">dB</div>
+                    <div class="dot" id="overviewDot"></div>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <div class="rightCol">
+              <article class="card">
+                <div class="k">Leq</div>
+                <div class="v mono" id="overviewLeq">--.-</div>
+              </article>
+              <article class="card">
+                <div class="k">Peak</div>
+                <div class="v mono" id="overviewPeak">--.-</div>
+              </article>
+            </div>
+          </div>
+
+          <article class="card histCard">
+            <div class="histTop">
+              <div class="histMeta" id="overviewHistMeta">Historique 5 min</div>
+              <div class="histMeta center" id="overviewAlertTime">Rouge 0 s / 5m</div>
+              <div class="histMeta right"></div>
+            </div>
+            <div class="chartWrap">
+              <div class="chartPlot">
+                <div class="histBars" id="overviewHistBars"></div>
+              </div>
+              <div class="histScale">
+                <div class="histScaleTopTick"></div>
+                <div class="histScaleTopLabel">130 dB</div>
+                <div class="histScaleRow mid" style="bottom:68.4%">
+                  <span class="histScaleTick"></span><span class="histScaleLabel">100 dB</span>
+                </div>
+                <div class="histScaleRow mid" style="bottom:36.8%">
+                  <span class="histScaleTick"></span><span class="histScaleLabel">70 dB</span>
+                </div>
+                <div class="histScaleRow bottom35" style="bottom:0%">
+                  <span class="histScaleTick"></span><span class="histScaleLabel">35 dB</span>
+                </div>
+              </div>
+            </div>
+            <div class="histAxis">
+              <div id="overviewHistLeft">-5m</div>
+              <div class="histAxisMid" id="overviewHistMid">-2m</div>
+              <div id="overviewHistRight">0</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" data-page="clock">
+        <article class="card clockHero">
+          <div class="clockRule"></div>
+          <div class="clockDate clockHeroDate mono" id="clockDate">--/--/----</div>
+          <div class="clockHeroRow">
+            <div class="clockHeroMain mono" id="clockMain">--:--</div>
+            <div class="clockHeroSec mono" id="clockSec">--</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="page" data-page="sound">
+        <div class="stack">
+          <article class="card soundCard" id="soundCard">
+            <div class="alertBadge" id="soundAlertBadge">ALERTE</div>
+            <div class="soundHero">
+              <div class="gaugeWrap">
+                <div class="gauge large" id="soundGauge" style="--pct:0;--gaugeColor:var(--green);">
+                  <div class="gaugeInner">
+                    <div class="db large mono" id="soundDb">--.-</div>
+                    <div class="unit">dB</div>
+                    <div class="dot" id="soundDot"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="soundMetrics">
+                <article class="metricCard">
+                  <div class="k">Leq</div>
+                  <div class="v mono" id="soundLeq">--.-</div>
+                </article>
+                <article class="metricCard">
+                  <div class="k">Peak</div>
+                  <div class="v mono" id="soundPeak">--.-</div>
+                </article>
+              </div>
+            </div>
+          </article>
+
+          <article class="card histCard">
+            <div class="histTop">
+              <div class="histMeta" id="soundHistMeta">Historique 5 min</div>
+              <div class="histMeta center" id="soundAlertTime">Rouge 0 s / 5m</div>
+              <div class="histMeta right"></div>
+            </div>
+            <div class="chartWrap">
+              <div class="chartPlot">
+                <div class="histBars" id="soundHistBars"></div>
+              </div>
+              <div class="histScale">
+                <div class="histScaleTopTick"></div>
+                <div class="histScaleTopLabel">130 dB</div>
+                <div class="histScaleRow mid" style="bottom:68.4%">
+                  <span class="histScaleTick"></span><span class="histScaleLabel">100 dB</span>
+                </div>
+                <div class="histScaleRow mid" style="bottom:36.8%">
+                  <span class="histScaleTick"></span><span class="histScaleLabel">70 dB</span>
+                </div>
+                <div class="histScaleRow bottom35" style="bottom:0%">
+                  <span class="histScaleTick"></span><span class="histScaleLabel">35 dB</span>
+                </div>
+              </div>
+            </div>
+            <div class="histAxis">
+              <div id="soundHistLeft">-5m</div>
+              <div class="histAxisMid" id="soundHistMid">-2m</div>
+              <div id="soundHistRight">0</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" data-page="calibration">
+        <article class="card">
+          <div class="calHeader">
+            <div>
+              <h2 class="sectionTitle">Calibration</h2>
+              <div class="hint" id="calLiveMic">Micro live: --</div>
+              <div class="hint" id="calLiveLog">Log calibration live: --</div>
+            </div>
+            <div class="pill mono" id="calStatus">0 / 3 points valides</div>
+          </div>
+
+          <div class="calRows">
+            <div class="calRow">
+              <div>
+                <div class="calTitle">Point 1</div>
+                <div class="hint mono" id="calState1">Point 1 non capture</div>
+              </div>
+              <button class="btn" data-cal-adjust="0:-5">-</button>
+              <div class="badge mono" id="calRef1">40</div>
+              <button class="btn" data-cal-adjust="0:5">+</button>
+              <button class="btn accent" data-cal-capture="0">Capturer</button>
+            </div>
+
+            <div class="calRow">
+              <div>
+                <div class="calTitle">Point 2</div>
+                <div class="hint mono" id="calState2">Point 2 non capture</div>
+              </div>
+              <button class="btn" data-cal-adjust="1:-5">-</button>
+              <div class="badge mono" id="calRef2">65</div>
+              <button class="btn" data-cal-adjust="1:5">+</button>
+              <button class="btn accent" data-cal-capture="1">Capturer</button>
+            </div>
+
+            <div class="calRow">
+              <div>
+                <div class="calTitle">Point 3</div>
+                <div class="hint mono" id="calState3">Point 3 non capture</div>
+              </div>
+              <button class="btn" data-cal-adjust="2:-5">-</button>
+              <div class="badge mono" id="calRef3">85</div>
+              <button class="btn" data-cal-adjust="2:5">+</button>
+              <button class="btn accent" data-cal-capture="2">Capturer</button>
+            </div>
+          </div>
+
+          <div class="btnRow">
+            <button class="btn danger" id="clearCalibration">Effacer calibration</button>
+          </div>
+          <div class="toast" id="calToast"></div>
+        </article>
+      </section>
+
+      <section class="page" data-page="settings">
+        <div class="settingsPage">
+          <div class="settingsMain">
+            <article class="card settingsHero">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Vue Systeme</div>
+                  <h2 class="sectionTitle">Parametres & supervision</h2>
+                  <div class="sectionLead">Les reglages frequents restent au centre. La connectivite, l'OTA et le diagnostic sont ranges a droite pour garder une lecture claire.</div>
+                </div>
+              </div>
+              <div class="statusList compact" style="margin-top:16px">
+                <div class="statusItem">
+                  <div class="k">Etat systeme</div>
+                  <div class="healthBadge bad" id="settingsSystemBadge">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">IP / RSSI</div>
+                  <div class="v mono" id="settingsIp">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Heure</div>
+                  <div class="v mono" id="settingsTime">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Historique</div>
+                  <div class="v mono" id="settingsHistory">--</div>
+                </div>
+              </div>
+            </article>
+
+            <article class="card settingsCardSoft">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Reglages Rapides</div>
+                  <h2 class="sectionTitle">Interface & seuils</h2>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Backlight <span class="mono" id="blVal">--</span>%</label>
+                <input id="bl" type="range" min="0" max="100" value="80"/>
+              </div>
+
+              <div class="field">
+                <label>Seuil vert max <span class="mono" id="gVal">--</span>dB</label>
+                <input id="g" type="range" min="0" max="100" value="55"/>
+              </div>
+
+              <div class="field">
+                <label>Seuil orange max <span class="mono" id="oVal">--</span>dB</label>
+                <input id="o" type="range" min="0" max="100" value="70"/>
+              </div>
+
+              <div class="field">
+                <label>Historique <span class="mono" id="hVal">--</span> min</label>
+                <input id="hist" type="range" min="1" max="60" value="5"/>
+              </div>
+
+              <div class="settingsSplit">
+                <div class="field">
+                  <label>Reponse sonometre</label>
+                  <div class="choiceRow">
+                    <button class="btn choice" id="modeFast" data-mode="0">Fast</button>
+                    <button class="btn choice" id="modeSlow" data-mode="1">Slow</button>
+                  </div>
+                  <div class="hint">Fast reste reactif. Slow stabilise l'affichage.</div>
+                </div>
+
+                <div>
+                  <div class="field">
+                    <label>Delai warning (orange)</label>
+                    <input id="warnHoldSec" type="number" min="0" max="60" step="1" value="3"/>
+                  </div>
+                  <div class="field">
+                    <label>Delai critique (rouge)</label>
+                    <input id="critHoldSec" type="number" min="0" max="60" step="1" value="2"/>
+                  </div>
+                </div>
+              </div>
+
+              <div class="btnRow">
+                <button class="btn accent" id="saveUi">Sauver UI</button>
+              </div>
+              <div class="toast" id="uiToast"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Temps Reseau</div>
+                  <h2 class="sectionTitle">Heure, NTP & timezone</h2>
+                </div>
+              </div>
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>NTP Server</label>
+                    <input id="ntpServerAdv" type="text" placeholder="fr.pool.ntp.org"/>
+                  </div>
+                  <div class="field">
+                    <label>Sync NTP (minutes)</label>
+                    <input id="ntpSyncMinAdv" type="number" min="1" max="1440" step="1" value="180"/>
+                  </div>
+                </div>
+                <div>
+                  <div class="field">
+                    <label>TZ (POSIX)</label>
+                    <input id="tzAdv" type="text" placeholder="CET-1CEST,M3.5.0/2,M10.5.0/3"/>
+                  </div>
+                  <div class="field">
+                    <label>Hostname</label>
+                    <input id="hostnameAdv" type="text" placeholder="soundpanel7"/>
+                  </div>
+                </div>
+              </div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveTimeAdv">Sauver heure</button>
+              </div>
+              <div class="toast" id="toastTimeAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Publication</div>
+                  <h2 class="sectionTitle">MQTT</h2>
+                </div>
+              </div>
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>Activer MQTT</label>
+                    <select id="mqttEnabledAdv">
+                      <option value="1">Oui</option>
+                      <option value="0">Non</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Broker / Host</label>
+                    <input id="mqttHostAdv" type="text" placeholder="192.168.1.10"/>
+                  </div>
+                  <div class="field">
+                    <label>Port</label>
+                    <input id="mqttPortAdv" type="number" min="1" max="65535" placeholder="1883"/>
+                  </div>
+                  <div class="field">
+                    <label>Username</label>
+                    <input id="mqttUsernameAdv" type="text" placeholder="laisser vide si non utilise"/>
+                  </div>
+                  <div class="field">
+                    <label>Password</label>
+                    <input id="mqttPasswordAdv" type="password" placeholder="laisser vide si non utilise"/>
+                  </div>
+                </div>
+                <div>
+                  <div class="field">
+                    <label>Client ID</label>
+                    <input id="mqttClientIdAdv" type="text" placeholder="soundpanel7"/>
+                  </div>
+                  <div class="field">
+                    <label>Base topic</label>
+                    <input id="mqttBaseTopicAdv" type="text" placeholder="soundpanel7"/>
+                  </div>
+                  <div class="field">
+                    <label>Publish period (ms)</label>
+                    <input id="mqttPublishPeriodMsAdv" type="number" min="250" max="60000" placeholder="1000"/>
+                  </div>
+                  <div class="field">
+                    <label>Retain</label>
+                    <select id="mqttRetainAdv">
+                      <option value="0">Non</option>
+                      <option value="1">Oui</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveMqttAdv">Sauver MQTT</button>
+              </div>
+              <div class="toast" id="toastMqttAdv"></div>
+            </article>
+          </div>
+
+          <div class="settingsRail">
+            <article class="card actionsCard settingsCardSoft">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Maintenance</div>
+                  <h2 class="sectionTitle">Actions systeme</h2>
+                </div>
+              </div>
+              <div class="btnRow">
+                <button class="btn" id="rebootBtn">Reboot</button>
+                <button class="btn danger" id="factoryResetBtn">Factory reset</button>
+              </div>
+              <div class="toast" id="actionsToast"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Mise A Jour</div>
+                  <h2 class="sectionTitle">OTA</h2>
+                </div>
+              </div>
+              <div class="field">
+                <label>Activer OTA</label>
+                <select id="otaEnabledAdv">
+                  <option value="1">Oui</option>
+                  <option value="0">Non</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Hostname OTA</label>
+                <input id="otaHostnameAdv" type="text" placeholder="soundpanel7"/>
+              </div>
+              <div class="field">
+                <label>Port OTA</label>
+                <input id="otaPortAdv" type="number" min="1" max="65535" placeholder="3232"/>
+              </div>
+              <div class="field">
+                <label>Mot de passe OTA</label>
+                <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
+              </div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveOtaAdv">Sauver OTA</button>
+              </div>
+              <div class="toast" id="toastOtaAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Diagnostic</div>
+                  <h2 class="sectionTitle">Audio brut</h2>
+                </div>
+              </div>
+              <div class="statusList compact">
+                <div class="statusItem">
+                  <div class="k">rawRms</div>
+                  <div class="v mono" id="rawRmsAdv">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">pseudo dB</div>
+                  <div class="v mono" id="rawPseudoDbAdv">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">ADC Mean</div>
+                  <div class="v mono" id="rawAdcMeanAdv">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">ADC Last</div>
+                  <div class="v mono" id="rawAdcLastAdv">--</div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
 <script>
-  const gauge = document.getElementById("gauge");
-  const dbEl = document.getElementById("db");
-  const leqEl = document.getElementById("leq");
-  const peakEl = document.getElementById("peak");
-  const wifiEl = document.getElementById("wifi");
-  const timeEl = document.getElementById("time");
-  const dot = document.getElementById("dot");
-  const histMeta = document.getElementById("histMeta");
-  const histBars = document.getElementById("histBars");
-  const histLeft = document.getElementById("histLeft");
-  const histMid = document.getElementById("histMid");
-  const histRight = document.getElementById("histRight");
+  const $ = (id) => document.getElementById(id);
 
-  let historyValues = [];
-  let historyMinutes = 5;
-  let historyCapacity = 96;
-  let historySamplePeriodMs = 3000;
-  let lastHistorySampleClientMs = 0;
-  let events = null;
-  let reconnectTimer = null;
-  let hasLiveFeed = false;
-  let clockBaseMs = 0;
-  let clockSyncClientMs = 0;
+  const state = {
+    status: null,
+    historyValues: [],
+    historyMinutes: 5,
+    historyCapacity: 96,
+    historySamplePeriodMs: 3000,
+    lastHistorySampleClientMs: 0,
+    clockBaseMs: 0,
+    clockSyncClientMs: 0,
+    currentPage: "overview",
+    events: null,
+    reconnectTimer: null,
+    hasLiveFeed: false,
+    lastContactMs: 0,
+    orangeSinceMs: 0,
+    redSinceMs: 0,
+    uiDirty: false,
+    uiResponseMode: 0,
+    calRefs: [40, 65, 85],
+    calRefsDirty: [false, false, false],
+  };
 
-  function pad2(v){
+  const gaugeViews = [
+    { gauge: $("overviewGauge"), db: $("overviewDb"), dot: $("overviewDot"), card: $("overviewSoundCard") },
+    { gauge: $("soundGauge"), db: $("soundDb"), dot: $("soundDot"), card: $("soundCard") },
+  ];
+
+  const metricViews = [
+    { leq: $("overviewLeq"), peak: $("overviewPeak") },
+    { leq: $("soundLeq"), peak: $("soundPeak") },
+  ];
+
+  const historyViews = [
+    {
+      meta: $("overviewHistMeta"),
+      alert: $("overviewAlertTime"),
+      bars: $("overviewHistBars"),
+      left: $("overviewHistLeft"),
+      mid: $("overviewHistMid"),
+      right: $("overviewHistRight"),
+    },
+    {
+      meta: $("soundHistMeta"),
+      alert: $("soundAlertTime"),
+      bars: $("soundHistBars"),
+      left: $("soundHistLeft"),
+      mid: $("soundHistMid"),
+      right: $("soundHistRight"),
+    },
+  ];
+
+  function pad2(v) {
     return String(v).padStart(2, "0");
   }
 
-  function renderClock(){
-    if (!clockBaseMs) {
-      timeEl.textContent = "NTP...";
-      return;
-    }
-    const nowMs = clockBaseMs + (Date.now() - clockSyncClientMs);
-    const d = new Date(nowMs);
-    timeEl.textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-  }
-
-  function syncClock(serverTime){
-    if (!serverTime) {
-      clockBaseMs = 0;
-      clockSyncClientMs = 0;
-      renderClock();
-      return;
-    }
-
-    const isoLike = serverTime.replace(" ", "T");
-    const parsed = Date.parse(isoLike);
-    if (Number.isNaN(parsed)) {
-      clockBaseMs = 0;
-      clockSyncClientMs = 0;
-      renderClock();
-      return;
-    }
-
-    clockBaseMs = parsed;
-    clockSyncClientMs = Date.now();
-    renderClock();
-  }
-
-  function zoneColor(db, greenMax, orangeMax){
-    if(db <= greenMax) return "#23C552";
-    if(db <= orangeMax) return "#F0A202";
+  function zoneColor(db, greenMax, orangeMax) {
+    if (db <= greenMax) return "#23C552";
+    if (db <= orangeMax) return "#F0A202";
     return "#E53935";
   }
 
-  function historyHeightPercent(db){
+  function historyHeightPercent(db) {
     const histDbMin = 35;
     const histDbMax = 130;
     const clamped = Math.max(histDbMin, Math.min(histDbMax, Number(db) || 0));
-    const norm = (clamped - histDbMin) / (histDbMax - histDbMin);
-    return norm * 100;
+    return ((clamped - histDbMin) / (histDbMax - histDbMin)) * 100;
   }
 
-  function updateHistoryLabels(){
-    histMeta.textContent = `${historyMinutes} min d’historique`;
-    histLeft.textContent = `-${historyMinutes}m`;
-    histMid.textContent = `-${Math.max(1, Math.floor(historyMinutes / 2))}m`;
-    histRight.textContent = "";
-  }
-
-  function trimHistory(){
-    if (historyValues.length > historyCapacity) {
-      historyValues = historyValues.slice(-historyCapacity);
-    }
-  }
-
-  function setHistory(values){
-    historyValues = Array.isArray(values) ? values.map(v => Number(v) || 0) : [];
-    trimHistory();
-    drawHistory();
-  }
-
-  function appendHistory(db, force){
-    const now = Date.now();
-    if (!force && lastHistorySampleClientMs && (now - lastHistorySampleClientMs) < historySamplePeriodMs) {
+  function syncClock(serverTime) {
+    if (!serverTime) {
+      state.clockBaseMs = 0;
+      state.clockSyncClientMs = 0;
+      renderClock();
       return;
     }
 
-    lastHistorySampleClientMs = now;
-    historyValues.push(Number(db) || 0);
-    trimHistory();
-    drawHistory();
-  }
-
-  function drawHistory(){
-    const values = historyValues.slice(-historyCapacity);
-    const greenMax = window.__greenMax ?? 55;
-    const orangeMax = window.__orangeMax ?? 70;
-
-    let html = "";
-    const missing = Math.max(0, historyCapacity - values.length);
-    for (let i = 0; i < missing; i++) {
-      html += '<div class="histBar"></div>';
+    const parsed = Date.parse(serverTime.replace(" ", "T"));
+    if (Number.isNaN(parsed)) {
+      state.clockBaseMs = 0;
+      state.clockSyncClientMs = 0;
+      renderClock();
+      return;
     }
 
-    for (const value of values) {
+    state.clockBaseMs = parsed;
+    state.clockSyncClientMs = Date.now();
+    renderClock();
+  }
+
+  function renderClock() {
+    if (!state.clockBaseMs) {
+      $("overviewClockDate").textContent = "--/--/----";
+      $("overviewClockMain").textContent = "--:--";
+      $("overviewClockSec").textContent = ":--";
+      $("clockDate").textContent = "--/--/----";
+      $("clockMain").textContent = "--:--";
+      $("clockSec").textContent = "--";
+      $("settingsTime").textContent = "NTP...";
+      return;
+    }
+
+    const nowMs = state.clockBaseMs + (Date.now() - state.clockSyncClientMs);
+    const d = new Date(nowMs);
+    const date = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+    const hhmm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const sec = pad2(d.getSeconds());
+    const hhmmss = `${hhmm}:${sec}`;
+
+    $("overviewClockDate").textContent = date;
+    $("overviewClockMain").textContent = hhmm;
+    $("overviewClockSec").textContent = `:${sec}`;
+    $("clockDate").textContent = date;
+    $("clockMain").textContent = hhmm;
+    $("clockSec").textContent = sec;
+    $("settingsTime").textContent = hhmmss;
+  }
+
+  function setActivePage(page) {
+    state.currentPage = page;
+    document.querySelectorAll(".tab").forEach((el) => {
+      el.classList.toggle("active", el.dataset.page === page);
+    });
+    document.querySelectorAll(".page").forEach((el) => {
+      el.classList.toggle("active", el.dataset.page === page);
+    });
+  }
+
+  function formatRedSeconds(redSeconds, historyMinutes) {
+    if (redSeconds >= 60) {
+      return `Rouge ${Math.floor(redSeconds / 60)}m${pad2(redSeconds % 60)}s / ${historyMinutes}m`;
+    }
+    return `Rouge ${redSeconds}s / ${historyMinutes}m`;
+  }
+
+  function updateHistoryLabels() {
+    const mid = Math.max(1, Math.floor(state.historyMinutes / 2));
+    historyViews.forEach((view) => {
+      view.meta.textContent = `Historique ${state.historyMinutes} min`;
+      view.left.textContent = `-${state.historyMinutes}m`;
+      view.mid.textContent = `-${mid}m`;
+      view.right.textContent = "0";
+    });
+  }
+
+  function drawHistory() {
+    const values = state.historyValues.slice(-state.historyCapacity);
+    const greenMax = Number(state.status?.greenMax ?? 55);
+    const orangeMax = Number(state.status?.orangeMax ?? 70);
+    const renderCapacity = getHistoryRenderCapacity();
+    const renderedValues = compressHistory(values, renderCapacity);
+    const missing = Math.max(0, renderCapacity - renderedValues.length);
+
+    let html = "";
+    for (let i = 0; i < missing; i++) html += '<div class="histBar"></div>';
+    for (const value of renderedValues) {
       html += `<div class="histBar" style="height:${historyHeightPercent(value).toFixed(1)}%;background:${zoneColor(value, greenMax, orangeMax)}"></div>`;
     }
 
-    histBars.innerHTML = html;
+    const redSamples = values.filter((value) => value > orangeMax).length;
+    const redSeconds = Math.round((redSamples * state.historySamplePeriodMs) / 1000);
+    const alertText = formatRedSeconds(redSeconds, state.historyMinutes);
+
+    historyViews.forEach((view) => {
+      view.bars.innerHTML = html;
+      view.alert.textContent = alertText;
+    });
   }
 
-  function applyLiveMetrics(st){
-    const db = Number(st.db ?? 0);
-    const leq = Number(st.leq ?? 0);
-    const peak = Number(st.peak ?? 0);
-    const greenMax = Number(st.greenMax ?? window.__greenMax ?? 55);
-    const orangeMax = Number(st.orangeMax ?? window.__orangeMax ?? 70);
-    historyMinutes = Number(st.historyMinutes ?? historyMinutes ?? 5);
-    historyCapacity = Number(st.historyCapacity ?? historyCapacity ?? 96);
-    historySamplePeriodMs = Number(st.historySamplePeriodMs ?? historySamplePeriodMs ?? 3000);
+  function getHistoryRenderCapacity() {
+    const widths = historyViews
+      .map((view) => view.bars && view.bars.parentElement ? view.bars.parentElement.clientWidth : 0)
+      .filter((width) => width > 0);
 
-    window.__greenMax = greenMax;
-    window.__orangeMax = orangeMax;
+    if (!widths.length) return state.historyCapacity;
 
+    const minWidth = Math.min(...widths);
+    const slotPx = window.innerWidth <= 700 ? 3 : 5;
+    const capacity = Math.floor(minWidth / slotPx);
+    return Math.max(24, Math.min(state.historyCapacity, capacity));
+  }
+
+  function compressHistory(values, targetCount) {
+    if (!Array.isArray(values) || values.length <= targetCount) return values;
+
+    const out = [];
+    const bucketSize = values.length / targetCount;
+
+    for (let i = 0; i < targetCount; i++) {
+      const start = Math.floor(i * bucketSize);
+      const end = Math.max(start + 1, Math.floor((i + 1) * bucketSize));
+      let bucketMax = Number(values[start] ?? 0);
+
+      for (let j = start + 1; j < end && j < values.length; j++) {
+        const value = Number(values[j] ?? 0);
+        if (value > bucketMax) bucketMax = value;
+      }
+
+      out.push(bucketMax);
+    }
+
+    return out;
+  }
+
+  function setHistory(values) {
+    state.historyValues = Array.isArray(values) ? values.map((value) => Number(value) || 0) : [];
+    if (state.historyValues.length > state.historyCapacity) {
+      state.historyValues = state.historyValues.slice(-state.historyCapacity);
+    }
+    state.lastHistorySampleClientMs = Date.now();
+    updateHistoryLabels();
+    drawHistory();
+  }
+
+  function appendHistory(db, force = false) {
+    const now = Date.now();
+    if (!force && state.lastHistorySampleClientMs && (now - state.lastHistorySampleClientMs) < state.historySamplePeriodMs) {
+      return;
+    }
+
+    state.lastHistorySampleClientMs = now;
+    state.historyValues.push(Number(db) || 0);
+    if (state.historyValues.length > state.historyCapacity) {
+      state.historyValues = state.historyValues.slice(-state.historyCapacity);
+    }
+    drawHistory();
+  }
+
+  function updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec) {
+    const now = Date.now();
+    const orange = db > greenMax && db <= orangeMax;
+    const red = db > orangeMax;
+
+    if (orange) {
+      if (!state.orangeSinceMs) state.orangeSinceMs = now;
+    } else {
+      state.orangeSinceMs = 0;
+    }
+
+    if (red) {
+      if (!state.redSinceMs) state.redSinceMs = now;
+    } else {
+      state.redSinceMs = 0;
+    }
+
+    const orangeAlert = state.orangeSinceMs && (now - state.orangeSinceMs) >= (warningHoldSec * 1000);
+    const redAlert = state.redSinceMs && (now - state.redSinceMs) >= (criticalHoldSec * 1000);
+
+    document.body.style.background = redAlert ? "var(--screenRed)" : "var(--bg)";
+    gaugeViews.forEach((view, index) => {
+      view.card.classList.toggle("alertOrange", Boolean(orangeAlert && !redAlert));
+      view.card.classList.toggle("alertRed", Boolean(redAlert));
+      if (index === 1) $("soundAlertBadge").classList.toggle("show", Boolean(redAlert));
+    });
+  }
+
+  function updateGauge(db, greenMax, orangeMax) {
     const pct = Math.max(0, Math.min(100, db));
     const color = zoneColor(db, greenMax, orangeMax);
 
-    gauge.style.setProperty("--pct", pct);
-    gauge.style.setProperty("--gaugeColor", color);
-    dot.style.background = color;
+    gaugeViews.forEach((view) => {
+      view.gauge.style.setProperty("--pct", pct);
+      view.gauge.style.setProperty("--gaugeColor", color);
+      view.dot.style.background = color;
+      view.db.textContent = db.toFixed(1);
+    });
+  }
 
-    dbEl.textContent = db.toFixed(1);
-    leqEl.textContent = leq.toFixed(1);
-    peakEl.textContent = peak.toFixed(1);
+  function updateMetrics(leq, peak) {
+    metricViews.forEach((view) => {
+      view.leq.textContent = leq.toFixed(1);
+      view.peak.textContent = peak.toFixed(1);
+    });
+  }
 
-    if ("time_ok" in st) {
-      syncClock(st.time_ok ? st.time : "");
+  function updateStatusSummary(st) {
+    $("settingsIp").textContent = st.wifi ? `${st.ip || "-"} / ${st.rssi ?? 0} dBm` : "--";
+    $("settingsHistory").textContent = `${state.historyMinutes} min / ${state.historyCapacity} points`;
+    $("rawRmsAdv").textContent = Number(st.rawRms ?? 0).toFixed(2);
+    $("rawPseudoDbAdv").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
+    $("rawAdcMeanAdv").textContent = String(st.rawAdcMean ?? "--");
+    $("rawAdcLastAdv").textContent = String(st.rawAdcLast ?? "--");
+
+    const systemBadge = $("settingsSystemBadge");
+    systemBadge.textContent = "En ligne";
+    systemBadge.classList.add("ok");
+    systemBadge.classList.remove("bad");
+  }
+
+  function setSystemBadgeOnline() {
+    state.lastContactMs = Date.now();
+    const systemBadge = $("settingsSystemBadge");
+    systemBadge.textContent = "En ligne";
+    systemBadge.classList.add("ok");
+    systemBadge.classList.remove("bad");
+  }
+
+  function setSystemBadgeError() {
+    const systemBadge = $("settingsSystemBadge");
+    systemBadge.textContent = "Erreur";
+    systemBadge.classList.add("bad");
+    systemBadge.classList.remove("ok");
+  }
+
+  function checkSystemHeartbeat() {
+    const maxSilenceMs = 4000;
+    if (!state.lastContactMs || (Date.now() - state.lastContactMs) > maxSilenceMs) {
+      setSystemBadgeError();
     }
+  }
 
-    if ("wifi" in st) {
-      wifiEl.textContent = st.wifi ? `WiFi: OK (${st.ip})` : "WiFi: OFF";
-    }
+  function applyStatus(st, options = {}) {
+    state.status = st;
+    state.historyMinutes = Number(st.historyMinutes ?? state.historyMinutes ?? 5);
+    state.historyCapacity = Number(st.historyCapacity ?? state.historyCapacity ?? 96);
+    state.historySamplePeriodMs = Number(st.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
 
-    if (Array.isArray(st.history)) {
-      setHistory(st.history);
-      lastHistorySampleClientMs = Date.now();
-    } else {
-      appendHistory(db, false);
-    }
+    const db = Number(st.db ?? 0);
+    const leq = Number(st.leq ?? 0);
+    const peak = Number(st.peak ?? 0);
+    const greenMax = Number(st.greenMax ?? 55);
+    const orangeMax = Number(st.orangeMax ?? 70);
+    const warningHoldSec = Number(st.warningHoldSec ?? 3);
+    const criticalHoldSec = Number(st.criticalHoldSec ?? 2);
 
+    updateGauge(db, greenMax, orangeMax);
+    updateMetrics(leq, peak);
+    updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
+
+    if ("time_ok" in st) syncClock(st.time_ok ? st.time : "");
+    updateStatusSummary(st);
     updateHistoryLabels();
-  }
 
-  async function refreshStatus(){
-    try{
-      const r = await fetch("/api/status", {cache:"no-store"});
-      const st = await r.json();
-      applyLiveMetrics(st);
-    }catch(e){
-      wifiEl.textContent = hasLiveFeed ? wifiEl.textContent : "WiFi: erreur";
+    if (Array.isArray(st.history) && options.useHistorySnapshot) {
+      setHistory(st.history);
+    } else if (!options.skipAppendHistory) {
+      appendHistory(db);
+    }
+
+    $("calLiveMic").textContent = st.analogOk
+      ? `Micro live: rms=${Number(st.rawRms ?? 0).toFixed(2)}`
+      : "Micro live: indisponible";
+    $("calLiveLog").textContent = st.analogOk
+      ? `Log calibration live: ${Math.log10((Number(st.rawRms ?? 0) + 0.0001)).toFixed(4)}`
+      : "Log calibration live: --";
+
+    if (Array.isArray(st.cal)) {
+      let validCount = 0;
+      st.cal.forEach((point, index) => {
+        const i = index + 1;
+        if (!state.calRefsDirty[index]) {
+          state.calRefs[index] = Number(point.refDb ?? state.calRefs[index] ?? 0);
+        }
+        $(`calRef${i}`).textContent = Number(state.calRefs[index] ?? 0).toFixed(0);
+        if (point.valid) {
+          validCount++;
+          $(`calState${i}`).textContent = `Point ${i} capture ${Number(point.rawLogRms ?? 0).toFixed(3)}`;
+        } else {
+          $(`calState${i}`).textContent = `Point ${i} non capture`;
+        }
+      });
+      $("calStatus").textContent = `${validCount} / 3 points valides`;
+    }
+
+    if (!state.uiDirty) {
+      $("bl").value = Number(st.backlight ?? 80);
+      $("g").value = greenMax;
+      $("o").value = orangeMax;
+      $("hist").value = state.historyMinutes;
+      $("warnHoldSec").value = warningHoldSec;
+      $("critHoldSec").value = criticalHoldSec;
+      state.uiResponseMode = Number(st.audioResponseMode ?? 0);
+      syncUiLabels();
     }
   }
 
-  function scheduleReconnect(){
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
+  function syncUiLabels() {
+    const g = Number($("g").value);
+    const o = Math.max(g, Number($("o").value));
+    $("o").value = o;
+
+    $("blVal").textContent = $("bl").value;
+    $("gVal").textContent = g;
+    $("oVal").textContent = o;
+    $("hVal").textContent = $("hist").value;
+    $("modeFast").classList.toggle("active", state.uiResponseMode === 0);
+    $("modeSlow").classList.toggle("active", state.uiResponseMode === 1);
+  }
+
+  function markUiDirty() {
+    state.uiDirty = true;
+  }
+
+  async function apiGet(url) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  }
+
+  async function apiPost(url, payload) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {}),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return await res.json();
+  }
+
+  async function refreshStatus() {
+    try {
+      const st = await apiGet("/api/status");
+      state.hasLiveFeed = true;
+      setSystemBadgeOnline();
+      applyStatus(st, {
+        skipAppendHistory: true,
+        useHistorySnapshot: state.historyValues.length === 0
+      });
+    } catch (err) {
+      setSystemBadgeError();
+    }
+  }
+
+  function scheduleReconnect() {
+    if (state.reconnectTimer) return;
+    state.reconnectTimer = setTimeout(() => {
+      state.reconnectTimer = null;
       connectLiveFeed();
     }, 1500);
   }
 
-  function connectLiveFeed(){
-    if (events) {
-      events.close();
-      events = null;
+  function connectLiveFeed() {
+    if (state.events) {
+      state.events.close();
+      state.events = null;
     }
 
-    const liveUrl = `${location.protocol}//${location.hostname}:81/api/events`;
-    events = new EventSource(liveUrl);
-
-    events.addEventListener("metrics", (ev) => {
-      hasLiveFeed = true;
-      applyLiveMetrics(JSON.parse(ev.data));
+    state.events = new EventSource(`${location.protocol}//${location.hostname}:81/api/events`);
+    state.events.addEventListener("metrics", (ev) => {
+      state.hasLiveFeed = true;
+      setSystemBadgeOnline();
+      applyStatus(JSON.parse(ev.data));
     });
-
-    events.onerror = () => {
-      hasLiveFeed = false;
-      if (events) {
-        events.close();
-        events = null;
+    state.events.onerror = () => {
+      state.hasLiveFeed = false;
+      setSystemBadgeError();
+      if (state.events) {
+        state.events.close();
+        state.events = null;
       }
       scheduleReconnect();
     };
   }
 
+  async function saveUi() {
+    const payload = {
+      backlight: Number($("bl").value),
+      greenMax: Number($("g").value),
+      orangeMax: Number($("o").value),
+      historyMinutes: Number($("hist").value),
+      audioResponseMode: state.uiResponseMode,
+      warningHoldSec: Number($("warnHoldSec").value || 0),
+      criticalHoldSec: Number($("critHoldSec").value || 0),
+    };
+
+    try {
+      await apiPost("/api/ui", payload);
+      $("uiToast").textContent = "UI sauvee.";
+      state.uiDirty = false;
+      await refreshStatus();
+    } catch (err) {
+      $("uiToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function loadTimeSettings() {
+    try {
+      const t = await apiGet("/api/time");
+      $("tzAdv").value = t.tz || "";
+      $("ntpServerAdv").value = t.ntpServer || "";
+      $("ntpSyncMinAdv").value = String(t.ntpSyncMinutes || 180);
+      $("hostnameAdv").value = t.hostname || "";
+    } catch (err) {
+      $("toastTimeAdv").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function saveTimeSettings() {
+    $("toastTimeAdv").textContent = "Sauvegarde...";
+    try {
+      await apiPost("/api/time", {
+        tz: $("tzAdv").value.trim(),
+        ntpServer: $("ntpServerAdv").value.trim(),
+        ntpSyncMinutes: parseInt($("ntpSyncMinAdv").value, 10),
+        hostname: $("hostnameAdv").value.trim()
+      });
+      $("toastTimeAdv").textContent = "Heure sauvee.";
+      await refreshStatus();
+    } catch (err) {
+      $("toastTimeAdv").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function loadOtaSettings() {
+    try {
+      const o = await apiGet("/api/ota");
+      $("otaEnabledAdv").value = o.enabled ? "1" : "0";
+      $("otaHostnameAdv").value = o.hostname || "";
+      $("otaPortAdv").value = o.port || 3232;
+      $("otaPasswordAdv").value = "";
+      $("otaPasswordAdv").placeholder = o.passwordConfigured ? "********" : "laisser vide = aucun mot de passe";
+    } catch (err) {
+      $("toastOtaAdv").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function saveOtaSettings() {
+    $("toastOtaAdv").textContent = "Sauvegarde...";
+    try {
+      const r = await apiPost("/api/ota", {
+        enabled: parseInt($("otaEnabledAdv").value, 10),
+        hostname: $("otaHostnameAdv").value.trim(),
+        port: parseInt($("otaPortAdv").value, 10),
+        password: $("otaPasswordAdv").value
+      });
+      $("toastOtaAdv").textContent = r.rebootRequired ? "OTA sauvee. Reboot requis." : "OTA sauvee.";
+    } catch (err) {
+      $("toastOtaAdv").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function loadMqttSettings() {
+    try {
+      const m = await apiGet("/api/mqtt");
+      $("mqttEnabledAdv").value = m.enabled ? "1" : "0";
+      $("mqttHostAdv").value = m.host || "";
+      $("mqttPortAdv").value = m.port || 1883;
+      $("mqttUsernameAdv").value = m.username || "";
+      $("mqttPasswordAdv").value = "";
+      $("mqttPasswordAdv").placeholder = m.passwordConfigured ? "********" : "laisser vide si non utilise";
+      $("mqttClientIdAdv").value = m.clientId || "soundpanel7";
+      $("mqttBaseTopicAdv").value = m.baseTopic || "soundpanel7";
+      $("mqttPublishPeriodMsAdv").value = m.publishPeriodMs || 1000;
+      $("mqttRetainAdv").value = m.retain ? "1" : "0";
+    } catch (err) {
+      $("toastMqttAdv").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function saveMqttSettings() {
+    $("toastMqttAdv").textContent = "Sauvegarde...";
+    try {
+      const r = await apiPost("/api/mqtt", {
+        enabled: parseInt($("mqttEnabledAdv").value || "0", 10),
+        host: ($("mqttHostAdv").value || "").trim(),
+        port: parseInt($("mqttPortAdv").value || "1883", 10),
+        username: ($("mqttUsernameAdv").value || "").trim(),
+        password: ($("mqttPasswordAdv").value || ""),
+        clientId: ($("mqttClientIdAdv").value || "").trim(),
+        baseTopic: ($("mqttBaseTopicAdv").value || "").trim(),
+        publishPeriodMs: parseInt($("mqttPublishPeriodMsAdv").value || "1000", 10),
+        retain: parseInt($("mqttRetainAdv").value || "0", 10)
+      });
+      $("toastMqttAdv").textContent = r.rebootRecommended ? "MQTT sauve. Reboot recommande." : "MQTT sauve.";
+    } catch (err) {
+      $("toastMqttAdv").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function captureCalibration(index) {
+    try {
+      await apiPost("/api/calibrate", { index, refDb: state.calRefs[index] });
+      state.calRefsDirty[index] = false;
+      $("calToast").textContent = `Point ${index + 1} capture.`;
+      await refreshStatus();
+    } catch (err) {
+      $("calToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function clearCalibration() {
+    if (!confirm("Effacer la calibration ?")) return;
+    try {
+      await apiPost("/api/calibrate/clear", {});
+      state.calRefsDirty = [false, false, false];
+      $("calToast").textContent = "Calibration effacee.";
+      await refreshStatus();
+    } catch (err) {
+      $("calToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function reboot() {
+    try {
+      await apiPost("/api/reboot", {});
+      $("actionsToast").textContent = "Reboot demande.";
+    } catch (err) {
+      $("actionsToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function factoryReset() {
+    if (!confirm("Factory reset ?")) return;
+    try {
+      await apiPost("/api/factory_reset", {});
+      $("actionsToast").textContent = "Factory reset demande.";
+    } catch (err) {
+      $("actionsToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => setActivePage(tab.dataset.page));
+  });
+
+  ["bl", "g", "o", "hist", "warnHoldSec", "critHoldSec"].forEach((id) => {
+    $(id).addEventListener("input", () => {
+      markUiDirty();
+      syncUiLabels();
+    });
+  });
+
+  document.querySelectorAll("[data-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.uiResponseMode = Number(btn.dataset.mode);
+      markUiDirty();
+      syncUiLabels();
+    });
+  });
+
+  document.querySelectorAll("[data-cal-adjust]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const [indexStr, deltaStr] = btn.dataset.calAdjust.split(":");
+      const index = Number(indexStr);
+      const delta = Number(deltaStr);
+      state.calRefs[index] = Math.max(35, Math.min(100, Number(state.calRefs[index] || 0) + delta));
+      state.calRefsDirty[index] = true;
+      $(`calRef${index + 1}`).textContent = state.calRefs[index].toFixed(0);
+    });
+  });
+
+  document.querySelectorAll("[data-cal-capture]").forEach((btn) => {
+    btn.addEventListener("click", () => captureCalibration(Number(btn.dataset.calCapture)));
+  });
+
+  window.addEventListener("resize", drawHistory);
+
+  $("saveUi").addEventListener("click", saveUi);
+  $("clearCalibration").addEventListener("click", clearCalibration);
+  $("rebootBtn").addEventListener("click", reboot);
+  $("factoryResetBtn").addEventListener("click", factoryReset);
+  $("saveTimeAdv").addEventListener("click", saveTimeSettings);
+  $("saveOtaAdv").addEventListener("click", saveOtaSettings);
+  $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+
+  syncUiLabels();
   refreshStatus();
   connectLiveFeed();
+  setInterval(refreshStatus, 2500);
+  setInterval(checkSystemHeartbeat, 1000);
+  loadTimeSettings();
+  loadOtaSettings();
+  loadMqttSettings();
   setInterval(renderClock, 1000);
-</script>
-</body>
-</html>
-)HTML";
-
-  _srv.send(200, "text/html; charset=utf-8", html);
-}
-
-void WebManager::handleAdmin() {
-  const char* html =
-R"HTML(
-<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>SoundPanel 7 — Admin</title>
-  <style>
-    :root{
-      --bg:#0B0F14; --card:#111824; --muted:#8EA1B3; --txt:#DFE7EF; --line:#1E2A38;
-      --ok:#23C552; --bad:#E53935; --btn:#172133;
-      --radius:16px;
-      font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-    }
-    body{margin:0;background:var(--bg);color:var(--txt);}
-    header{
-      position:sticky;top:0;z-index:9;
-      background:rgba(11,15,20,.9);backdrop-filter:blur(10px);
-      border-bottom:1px solid var(--line);
-    }
-    .wrap{max-width:980px;margin:0 auto;padding:18px;}
-    .title{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-    h1{font-size:18px;margin:0;letter-spacing:.2px;}
-    .pill{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:6px 10px;border-radius:999px;}
-    .back{
-      text-decoration:none;color:var(--txt);border:1px solid var(--line);
-      background:#172133;padding:8px 12px;border-radius:12px;font-weight:650;
-    }
-    .grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px;}
-    @media(min-width:900px){ .grid{grid-template-columns:1fr 1fr;} }
-    .card{
-      background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-      padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);
-    }
-    .card h2{margin:0 0 10px 0;font-size:14px;color:var(--txt);font-weight:650;}
-    .row{display:flex;gap:10px;align-items:center;justify-content:space-between;}
-    .kv{display:flex;flex-direction:column;gap:4px;}
-    .k{color:var(--muted);font-size:12px;}
-    .v{font-size:14px;font-weight:600;}
-    .badge{font-size:12px;padding:6px 10px;border-radius:999px;border:1px solid var(--line);}
-    .ok{color:var(--ok);}
-    .bad{color:var(--bad);}
-    .btns{display:flex;gap:10px;flex-wrap:wrap;}
-    button{
-      appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--txt);
-      padding:10px 12px;border-radius:12px;font-weight:650;cursor:pointer;
-    }
-    button.danger{background:#2A1212;border-color:#3B1A1A;}
-    .field{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
-    label{font-size:12px;color:var(--muted);}
-    input[type="range"]{width:100%;}
-    input[type="text"], input[type="number"], input[type="password"], select{
-      width:100%;
-      border:1px solid var(--line);
-      background:#0E141C;
-      color:var(--txt);
-      border-radius:12px;
-      padding:10px 12px;
-      outline:none;
-      font-weight:600;
-      box-sizing:border-box;
-    }
-    .toast{margin-top:10px;font-size:12px;color:var(--muted);white-space:pre-wrap;}
-    .hint{font-size:12px;color:var(--muted);line-height:1.35;}
-    .calrow{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;margin-top:10px;}
-    code{color:#B9C7D6;}
-  </style>
-</head>
-<body>
-<header>
-  <div class="wrap title">
-    <h1>SoundPanel 7 — Administration</h1>
-    <div style="display:flex;gap:10px;align-items:center">
-      <div class="pill" id="pill">…</div>
-      <a class="back" href="/">↩ Dashboard</a>
-    </div>
-  </div>
-</header>
-
-<main class="wrap">
-  <div class="grid">
-    <section class="card">
-      <h2>Statut</h2>
-      <div class="row">
-        <div class="kv">
-          <div class="k">Wi-Fi</div>
-          <div class="v" id="wifi">—</div>
-        </div>
-        <div class="badge" id="wifiBadge">—</div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="row">
-        <div class="kv">
-          <div class="k">IP</div>
-          <div class="v" id="ip">—</div>
-        </div>
-        <div class="kv" style="text-align:right">
-          <div class="k">RSSI</div>
-          <div class="v" id="rssi">—</div>
-        </div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="row">
-        <div class="kv">
-          <div class="k">Heure</div>
-          <div class="v" id="time">—</div>
-        </div>
-        <div class="kv" style="text-align:right">
-          <div class="k">Uptime</div>
-          <div class="v" id="up">—</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>Audio brut</h2>
-      <div class="row">
-        <div class="kv">
-          <div class="k">rawRms</div>
-          <div class="v" id="rawRms">—</div>
-        </div>
-        <div class="kv" style="text-align:right">
-          <div class="k">pseudo dB</div>
-          <div class="v" id="rawPseudoDb">—</div>
-        </div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="row">
-        <div class="kv">
-          <div class="k">ADC Mean</div>
-          <div class="v" id="rawAdcMean">—</div>
-        </div>
-        <div class="kv" style="text-align:right">
-          <div class="k">ADC Last</div>
-          <div class="v" id="rawAdcLast">—</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>UI (écran)</h2>
-
-      <div class="field">
-        <label>Backlight <span id="blVal">—</span>%</label>
-        <input id="bl" type="range" min="0" max="100" value="80"/>
-      </div>
-
-      <div class="field">
-        <label>Seuil vert max <span id="gVal">—</span>dB</label>
-        <input id="g" type="range" min="0" max="100" value="55"/>
-      </div>
-
-      <div class="field">
-        <label>Seuil orange max <span id="oVal">—</span>dB</label>
-        <input id="o" type="range" min="0" max="100" value="70"/>
-      </div>
-
-      <div class="field">
-        <label>Historique <span id="hVal">—</span> min</label>
-        <input id="hist" type="range" min="1" max="60" value="5"/>
-      </div>
-
-      <div class="field">
-        <label>Réponse sonomètre</label>
-        <select id="audioResponseMode">
-          <option value="0">Fast</option>
-          <option value="1">Slow</option>
-        </select>
-        <div class="hint">Fast reste réactif. Slow stabilise l'affichage. Peak garde les transitoires.</div>
-      </div>
-
-      <div class="field">
-        <label>Délai warning (orange)</label>
-        <input id="warnHoldSec" type="number" min="0" max="60" step="1" value="3"/>
-        <div class="hint">Temps en secondes avant alerte warning.</div>
-      </div>
-
-      <div class="field">
-        <label>Délai critique (rouge)</label>
-        <input id="critHoldSec" type="number" min="0" max="60" step="1" value="2"/>
-        <div class="hint">Temps en secondes avant alerte critique.</div>
-      </div>
-
-      <div class="btns" style="margin-top:10px">
-        <button id="saveUi">Sauver UI</button>
-      </div>
-
-      <div class="toast" id="toastUi"></div>
-    </section>
-
-    <section class="card">
-      <h2>Heure (NTP / TZ)</h2>
-
-      <div class="field">
-        <label>NTP Server</label>
-        <input id="ntp" type="text" placeholder="fr.pool.ntp.org"/>
-      </div>
-
-      <div class="field">
-        <label>Sync NTP (minutes)</label>
-        <input id="ntpSyncMin" type="number" min="1" max="1440" step="1" value="180"/>
-        <div class="hint">Defaut recommande ESP32: <code>180</code> min (3 h).</div>
-      </div>
-
-      <div class="field">
-        <label>TZ (POSIX)</label>
-        <input id="tz" type="text" placeholder="CET-1CEST,M3.5.0/2,M10.5.0/3"/>
-        <div class="hint">Ex Paris : <code>CET-1CEST,M3.5.0/2,M10.5.0/3</code></div>
-      </div>
-
-      <div class="field">
-        <label>Hostname</label>
-        <input id="hn" type="text" placeholder="soundpanel7"/>
-      </div>
-
-      <div class="btns" style="margin-top:10px">
-        <button id="saveTime">Sauver Heure</button>
-      </div>
-
-      <div class="toast" id="toastTime"></div>
-    </section>
-
-    <section class="card">
-      <h2>Calibration micro</h2>
-
-      <div class="hint">
-        Mets le vrai sonomètre à côté, saisis la valeur réelle, puis clique sur Capture.
-      </div>
-      <div class="hint" id="calLiveMic" style="margin-top:8px">Micro live: —</div>
-      <div class="hint" id="calLiveLog">Log calibration live: —</div>
-
-      <div class="calrow">
-        <div class="field">
-          <label>Point 1 (dB réel)</label>
-          <input id="cal1" type="number" step="0.1" placeholder="40.0"/>
-        </div>
-        <button onclick="captureCal(0)">Capture P1</button>
-      </div>
-      <div class="hint" id="calState1">P1: —</div>
-
-      <div class="calrow">
-        <div class="field">
-          <label>Point 2 (dB réel)</label>
-          <input id="cal2" type="number" step="0.1" placeholder="65.0"/>
-        </div>
-        <button onclick="captureCal(1)">Capture P2</button>
-      </div>
-      <div class="hint" id="calState2">P2: —</div>
-
-      <div class="calrow">
-        <div class="field">
-          <label>Point 3 (dB réel)</label>
-          <input id="cal3" type="number" step="0.1" placeholder="85.0"/>
-        </div>
-        <button onclick="captureCal(2)">Capture P3</button>
-      </div>
-      <div class="hint" id="calState3">P3: —</div>
-
-      <div class="btns" style="margin-top:10px">
-        <button class="danger" onclick="clearCal()">Effacer calibration</button>
-      </div>
-
-      <div class="toast" id="toastCal"></div>
-    </section>
-
-    <section class="card">
-      <h2>OTA</h2>
-
-      <div class="field">
-        <label>Activer OTA</label>
-        <select id="otaEnabled">
-          <option value="1">Oui</option>
-          <option value="0">Non</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label>Hostname OTA</label>
-        <input id="otaHostname" type="text" placeholder="soundpanel7"/>
-      </div>
-
-      <div class="field">
-        <label>Port OTA</label>
-        <input id="otaPort" type="number" min="1" max="65535" placeholder="3232"/>
-      </div>
-
-      <div class="field">
-        <label>Mot de passe OTA</label>
-        <input id="otaPassword" type="password" placeholder="laisser vide = aucun mot de passe"/>
-      </div>
-
-      <div class="btns" style="margin-top:10px">
-        <button id="saveOta">Sauver OTA</button>
-      </div>
-
-      <div class="toast" id="toastOta"></div>
-    </section>
-
-    <section class="card">
-      <h2>MQTT</h2>
-
-      <div class="field">
-        <label>Activer MQTT</label>
-        <select id="mqttEnabled">
-          <option value="1">Oui</option>
-          <option value="0">Non</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label>Broker / Host</label>
-        <input id="mqttHost" type="text" placeholder="192.168.1.10"/>
-      </div>
-
-      <div class="field">
-        <label>Port</label>
-        <input id="mqttPort" type="number" min="1" max="65535" placeholder="1883"/>
-      </div>
-
-      <div class="field">
-        <label>Username</label>
-        <input id="mqttUsername" type="text" placeholder="laisser vide si non utilisé"/>
-      </div>
-
-      <div class="field">
-        <label>Password</label>
-        <input id="mqttPassword" type="password" placeholder="laisser vide si non utilisé"/>
-      </div>
-
-      <div class="field">
-        <label>Client ID</label>
-        <input id="mqttClientId" type="text" placeholder="soundpanel7"/>
-      </div>
-
-      <div class="field">
-        <label>Base topic</label>
-        <input id="mqttBaseTopic" type="text" placeholder="soundpanel7"/>
-      </div>
-
-      <div class="field">
-        <label>Publish period (ms)</label>
-        <input id="mqttPublishPeriodMs" type="number" min="250" max="60000" placeholder="1000"/>
-      </div>
-
-      <div class="field">
-        <label>Retain</label>
-        <select id="mqttRetain">
-          <option value="0">Non</option>
-          <option value="1">Oui</option>
-        </select>
-      </div>
-
-      <div class="btns" style="margin-top:10px">
-        <button id="saveMqtt">Sauver MQTT</button>
-      </div>
-
-      <div class="toast" id="toastMqtt"></div>
-    </section>
-
-    <section class="card">
-      <h2>Actions</h2>
-      <div class="btns">
-        <button id="reboot">Reboot</button>
-        <button class="danger" id="reset">Factory reset</button>
-      </div>
-      <div class="toast" id="toastActions"></div>
-    </section>
-  </div>
-</main>
-
-<script>
-  const $ = (id)=>document.getElementById(id);
-  let liveEvents = null;
-  let liveReconnectTimer = null;
-
-  let uiDirty = false;
-  let uiLastInteraction = 0;
-
-  function markUiDirty() {
-    uiDirty = true;
-    uiLastInteraction = Date.now();
-  }
-
-  function clearUiDirty() {
-    uiDirty = false;
-    uiLastInteraction = 0;
-  }
-
-  function fmtUptime(sec){
-    sec = Math.max(0, sec|0);
-    const h = (sec/3600)|0; sec -= h*3600;
-    const m = (sec/60)|0; sec -= m*60;
-    return `${h}h ${m}m ${sec}s`;
-  }
-
-  async function apiGet(url){
-    const r = await fetch(url, {cache:"no-store"});
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
-  }
-
-  async function apiPost(url, obj){
-    const r = await fetch(url, {
-      method:"POST",
-      headers: {"Content-Type":"application/json"},
-      body: obj ? JSON.stringify(obj) : "{}"
-    });
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
-  }
-
-  function bindRange(id, outId){
-    const el = $(id), out = $(outId);
-    const upd = () => {
-      out.textContent = el.value;
-      markUiDirty();
-    };
-    el.addEventListener("input", upd);
-    el.addEventListener("change", upd);
-    out.textContent = el.value;
-  }
-
-  bindRange("bl","blVal");
-  bindRange("g","gVal");
-  bindRange("o","oVal");
-  bindRange("hist","hVal");
-  $("audioResponseMode").addEventListener("input", markUiDirty);
-  $("audioResponseMode").addEventListener("change", markUiDirty);
-  $("warnHoldSec").addEventListener("input", markUiDirty);
-  $("warnHoldSec").addEventListener("change", markUiDirty);
-  $("critHoldSec").addEventListener("input", markUiDirty);
-  $("critHoldSec").addEventListener("change", markUiDirty);
-
-  async function loadTime(){
-    try{
-      const t = await apiGet("/api/time");
-      $("tz").value = t.tz || "";
-      $("ntp").value = t.ntpServer || "";
-      $("ntpSyncMin").value = String(t.ntpSyncMinutes || 180);
-      $("hn").value = t.hostname || "";
-    } catch(e){}
-  }
-
-  function showCalState(st) {
-    for (let i = 0; i < 3; i++) {
-      const c = st.cal && st.cal[i] ? st.cal[i] : null;
-      if (!c || !c.valid) {
-        $("calState"+(i+1)).textContent = `P${i+1}: non capturé`;
-      } else {
-        $("calState"+(i+1)).textContent =
-          `P${i+1}: ref=${Number(c.refDb).toFixed(1)} dB | rawLogRms=${Number(c.rawLogRms).toFixed(4)}`;
-      }
-    }
-  }
-
-  function applyAdminLive(st) {
-    if ("wifi" in st) {
-      $("pill").textContent = st.wifi ? "En ligne" : "Hors ligne";
-      $("wifi").textContent = st.wifi ? "Connecté" : "Déconnecté";
-      $("wifiBadge").textContent = st.wifi ? "OK" : "OFF";
-      $("wifiBadge").className = "badge " + (st.wifi ? "ok" : "bad");
-    }
-    if ("ip" in st) $("ip").textContent = st.ip || "—";
-    if ("rssi" in st) $("rssi").textContent = st.wifi ? (st.rssi + " dBm") : "—";
-    if ("uptime_s" in st) $("up").textContent = fmtUptime(st.uptime_s || 0);
-    if ("time_ok" in st) $("time").textContent = st.time_ok ? st.time : "NTP…";
-
-    if ("rawRms" in st) $("rawRms").textContent = Number(st.rawRms ?? 0).toFixed(2);
-    if ("rawPseudoDb" in st) $("rawPseudoDb").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
-    if ("rawAdcMean" in st) $("rawAdcMean").textContent = String(st.rawAdcMean ?? "—");
-    if ("rawAdcLast" in st) $("rawAdcLast").textContent = String(st.rawAdcLast ?? "—");
-
-    if (st.analogOk) {
-      $("calLiveMic").textContent = `Micro live: rms=${Number(st.rawRms ?? 0).toFixed(2)} | pseudo dB=${Number(st.rawPseudoDb ?? 0).toFixed(1)} | ADC=${String(st.rawAdcLast ?? "—")}`;
-      $("calLiveLog").textContent = `Log calibration live: ${Math.log10(Math.max(Number(st.rawRms ?? 0), 0) + 0.0001).toFixed(4)}`;
-    } else if ("analogOk" in st) {
-      $("calLiveMic").textContent = "Micro live: indisponible";
-      $("calLiveLog").textContent = "Log calibration live: indisponible";
-    }
-  }
-
-  function scheduleAdminLiveReconnect(){
-    if (liveReconnectTimer) return;
-    liveReconnectTimer = setTimeout(() => {
-      liveReconnectTimer = null;
-      connectAdminLiveFeed();
-    }, 1500);
-  }
-
-  function connectAdminLiveFeed(){
-    if (liveEvents) {
-      liveEvents.close();
-      liveEvents = null;
-    }
-
-    const liveUrl = `${location.protocol}//${location.hostname}:81/api/events`;
-    liveEvents = new EventSource(liveUrl);
-
-    liveEvents.addEventListener("metrics", (ev) => {
-      applyAdminLive(JSON.parse(ev.data));
-    });
-
-    liveEvents.onerror = () => {
-      if (liveEvents) {
-        liveEvents.close();
-        liveEvents = null;
-      }
-      scheduleAdminLiveReconnect();
-    };
-  }
-
-  async function refresh(){
-    try{
-      const st = await apiGet("/api/status");
-      applyAdminLive(st);
-
-      showCalState(st);
-
-      const safeToSyncUi = !uiDirty && (Date.now() - uiLastInteraction > 1500);
-      if (safeToSyncUi) {
-        if (typeof st.backlight === "number") {
-          $("bl").value = st.backlight;
-          $("blVal").textContent = st.backlight;
-        }
-        if (typeof st.greenMax === "number") {
-          $("g").value = st.greenMax;
-          $("gVal").textContent = st.greenMax;
-        }
-        if (typeof st.orangeMax === "number") {
-          $("o").value = st.orangeMax;
-          $("oVal").textContent = st.orangeMax;
-        }
-        if (typeof st.historyMinutes === "number") {
-          $("hist").value = st.historyMinutes;
-          $("hVal").textContent = st.historyMinutes;
-        }
-        if (typeof st.audioResponseMode === "number") {
-          $("audioResponseMode").value = String(st.audioResponseMode);
-        }
-        if (typeof st.warningHoldSec === "number") {
-          $("warnHoldSec").value = String(st.warningHoldSec);
-        }
-        if (typeof st.criticalHoldSec === "number") {
-          $("critHoldSec").value = String(st.criticalHoldSec);
-        }
-      }
-    } catch(e){
-      $("pill").textContent = "Erreur";
-    }
-  }
-
-  $("saveUi").onclick = async ()=>{
-    $("toastUi").textContent = "Sauvegarde…";
-    try{
-      let g = parseInt($("g").value,10);
-      let o = parseInt($("o").value,10);
-      if (o < g) {
-        o = g;
-        $("o").value = String(o);
-        $("oVal").textContent = String(o);
-      }
-
-      await apiPost("/api/ui", {
-        backlight: parseInt($("bl").value,10),
-        greenMax: g,
-        orangeMax: o,
-        historyMinutes: parseInt($("hist").value,10),
-        audioResponseMode: parseInt($("audioResponseMode").value,10),
-        warningHoldSec: parseInt($("warnHoldSec").value,10),
-        criticalHoldSec: parseInt($("critHoldSec").value,10)
-      });
-
-      clearUiDirty();
-      $("toastUi").textContent = "OK ✅";
-      await refresh();
-    } catch(e){
-      $("toastUi").textContent = "Erreur ❌";
-    }
-  };
-
-  $("saveTime").onclick = async ()=>{
-    $("toastTime").textContent = "Sauvegarde…";
-    try{
-      await apiPost("/api/time", {
-        tz: $("tz").value.trim(),
-        ntpServer: $("ntp").value.trim(),
-        ntpSyncMinutes: parseInt($("ntpSyncMin").value, 10),
-        hostname: $("hn").value.trim()
-      });
-      $("toastTime").textContent = "OK ✅";
-    } catch(e){
-      $("toastTime").textContent = "Erreur ❌";
-    }
-  };
-
-  async function captureCal(index){
-    const input = $("cal" + (index + 1));
-    const refDb = parseFloat(input.value);
-    if (!(refDb > 0)) {
-      $("toastCal").textContent = "Entre une valeur dB valide";
-      return;
-    }
-
-    $("toastCal").textContent = "Capture…";
-    try{
-      await apiPost("/api/calibrate", { index, refDb });
-      $("toastCal").textContent = `Point ${index + 1} capturé ✅`;
-      await refresh();
-    } catch(e){
-      $("toastCal").textContent = "Erreur capture ❌";
-    }
-  }
-
-  async function loadOta(){
-    try{
-      const o = await apiGet("/api/ota");
-      $("otaEnabled").value = o.enabled ? "1" : "0";
-      $("otaHostname").value = o.hostname || "";
-      $("otaPort").value = o.port || 3232;
-      $("otaPassword").value = "";
-    } catch(e){}
-  }
-
-  $("saveOta").onclick = async ()=>{
-    $("toastOta").textContent = "Sauvegarde…";
-    try{
-      const r = await apiPost("/api/ota", {
-        enabled: parseInt($("otaEnabled").value, 10),
-        hostname: $("otaHostname").value.trim(),
-        port: parseInt($("otaPort").value, 10),
-        password: $("otaPassword").value
-      });
-
-      if (r.rebootRequired) {
-        $("toastOta").textContent = "OK ✅ Reboot requis";
-      } else {
-        $("toastOta").textContent = "OK ✅";
-      }
-    } catch(e){
-      $("toastOta").textContent = "Erreur ❌";
-    }
-  };
-
-  async function loadMqtt(){
-    try{
-      const m = await apiGet("/api/mqtt");
-      $("mqttEnabled").value = m.enabled ? "1" : "0";
-      $("mqttHost").value = m.host || "";
-      $("mqttPort").value = m.port || 1883;
-      $("mqttUsername").value = m.username || "";
-      $("mqttPassword").value = "";
-      $("mqttClientId").value = m.clientId || "soundpanel7";
-      $("mqttBaseTopic").value = m.baseTopic || "soundpanel7";
-      $("mqttPublishPeriodMs").value = m.publishPeriodMs || 1000;
-      $("mqttRetain").value = m.retain ? "1" : "0";
-    } catch(e){}
-  }
-
-  $("saveMqtt").onclick = async ()=>{
-    $("toastMqtt").textContent = "Sauvegarde…";
-    try{
-      const payload = {
-        enabled: parseInt($("mqttEnabled").value || "0", 10),
-        host: ($("mqttHost").value || "").trim(),
-        port: parseInt($("mqttPort").value || "1883", 10),
-        username: ($("mqttUsername").value || "").trim(),
-        password: ($("mqttPassword").value || ""),
-        clientId: ($("mqttClientId").value || "").trim(),
-        baseTopic: ($("mqttBaseTopic").value || "").trim(),
-        publishPeriodMs: parseInt($("mqttPublishPeriodMs").value || "1000", 10),
-        retain: parseInt($("mqttRetain").value || "0", 10)
-      };
-
-      console.log("MQTT payload", payload);
-
-      const r = await apiPost("/api/mqtt", payload);
-
-      if (r.rebootRecommended) {
-        $("toastMqtt").textContent = "OK ✅ Reboot recommandé";
-      } else {
-        $("toastMqtt").textContent = "OK ✅";
-      }
-    } catch(e){
-      console.error("MQTT save error", e);
-      $("toastMqtt").textContent = "Erreur ❌";
-    }
-  };
-
-  async function clearCal(){
-    $("toastCal").textContent = "Effacement…";
-    try{
-      await apiPost("/api/calibrate/clear");
-      $("toastCal").textContent = "Calibration effacée ✅";
-      await refresh();
-    } catch(e){
-      $("toastCal").textContent = "Erreur effacement ❌";
-    }
-  }
-
-  $("reboot").onclick = async ()=>{
-    $("toastActions").textContent = "Reboot…";
-    try { await apiPost("/api/reboot"); } catch(e){}
-  };
-
-  $("reset").onclick = async ()=>{
-    if(!confirm("Factory reset ?")) return;
-    $("toastActions").textContent = "Factory reset…";
-    try { await apiPost("/api/factory_reset"); } catch(e){}
-  };
-
-  refresh();
-  connectAdminLiveFeed();
-  loadTime();
-  loadOta();
-  loadMqtt();
-  setInterval(refresh, 1500);
 </script>
 </body>
 </html>

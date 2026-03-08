@@ -253,7 +253,6 @@ Ces reglages sont definis dans [`src/SettingsStore.h`](src/SettingsStore.h).
 Une fois l'appareil connecte au Wi-Fi :
 
 - `http://IP_DU_SOUNDPANEL/`
-- `http://IP_DU_SOUNDPANEL/admin`
 
 L'interface permet notamment de regler :
 
@@ -267,8 +266,6 @@ L'interface permet notamment de regler :
 - calibration micro
 
 ![SoundPanel 7 live dashboard](docs/images/soundpanel7-dashboard-live-view.png)
-
-![SoundPanel 7 admin web interface](docs/images/soundpanel7-admin-web-interface.png)
 
 <a id="fr-horloge-ntp"></a>
 
@@ -447,7 +444,6 @@ Composants principaux :
 ```text
 .
 ├── src/                       Firmware principal
-├── data/                      Fichiers web embarques
 ├── custom_components/         Integration Home Assistant
 ├── include/                   Headers partages
 └── platformio.ini             Build, flash et environnements
@@ -673,7 +669,6 @@ These settings are defined in [`src/SettingsStore.h`](src/SettingsStore.h).
 Once the device is connected to Wi-Fi:
 
 - `http://DEVICE_IP/`
-- `http://DEVICE_IP/admin`
 
 The interface lets you configure:
 
@@ -854,7 +849,6 @@ Main components:
 ```text
 .
 ├── src/                       Main firmware
-├── data/                      Embedded web assets
 ├── custom_components/         Home Assistant integration
 ├── include/                   Shared headers
 └── platformio.ini             Build, flash, and environments

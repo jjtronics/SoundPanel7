@@ -50,7 +50,6 @@ private:
   String liveMetricsJson() const;
 
   void handleRoot();
-  void handleAdmin();
   void handleStatus();
   void handleUiSave();
 
