@@ -8,6 +8,7 @@
 #include "ui/UiManager.h"
 #include "WebManager.h"
 #include "AudioEngine.h"
+#include "SharedHistory.h"
 
 #include "OtaManager.h"
 
@@ -22,6 +23,7 @@ static SettingsV1 g_settings;
 static NetManager g_net;
 static UiManager g_ui;
 static WebManager g_web;
+static SharedHistory g_history;
 AudioEngine g_audio;
 
 static OtaManager g_ota;
@@ -40,6 +42,7 @@ void setup() {
   // g_store.factoryReset();
 
   g_store.load(g_settings);
+  g_history.begin(&g_settings);
 
   g_board = new Board();
   g_board->init();
@@ -52,13 +55,13 @@ void setup() {
   lvgl_port_init(g_board->getLCD(), g_board->getTouch());
 
   lvgl_port_lock(-1);
-  g_ui.begin(g_board, &g_settings, &g_store, &g_net);
+  g_ui.begin(g_board, &g_settings, &g_store, &g_net, &g_history);
   lvgl_port_unlock();
 
   g_net.begin(&g_settings);
   g_ota.begin(&g_settings);
   g_mqtt.begin(&g_settings);
-  g_web.begin(&g_store, &g_settings, &g_net, g_board);
+  g_web.begin(&g_store, &g_settings, &g_net, g_board, &g_history);
 
   g_audio.begin(&g_settings);
 
@@ -86,6 +89,7 @@ void loop() {
 
     g_audio.update(&g_settings);
     const AudioMetrics& m = g_audio.metrics();
+    g_history.update(m.dbInstant, now);
 
     static uint32_t lastDbg = 0;
     if (now - lastDbg >= 1000) {

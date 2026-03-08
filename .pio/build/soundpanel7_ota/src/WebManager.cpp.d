@@ -356,6 +356,7 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiServer.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
+ src/SharedHistory.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/include/apps/esp_sntp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/netif.h \

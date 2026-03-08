@@ -56,11 +56,13 @@ static float jsonFloatLocal(const String& body, const char* key, float def) {
 bool WebManager::begin(SettingsStore* store,
                        SettingsV1* settings,
                        NetManager* net,
-                       esp_panel::board::Board* board) {
+                       esp_panel::board::Board* board,
+                       SharedHistory* history) {
   _store = store;
   _s = settings;
   _net = net;
   _board = board;
+  _history = history;
 
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
@@ -85,16 +87,6 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
   g_webDbInstant = dbInstant;
   g_webLeq = leq;
   g_webPeak = peak;
-
-  _lastDb = dbInstant;
-  _lastLeq = leq;
-  _lastPeak = peak;
-
-  const uint32_t now = millis();
-  if (_lastHistPushMs == 0 || (now - _lastHistPushMs) >= historySamplePeriodMs()) {
-    _lastHistPushMs = now;
-    pushHistory(dbInstant);
-  }
 
   pushLiveMetrics();
 }
@@ -175,7 +167,7 @@ void WebManager::setupLiveStream() {
 
   _liveEvents.onConnect([this](AsyncEventSourceClient* client) {
     if (!client) return;
-    const String payload = liveMetricsJson();
+    const String payload = statusJson();
     client->send(payload.c_str(), "metrics", millis(), 1500);
   });
   _liveSrv.addHandler(&_liveEvents);
@@ -225,8 +217,8 @@ String WebManager::statusJson() const {
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
-  json += "\"historyCapacity\":"; json += String(HISTORY_POINTS); json += ",";
-  json += "\"historySamplePeriodMs\":"; json += String(historySamplePeriodMs()); json += ",";
+  json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
+  json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
   json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
   json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
@@ -272,8 +264,8 @@ String WebManager::liveMetricsJson() const {
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
-  json += "\"historyCapacity\":"; json += String(HISTORY_POINTS); json += ",";
-  json += "\"historySamplePeriodMs\":"; json += String(historySamplePeriodMs()); json += ",";
+  json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
+  json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
@@ -373,37 +365,8 @@ void WebManager::applyBacklightNow(uint8_t percent) {
   Serial0.printf("[WEB] Backlight ON (%u%%)\n", percent);
 }
 
-void WebManager::pushHistory(float db) {
-  _hist[_histHead] = db;
-  _histHead = (_histHead + 1) % HISTORY_POINTS;
-  if (_histCount < HISTORY_POINTS) _histCount++;
-}
-
-uint32_t WebManager::historySamplePeriodMs() const {
-  uint8_t minutes = (_s ? _s->historyMinutes : 5);
-  if (minutes < 1) minutes = 1;
-  if (minutes > 60) minutes = 60;
-
-  uint32_t totalMs = (uint32_t)minutes * 60UL * 1000UL;
-  uint32_t period = totalMs / HISTORY_POINTS;
-  if (period < 250) period = 250;
-  return period;
-}
-
 String WebManager::historyJson() const {
-  String json;
-  json.reserve((size_t)_histCount * 8U + 4U);
-  json += "[";
-
-  uint16_t start = (_histCount < HISTORY_POINTS) ? 0 : _histHead;
-  for (uint16_t i = 0; i < _histCount; i++) {
-    if (i) json += ",";
-    uint16_t idx = (start + i) % HISTORY_POINTS;
-    json += String(_hist[idx], 1);
-  }
-
-  json += "]";
-  return json;
+  return _history ? _history->toJson() : String("[]");
 }
 
 void WebManager::handleStatus() {
@@ -444,7 +407,7 @@ void WebManager::handleUiSave() {
   _s->historyMinutes = (uint8_t)hm;
   _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
   _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
-  _lastHistPushMs = 0;
+  if (_history) _history->settingsChanged();
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
@@ -814,21 +777,59 @@ R"HTML(
     }
     .histMeta{font-size:12px;color:var(--muted)}
     .chartWrap{
-      position:relative;width:100%;height:220px;border-radius:14px;overflow:hidden;
-      background:#0E141C;border:1px solid rgba(255,255,255,.04);
-      padding:10px 10px 6px;
+      position:relative;width:100%;height:220px;overflow:visible;
+      padding:0;
       display:flex;align-items:stretch;gap:8px;
     }
+    .chartPlot{
+      flex:1 1 auto;height:100%;
+      border-radius:14px;
+      background:#0E141C;
+      border:1px solid rgba(255,255,255,.04);
+      padding:10px 10px 14px;
+      display:flex;align-items:flex-end;
+      overflow:hidden;
+    }
     .histScale{
-      width:48px;height:100%;display:flex;flex-direction:column;justify-content:space-between;
-      align-items:flex-start;color:#6F8192;font-size:12px;line-height:1;
-      flex:0 0 48px;
+      position:relative;width:64px;height:100%;
+      color:#90A1B2;font-size:12px;line-height:1;
+      flex:0 0 64px;
+      box-sizing:border-box;
+      padding-top:10px;
+      padding-bottom:14px;
+    }
+    .histScaleTopLabel{
+      position:absolute;right:0;bottom:calc(100% + 6px);
+      color:#90A1B2;font-size:12px;font-weight:400;line-height:1;
+      white-space:nowrap;font-variant-numeric:tabular-nums;
+      background:var(--panel);
+      padding:0 2px 0 6px;
+    }
+    .histScaleTopTick{
+      position:absolute;right:52px;bottom:100%;
+      width:10px;height:1px;background:#74879A;opacity:.95;
     }
     .histScaleRow{
-      display:flex;align-items:center;justify-content:flex-start;gap:4px;
+      position:absolute;right:0;width:100%;
+      display:flex;align-items:center;justify-content:flex-end;gap:8px;
+      white-space:nowrap;
+    }
+    .histScaleRow.mid{transform:translateY(50%)}
+    .histScaleRow.bottom{transform:translateY(50%)}
+    .histScaleRow.bottom35{
+      bottom:14px !important;
+      right:0;
+      transform:none;
+    }
+    .histScaleTick{
+      width:10px;height:1px;background:#74879A;opacity:.95;flex:0 0 10px;
+    }
+    .histScaleLabel{
+      min-width:42px;text-align:right;font-size:12px;font-weight:400;
+      font-variant-numeric:tabular-nums;
     }
     .histBars{
-      flex:1 1 auto;height:100%;display:flex;align-items:flex-end;gap:2px;
+      width:100%;height:100%;display:flex;align-items:flex-end;gap:2px;
     }
     .histBar{
       flex:1 1 0;min-width:2px;height:4px;border-radius:3px 3px 0 0;
@@ -837,6 +838,10 @@ R"HTML(
     .histAxis{
       display:flex;justify-content:space-between;align-items:center;
       color:#6F8192;font-size:12px;padding:8px 4px 0;
+      position:relative;
+    }
+    .histAxisMid{
+      position:absolute;left:50%;transform:translateX(-50%);
     }
 
     .bottom{
@@ -885,25 +890,26 @@ R"HTML(
             <div class="histMeta" id="histMeta">Dernières minutes</div>
           </div>
           <div class="chartWrap">
+            <div class="chartPlot">
+              <div class="histBars" id="histBars"></div>
+            </div>
             <div class="histScale">
-              <div class="histScaleRow">
-                <span>130 dB</span>
+              <div class="histScaleTopTick"></div>
+              <div class="histScaleTopLabel">130 dB</div>
+              <div class="histScaleRow mid" style="bottom:68.4%">
+                <span class="histScaleTick"></span><span class="histScaleLabel">100 dB</span>
               </div>
-              <div class="histScaleRow">
-                <span>100 dB</span>
+              <div class="histScaleRow mid" style="bottom:36.8%">
+                <span class="histScaleTick"></span><span class="histScaleLabel">70 dB</span>
               </div>
-              <div class="histScaleRow">
-                <span>70 dB</span>
-              </div>
-              <div class="histScaleRow">
-                <span>35 dB</span>
+              <div class="histScaleRow bottom35" style="bottom:0%">
+                <span class="histScaleTick"></span><span class="histScaleLabel">35 dB</span>
               </div>
             </div>
-            <div class="histBars" id="histBars"></div>
           </div>
           <div class="histAxis">
             <div id="histLeft">-5m</div>
-            <div id="histMid">-2m</div>
+            <div class="histAxisMid" id="histMid">-2m</div>
             <div id="histRight">0</div>
           </div>
         </div>
@@ -988,14 +994,14 @@ R"HTML(
     const histDbMax = 130;
     const clamped = Math.max(histDbMin, Math.min(histDbMax, Number(db) || 0));
     const norm = (clamped - histDbMin) / (histDbMax - histDbMin);
-    return 6 + norm * 94;
+    return norm * 100;
   }
 
   function updateHistoryLabels(){
     histMeta.textContent = `${historyMinutes} min d’historique`;
     histLeft.textContent = `-${historyMinutes}m`;
     histMid.textContent = `-${Math.max(1, Math.floor(historyMinutes / 2))}m`;
-    histRight.textContent = "0";
+    histRight.textContent = "";
   }
 
   function trimHistory(){

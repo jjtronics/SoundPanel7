@@ -7,19 +7,20 @@
 
 #include "SettingsStore.h"
 #include "NetManager.h"
+#include "SharedHistory.h"
 
 class WebManager {
 public:
   bool begin(SettingsStore* store,
              SettingsV1* settings,
              NetManager* net,
-             esp_panel::board::Board* board);
+             esp_panel::board::Board* board,
+             SharedHistory* history);
   void loop();
 
   void updateMetrics(float db, float leq, float peak);
 
 private:
-  static constexpr uint16_t HISTORY_POINTS = 96;
   static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 100;
 
   SettingsStore* _store = nullptr;
@@ -32,15 +33,8 @@ private:
   AsyncWebServer _liveSrv = AsyncWebServer(81);
   AsyncEventSource _liveEvents = AsyncEventSource("/api/events");
 
-  float _lastDb = 42.0f;
-  float _lastLeq = 42.0f;
-  float _lastPeak = 42.0f;
-
-  float _hist[HISTORY_POINTS] = {0};
-  uint16_t _histCount = 0;
-  uint16_t _histHead = 0;
-  uint32_t _lastHistPushMs = 0;
   uint32_t _lastLivePushMs = 0;
+  SharedHistory* _history = nullptr;
 
   void routes();
   void setupLiveStream();
@@ -67,8 +61,6 @@ private:
   void handleFactoryReset();
 
   void applyBacklightNow(uint8_t percent);
-  void pushHistory(float db);
-  uint32_t historySamplePeriodMs() const;
   String historyJson() const;
 
   void handleCalPoint();

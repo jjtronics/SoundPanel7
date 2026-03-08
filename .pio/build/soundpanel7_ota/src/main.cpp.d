@@ -555,7 +555,7 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiServer.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
- src/ui/UiManager.h src/WebManager.h \
+ src/ui/UiManager.h src/ui/../SharedHistory.h src/WebManager.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/WebServer.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/FS/src/FS.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/HTTP_Method.h \

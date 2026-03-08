@@ -77,11 +77,13 @@ static lv_obj_t* makeDashboardPage(lv_obj_t* parent) {
   return page;
 }
 
-void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, NetManager* net) {
+void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, NetManager* net,
+                      SharedHistory* history) {
   _board = board;
   _s = settings;
   _store = store;
   _net = net;
+  _history = history;
 
   buildDashboard();
   buildManagement();
@@ -90,35 +92,14 @@ void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, 
   showDashboard();
 }
 
-uint32_t UiManager::historySamplePeriodMs() const {
-  uint8_t minutes = (_s ? _s->historyMinutes : 5);
-  if (minutes < 1) minutes = 1;
-  if (minutes > 60) minutes = 60;
-
-  uint32_t totalMs = (uint32_t)minutes * 60UL * 1000UL;
-  uint32_t p = totalMs / HISTORY_BAR_COUNT;
-  if (p < 250) p = 250;
-  return p;
-}
-
-void UiManager::pushHistory(float db) {
-  _history[_historyHead] = db;
-  _historyHead = (_historyHead + 1) % HISTORY_BAR_COUNT;
-  if (_historyCount < HISTORY_BAR_COUNT) _historyCount++;
-  redrawHistoryBars();
-}
-
 void UiManager::redrawHistoryBars() {
   if (!_histWrap && !_histWrapFocus) return;
-
-  uint16_t start = (_historyCount < HISTORY_BAR_COUNT) ? 0 : _historyHead;
+  _historyRevision = _history ? _history->revision() : 0;
+  uint16_t count = _history ? _history->count() : 0;
 
   for (uint16_t i = 0; i < HISTORY_BAR_COUNT; i++) {
     float v = 0.0f;
-    if (i < _historyCount) {
-      uint16_t idx = (start + i) % HISTORY_BAR_COUNT;
-      v = _history[idx];
-    }
+    if (_history && i < count) v = _history->valueAt(i);
 
     const float histDbMin = 35.0f;   // plancher visuel
     const float histDbMax = 100.0f;  // plafond visuel
@@ -1296,11 +1277,7 @@ void UiManager::setDb(float dbInstant, float leq, float peak) {
   uint32_t now = millis();
   updateAlertState(now);
   applyAlertVisuals(now);
-
-  if (now - _lastHistoryPushMs >= historySamplePeriodMs()) {
-    _lastHistoryPushMs = now;
-    pushHistory(dbInstant);
-  }
+  if (!_history || _historyRevision != _history->revision()) redrawHistoryBars();
 }
 
 void UiManager::tick() {
@@ -1469,7 +1446,7 @@ void UiManager::onSliderHistory(lv_event_t* e) {
 
   if (self->_s) self->_s->historyMinutes = (uint8_t)v;
   self->redrawHistoryBars();
-  self->_lastHistoryPushMs = 0;
+  if (self->_history) self->_history->settingsChanged();
   self->refreshCalibrationView();
 
   if (self->_store && self->_s) self->_store->save(*self->_s);

@@ -6,13 +6,15 @@
 
 #include "../SettingsStore.h"
 #include "../NetManager.h"
+#include "../SharedHistory.h"
 
 class UiManager {
 public:
   void begin(esp_panel::board::Board* board,
              SettingsV1* settings,
              SettingsStore* store,
-             NetManager* net);
+             NetManager* net,
+             SharedHistory* history);
 
   void showDashboard();
   void showManagement();
@@ -21,7 +23,7 @@ public:
   void setDb(float dbInstant, float leq, float peak);
 
 private:
-  static constexpr uint16_t HISTORY_BAR_COUNT = 96;
+  static constexpr uint16_t HISTORY_BAR_COUNT = SharedHistory::POINT_COUNT;
   static constexpr uint8_t DASH_PAGE_COUNT = 4;
   static constexpr uint16_t RED_HISTORY_SAMPLE_COUNT = 3600;
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
@@ -108,11 +110,8 @@ private:
   lv_obj_t* _slHistory = nullptr;
   lv_obj_t* _lblNetInfo = nullptr;
 
-  // History
-  float _history[HISTORY_BAR_COUNT] = {0.0f};
-  uint16_t _historyCount = 0;
-  uint16_t _historyHead = 0;
-  uint32_t _lastHistoryPushMs = 0;
+  SharedHistory* _history = nullptr;
+  uint32_t _historyRevision = UINT32_MAX;
 
   uint32_t _lastTickMs = 0;
   float _lastDb = 0.0f;
@@ -155,8 +154,6 @@ private:
   void applyAlertVisuals(uint32_t now);
   void powerOffNow();
 
-  uint32_t historySamplePeriodMs() const;
-  void pushHistory(float db);
   void redrawHistoryBars();
 
   static void onGear(lv_event_t* e);
