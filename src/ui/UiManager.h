@@ -22,6 +22,14 @@ public:
 
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = 96;
+  static constexpr uint8_t DASH_PAGE_COUNT = 4;
+
+  enum DashPage : uint8_t {
+    DASH_PAGE_OVERVIEW = 0,
+    DASH_PAGE_CLOCK = 1,
+    DASH_PAGE_SOUND = 2,
+    DASH_PAGE_CALIBRATION = 3,
+  };
 
   esp_panel::board::Board* _board = nullptr;
   SettingsV1* _s = nullptr;
@@ -30,6 +38,10 @@ private:
 
   lv_obj_t* _scrDash = nullptr;
   lv_obj_t* _scrMgmt = nullptr;
+  lv_obj_t* _dashContent = nullptr;
+  lv_obj_t* _dashPages[DASH_PAGE_COUNT] = {nullptr};
+  lv_obj_t* _dashTabs[DASH_PAGE_COUNT] = {nullptr};
+  uint8_t _currentDashPage = DASH_PAGE_OVERVIEW;
 
   // Dashboard
   lv_obj_t* _arc = nullptr;
@@ -43,6 +55,29 @@ private:
   lv_obj_t* _lblClockDate = nullptr;
   lv_obj_t* _lblClockMain = nullptr;
   lv_obj_t* _lblClockSec = nullptr;
+  lv_obj_t* _lblClockDateFocus = nullptr;
+  lv_obj_t* _lblClockMainFocus = nullptr;
+  lv_obj_t* _lblClockSecFocus = nullptr;
+  lv_obj_t* _clockSecBadgeFocus = nullptr;
+  lv_obj_t* _lblClockStatusFocus = nullptr;
+  lv_obj_t* _arcFocus = nullptr;
+  lv_obj_t* _dotFocus = nullptr;
+  lv_obj_t* _lblDbFocus = nullptr;
+  lv_obj_t* _lblLeqFocus = nullptr;
+  lv_obj_t* _lblPeakFocus = nullptr;
+  lv_obj_t* _histWrapFocus = nullptr;
+  lv_obj_t* _lblHistFocus = nullptr;
+  lv_obj_t* _lblHistTLeftFocus = nullptr;
+  lv_obj_t* _lblHistTMidFocus = nullptr;
+  lv_obj_t* _lblHistTRightFocus = nullptr;
+  lv_obj_t* _histBarsFocus[HISTORY_BAR_COUNT] = {nullptr};
+  lv_obj_t* _lblCalStatus = nullptr;
+  lv_obj_t* _lblCalPoint[3] = {nullptr};
+  lv_obj_t* _btnCalRefMinus[3] = {nullptr};
+  lv_obj_t* _btnCalRefPlus[3] = {nullptr};
+  lv_obj_t* _lblCalRef[3] = {nullptr};
+  lv_obj_t* _btnCalCapture[3] = {nullptr};
+  lv_obj_t* _lblCalFallback = nullptr;
 
   lv_obj_t* _histWrap = nullptr;
   lv_obj_t* _lblHist = nullptr;
@@ -76,6 +111,24 @@ private:
 
   void buildDashboard();
   void buildManagement();
+  void buildDashboardOverviewPage(lv_obj_t* parent);
+  void buildDashboardClockPage(lv_obj_t* parent);
+  void buildDashboardSoundPage(lv_obj_t* parent);
+  void buildDashboardCalibrationPage(lv_obj_t* parent);
+  void buildHistoryCard(lv_obj_t* parent,
+                        int width,
+                        int height,
+                        lv_obj_t** wrapOut,
+                        lv_obj_t** titleOut,
+                        lv_obj_t** leftOut,
+                        lv_obj_t** midOut,
+                        lv_obj_t** rightOut,
+                        lv_obj_t* barsOut[HISTORY_BAR_COUNT]);
+  void setDashboardPage(uint8_t page);
+  void refreshCalibrationView();
+  void updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
+                          const char* dateText, const char* mainText, const char* secText);
+  void layoutClockFocus();
 
   void applyBacklight(uint8_t percent);
   lv_color_t zoneColorForDb(float db);
@@ -86,6 +139,8 @@ private:
   void redrawHistoryBars();
 
   static void onGear(lv_event_t* e);
+  static void onDashTab(lv_event_t* e);
+  static void onDashGesture(lv_event_t* e);
   static void onBack(lv_event_t* e);
   static void onSliderBacklight(lv_event_t* e);
   static void onSliderThresholds(lv_event_t* e);
@@ -95,4 +150,7 @@ private:
   static void onConfirmResetYes(lv_event_t* e);
   static void onConfirmResetNo(lv_event_t* e);
   static void onPowerOff(lv_event_t* e);
+  static void onCalibrationCapture(lv_event_t* e);
+  static void onCalibrationClear(lv_event_t* e);
+  static void onCalibrationRefChanged(lv_event_t* e);
 };

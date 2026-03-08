@@ -557,4 +557,5 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_driver_gpio/include/driver/rtc_io.h \
- /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/hal/include/hal/rtc_io_types.h
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/hal/include/hal/rtc_io_types.h \
+ src/ui/../AudioEngine.h

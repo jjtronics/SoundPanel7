@@ -132,8 +132,10 @@ bool AudioEngine::captureCalibrationPoint(SettingsV1& s, uint8_t index, float re
 }
 
 void AudioEngine::clearCalibration(SettingsV1& s) {
+  static const float kRecommendedRefDb[3] = {45.0f, 65.0f, 85.0f};
+
   for (uint8_t i = 0; i < 3; i++) {
-    s.calPointRefDb[i] = 0.0f;
+    s.calPointRefDb[i] = kRecommendedRefDb[i];
     s.calPointRawLogRms[i] = 0.0f;
     s.calPointValid[i] = 0;
   }
