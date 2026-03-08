@@ -89,6 +89,13 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
   _lastDb = dbInstant;
   _lastLeq = leq;
   _lastPeak = peak;
+
+  const uint32_t now = millis();
+  if (_lastHistPushMs == 0 || (now - _lastHistPushMs) >= historySamplePeriodMs()) {
+    _lastHistPushMs = now;
+    pushHistory(dbInstant);
+  }
+
   pushLiveMetrics();
 }
 
@@ -218,6 +225,8 @@ String WebManager::statusJson() const {
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"historyCapacity\":"; json += String(HISTORY_POINTS); json += ",";
+  json += "\"historySamplePeriodMs\":"; json += String(historySamplePeriodMs()); json += ",";
   json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
   json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
@@ -239,6 +248,8 @@ String WebManager::statusJson() const {
     json += "}";
   }
   json += "]";
+  json += ",";
+  json += "\"history\":"; json += historyJson();
   json += "}";
 
   return json;
@@ -261,6 +272,8 @@ String WebManager::liveMetricsJson() const {
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"historyCapacity\":"; json += String(HISTORY_POINTS); json += ",";
+  json += "\"historySamplePeriodMs\":"; json += String(historySamplePeriodMs()); json += ",";
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
@@ -360,6 +373,39 @@ void WebManager::applyBacklightNow(uint8_t percent) {
   Serial0.printf("[WEB] Backlight ON (%u%%)\n", percent);
 }
 
+void WebManager::pushHistory(float db) {
+  _hist[_histHead] = db;
+  _histHead = (_histHead + 1) % HISTORY_POINTS;
+  if (_histCount < HISTORY_POINTS) _histCount++;
+}
+
+uint32_t WebManager::historySamplePeriodMs() const {
+  uint8_t minutes = (_s ? _s->historyMinutes : 5);
+  if (minutes < 1) minutes = 1;
+  if (minutes > 60) minutes = 60;
+
+  uint32_t totalMs = (uint32_t)minutes * 60UL * 1000UL;
+  uint32_t period = totalMs / HISTORY_POINTS;
+  if (period < 250) period = 250;
+  return period;
+}
+
+String WebManager::historyJson() const {
+  String json;
+  json.reserve((size_t)_histCount * 8U + 4U);
+  json += "[";
+
+  uint16_t start = (_histCount < HISTORY_POINTS) ? 0 : _histHead;
+  for (uint16_t i = 0; i < _histCount; i++) {
+    if (i) json += ",";
+    uint16_t idx = (start + i) % HISTORY_POINTS;
+    json += String(_hist[idx], 1);
+  }
+
+  json += "]";
+  return json;
+}
+
 void WebManager::handleStatus() {
   replyJson(200, statusJson());
 }
@@ -398,6 +444,7 @@ void WebManager::handleUiSave() {
   _s->historyMinutes = (uint8_t)hm;
   _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
   _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
+  _lastHistPushMs = 0;
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
@@ -765,15 +812,31 @@ R"HTML(
     .histTop{
       display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;
     }
-    .histTitle{font-size:14px;color:var(--muted)}
     .histMeta{font-size:12px;color:var(--muted)}
     .chartWrap{
       position:relative;width:100%;height:220px;border-radius:14px;overflow:hidden;
       background:#0E141C;border:1px solid rgba(255,255,255,.04);
+      padding:10px 10px 6px;
+      display:flex;align-items:stretch;gap:8px;
     }
-    canvas{
-      position:absolute;inset:0;width:100%;height:100%;
-      display:block;
+    .histScale{
+      width:48px;height:100%;display:flex;flex-direction:column;justify-content:space-between;
+      align-items:flex-start;color:#6F8192;font-size:12px;line-height:1;
+      flex:0 0 48px;
+    }
+    .histScaleRow{
+      display:flex;align-items:center;justify-content:flex-start;gap:4px;
+    }
+    .histBars{
+      flex:1 1 auto;height:100%;display:flex;align-items:flex-end;gap:2px;
+    }
+    .histBar{
+      flex:1 1 0;min-width:2px;height:4px;border-radius:3px 3px 0 0;
+      background:#1A2332;
+    }
+    .histAxis{
+      display:flex;justify-content:space-between;align-items:center;
+      color:#6F8192;font-size:12px;padding:8px 4px 0;
     }
 
     .bottom{
@@ -819,11 +882,29 @@ R"HTML(
 
         <div class="histCard">
           <div class="histTop">
-            <div class="histTitle">Historique dB</div>
             <div class="histMeta" id="histMeta">Dernières minutes</div>
           </div>
           <div class="chartWrap">
-            <canvas id="hist"></canvas>
+            <div class="histScale">
+              <div class="histScaleRow">
+                <span>130 dB</span>
+              </div>
+              <div class="histScaleRow">
+                <span>100 dB</span>
+              </div>
+              <div class="histScaleRow">
+                <span>70 dB</span>
+              </div>
+              <div class="histScaleRow">
+                <span>35 dB</span>
+              </div>
+            </div>
+            <div class="histBars" id="histBars"></div>
+          </div>
+          <div class="histAxis">
+            <div id="histLeft">-5m</div>
+            <div id="histMid">-2m</div>
+            <div id="histRight">0</div>
           </div>
         </div>
       </div>
@@ -844,13 +925,16 @@ R"HTML(
   const timeEl = document.getElementById("time");
   const dot = document.getElementById("dot");
   const histMeta = document.getElementById("histMeta");
-
-  const histCanvas = document.getElementById("hist");
-  const histCtx = histCanvas.getContext("2d");
+  const histBars = document.getElementById("histBars");
+  const histLeft = document.getElementById("histLeft");
+  const histMid = document.getElementById("histMid");
+  const histRight = document.getElementById("histRight");
 
   let historyValues = [];
   let historyMinutes = 5;
-  const LIVE_SAMPLE_PERIOD_MS = 100;
+  let historyCapacity = 96;
+  let historySamplePeriodMs = 3000;
+  let lastHistorySampleClientMs = 0;
   let events = null;
   let reconnectTimer = null;
   let hasLiveFeed = false;
@@ -899,72 +983,61 @@ R"HTML(
     return "#E53935";
   }
 
-  function resizeCanvas(){
-    const ratio = window.devicePixelRatio || 1;
-    const rect = histCanvas.getBoundingClientRect();
-    histCanvas.width = Math.max(1, Math.floor(rect.width * ratio));
-    histCanvas.height = Math.max(1, Math.floor(rect.height * ratio));
-    histCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  function historyHeightPercent(db){
+    const histDbMin = 35;
+    const histDbMax = 130;
+    const clamped = Math.max(histDbMin, Math.min(histDbMax, Number(db) || 0));
+    const norm = (clamped - histDbMin) / (histDbMax - histDbMin);
+    return 6 + norm * 94;
+  }
+
+  function updateHistoryLabels(){
+    histMeta.textContent = `${historyMinutes} min d’historique`;
+    histLeft.textContent = `-${historyMinutes}m`;
+    histMid.textContent = `-${Math.max(1, Math.floor(historyMinutes / 2))}m`;
+    histRight.textContent = "0";
+  }
+
+  function trimHistory(){
+    if (historyValues.length > historyCapacity) {
+      historyValues = historyValues.slice(-historyCapacity);
+    }
+  }
+
+  function setHistory(values){
+    historyValues = Array.isArray(values) ? values.map(v => Number(v) || 0) : [];
+    trimHistory();
+    drawHistory();
+  }
+
+  function appendHistory(db, force){
+    const now = Date.now();
+    if (!force && lastHistorySampleClientMs && (now - lastHistorySampleClientMs) < historySamplePeriodMs) {
+      return;
+    }
+
+    lastHistorySampleClientMs = now;
+    historyValues.push(Number(db) || 0);
+    trimHistory();
     drawHistory();
   }
 
   function drawHistory(){
-    const w = histCanvas.getBoundingClientRect().width;
-    const h = histCanvas.getBoundingClientRect().height;
-    if (w <= 0 || h <= 0) return;
-
-    histCtx.clearRect(0, 0, w, h);
-
+    const values = historyValues.slice(-historyCapacity);
     const greenMax = window.__greenMax ?? 55;
     const orangeMax = window.__orangeMax ?? 70;
 
-    function yOf(db){
-      const clamped = Math.max(0, Math.min(100, db));
-      return h - (clamped / 100) * h;
+    let html = "";
+    const missing = Math.max(0, historyCapacity - values.length);
+    for (let i = 0; i < missing; i++) {
+      html += '<div class="histBar"></div>';
     }
 
-    histCtx.fillStyle = "rgba(35,197,82,0.10)";
-    histCtx.fillRect(0, yOf(greenMax), w, h - yOf(greenMax));
-
-    histCtx.fillStyle = "rgba(240,162,2,0.10)";
-    histCtx.fillRect(0, yOf(orangeMax), w, yOf(greenMax) - yOf(orangeMax));
-
-    histCtx.fillStyle = "rgba(229,57,53,0.10)";
-    histCtx.fillRect(0, 0, w, yOf(orangeMax));
-
-    histCtx.strokeStyle = "rgba(255,255,255,0.08)";
-    histCtx.lineWidth = 1;
-    for (let i = 1; i <= 4; i++) {
-      const y = (h / 5) * i;
-      histCtx.beginPath();
-      histCtx.moveTo(0, y);
-      histCtx.lineTo(w, y);
-      histCtx.stroke();
+    for (const value of values) {
+      html += `<div class="histBar" style="height:${historyHeightPercent(value).toFixed(1)}%;background:${zoneColor(value, greenMax, orangeMax)}"></div>`;
     }
 
-    if (historyValues.length < 2) return;
-
-    const maxPoints = Math.max(2, Math.floor((historyMinutes * 60 * 1000) / LIVE_SAMPLE_PERIOD_MS));
-    const pts = historyValues.slice(-maxPoints);
-
-    const stepX = pts.length > 1 ? w / (pts.length - 1) : w;
-
-    histCtx.lineWidth = 2.5;
-    histCtx.lineJoin = "round";
-    histCtx.lineCap = "round";
-
-    for (let i = 1; i < pts.length; i++) {
-      const x1 = (i - 1) * stepX;
-      const y1 = yOf(pts[i - 1]);
-      const x2 = i * stepX;
-      const y2 = yOf(pts[i]);
-
-      histCtx.strokeStyle = zoneColor(pts[i], greenMax, orangeMax);
-      histCtx.beginPath();
-      histCtx.moveTo(x1, y1);
-      histCtx.lineTo(x2, y2);
-      histCtx.stroke();
-    }
+    histBars.innerHTML = html;
   }
 
   function applyLiveMetrics(st){
@@ -974,6 +1047,8 @@ R"HTML(
     const greenMax = Number(st.greenMax ?? window.__greenMax ?? 55);
     const orangeMax = Number(st.orangeMax ?? window.__orangeMax ?? 70);
     historyMinutes = Number(st.historyMinutes ?? historyMinutes ?? 5);
+    historyCapacity = Number(st.historyCapacity ?? historyCapacity ?? 96);
+    historySamplePeriodMs = Number(st.historySamplePeriodMs ?? historySamplePeriodMs ?? 3000);
 
     window.__greenMax = greenMax;
     window.__orangeMax = orangeMax;
@@ -989,12 +1064,6 @@ R"HTML(
     leqEl.textContent = leq.toFixed(1);
     peakEl.textContent = peak.toFixed(1);
 
-    const maxPoints = Math.max(2, Math.floor((historyMinutes * 60 * 1000) / LIVE_SAMPLE_PERIOD_MS));
-    historyValues.push(db);
-    if (historyValues.length > maxPoints) {
-      historyValues = historyValues.slice(-maxPoints);
-    }
-
     if ("time_ok" in st) {
       syncClock(st.time_ok ? st.time : "");
     }
@@ -1003,8 +1072,14 @@ R"HTML(
       wifiEl.textContent = st.wifi ? `WiFi: OK (${st.ip})` : "WiFi: OFF";
     }
 
-    histMeta.textContent = `${historyMinutes} min d’historique`;
-    drawHistory();
+    if (Array.isArray(st.history)) {
+      setHistory(st.history);
+      lastHistorySampleClientMs = Date.now();
+    } else {
+      appendHistory(db, false);
+    }
+
+    updateHistoryLabels();
   }
 
   async function refreshStatus(){
@@ -1049,8 +1124,6 @@ R"HTML(
     };
   }
 
-  window.addEventListener("resize", resizeCanvas);
-  resizeCanvas();
   refreshStatus();
   connectLiveFeed();
   setInterval(renderClock, 1000);

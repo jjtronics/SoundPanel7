@@ -19,7 +19,7 @@ public:
   void updateMetrics(float db, float leq, float peak);
 
 private:
-  static constexpr uint16_t HISTORY_POINTS = 180;
+  static constexpr uint16_t HISTORY_POINTS = 96;
   static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 100;
 
   SettingsStore* _store = nullptr;
@@ -67,6 +67,7 @@ private:
   void handleFactoryReset();
 
   void applyBacklightNow(uint8_t percent);
+  void pushHistory(float db);
   uint32_t historySamplePeriodMs() const;
   String historyJson() const;
 
