@@ -48,6 +48,7 @@ struct SettingsV1 {
   float analogExtraOffsetDb = 15.0f;
 
   // calibration points
+  uint32_t calibrationCaptureMs = 3000;
   float calPointRefDb[3] = {45.0f, 65.0f, 85.0f};
   float calPointRawLogRms[3] = {0.0f, 0.0f, 0.0f};
   uint8_t calPointValid[3] = {0, 0, 0};

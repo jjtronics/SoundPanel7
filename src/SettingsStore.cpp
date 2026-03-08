@@ -225,6 +225,7 @@ void SettingsStore::load(SettingsV1 &out) {
   out.peakHoldMs         = _prefs.getUInt("a_peak", out.peakHoldMs);
   out.analogBaseOffsetDb = _prefs.getFloat("a_base", out.analogBaseOffsetDb);
   out.analogExtraOffsetDb= _prefs.getFloat("a_extra", out.analogExtraOffsetDb);
+  out.calibrationCaptureMs = _prefs.getUInt("cal_capms", out.calibrationCaptureMs);
 
   out.mqttEnabled = (uint8_t)_prefs.getUChar("mq_en", out.mqttEnabled);
   _prefs.getString("mq_host", out.mqttHost, sizeof(out.mqttHost));
@@ -281,6 +282,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUInt("a_peak", s.peakHoldMs);
   _prefs.putFloat("a_base", s.analogBaseOffsetDb);
   _prefs.putFloat("a_extra", s.analogExtraOffsetDb);
+  _prefs.putUInt("cal_capms", s.calibrationCaptureMs);
 
   _prefs.putUChar("mq_en", s.mqttEnabled);
   _prefs.putString("mq_host", s.mqttHost);
@@ -330,6 +332,8 @@ void SettingsStore::sanitize(SettingsV1& s) {
   if (s.emaAlpha > 0.95f) s.emaAlpha = 0.95f;
   if (s.peakHoldMs < 500) s.peakHoldMs = 500;
   if (s.peakHoldMs > 30000UL) s.peakHoldMs = 30000UL;
+  if (s.calibrationCaptureMs < 1000UL) s.calibrationCaptureMs = 1000UL;
+  if (s.calibrationCaptureMs > 30000UL) s.calibrationCaptureMs = 30000UL;
 
   if (s.ntpSyncIntervalMs < 60000UL) s.ntpSyncIntervalMs = 60000UL;
   if (s.ntpSyncIntervalMs > 86400000UL) s.ntpSyncIntervalMs = 86400000UL;
@@ -367,6 +371,7 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"audioResponseMode\":"; json += String(s.audioResponseMode); json += ",";
   json += "\"emaAlpha\":"; json += String(s.emaAlpha, 4); json += ",";
   json += "\"peakHoldMs\":"; json += String(s.peakHoldMs); json += ",";
+  json += "\"calibrationCaptureSec\":"; json += String(s.calibrationCaptureMs / 1000UL); json += ",";
   json += "\"analogBaseOffsetDb\":"; json += String(s.analogBaseOffsetDb, 4); json += ",";
   json += "\"analogExtraOffsetDb\":"; json += String(s.analogExtraOffsetDb, 4); json += ",";
   json += "\"calPointRefDb\":["; json += String(s.calPointRefDb[0], 2); json += ","; json += String(s.calPointRefDb[1], 2); json += ","; json += String(s.calPointRefDb[2], 2); json += "],";
@@ -422,6 +427,7 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.audioResponseMode = (uint8_t)jsonIntLocal(json, "audioResponseMode", next.audioResponseMode);
   next.emaAlpha = jsonFloatLocal(json, "emaAlpha", next.emaAlpha);
   next.peakHoldMs = (uint32_t)jsonIntLocal(json, "peakHoldMs", next.peakHoldMs);
+  next.calibrationCaptureMs = (uint32_t)jsonIntLocal(json, "calibrationCaptureSec", (int)(next.calibrationCaptureMs / 1000UL)) * 1000UL;
   next.analogBaseOffsetDb = jsonFloatLocal(json, "analogBaseOffsetDb", next.analogBaseOffsetDb);
   next.analogExtraOffsetDb = jsonFloatLocal(json, "analogExtraOffsetDb", next.analogExtraOffsetDb);
 
@@ -540,6 +546,7 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.analogBaseOffsetDb = def.analogBaseOffsetDb;
     s.analogExtraOffsetDb = def.analogExtraOffsetDb;
   } else if (scope == "calibration") {
+    s.calibrationCaptureMs = def.calibrationCaptureMs;
     memcpy(s.calPointRefDb, def.calPointRefDb, sizeof(s.calPointRefDb));
     memcpy(s.calPointRawLogRms, def.calPointRawLogRms, sizeof(s.calPointRawLogRms));
     memcpy(s.calPointValid, def.calPointValid, sizeof(s.calPointValid));

@@ -4,7 +4,6 @@
 static constexpr float kRmsEpsilon = 0.0001f;
 static constexpr float kFastAlpha = 0.45f;
 static constexpr float kSlowAlpha = 0.10f;
-static constexpr uint32_t kCalibrationCaptureMs = 3000;
 static constexpr uint8_t kCalibrationSampleCount = 24;
 
 static uint8_t countValidCalibrationPoints(const SettingsV1& s) {
@@ -156,7 +155,7 @@ float AudioEngine::captureCalibrationLogRms(const SettingsV1& s, bool& okOut) {
   uint8_t sampleUsed = 0;
   uint32_t startMs = millis();
 
-  while ((millis() - startMs) < kCalibrationCaptureMs && sampleUsed < kCalibrationSampleCount) {
+  while ((millis() - startMs) < s.calibrationCaptureMs && sampleUsed < kCalibrationSampleCount) {
     uint16_t meanAdc = 0;
     int lastAdc = 0;
     bool analogOk = false;

@@ -243,6 +243,7 @@ String WebManager::statusJson() const {
   json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
   json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
   json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
+  json += "\"calibrationCaptureSec\":"; json += String(_s ? (_s->calibrationCaptureMs / 1000UL) : 3); json += ",";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
   json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
@@ -295,6 +296,7 @@ String WebManager::liveMetricsJson() const {
   json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
   json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
   json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
+  json += "\"calibrationCaptureSec\":"; json += String(_s ? (_s->calibrationCaptureMs / 1000UL) : 3); json += ",";
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
@@ -447,6 +449,7 @@ void WebManager::handleUiSave() {
   int arm = jsonInt(body, "audioResponseMode", (int)_s->audioResponseMode);
   int whs = jsonInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / 1000UL));
   int chs = jsonInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / 1000UL));
+  int ccs = jsonInt(body, "calibrationCaptureSec", (int)(_s->calibrationCaptureMs / 1000UL));
 
   if (bl < 0) bl = 0;
   if (bl > 100) bl = 100;
@@ -462,6 +465,8 @@ void WebManager::handleUiSave() {
   if (whs > 60) whs = 60;
   if (chs < 0) chs = 0;
   if (chs > 60) chs = 60;
+  if (ccs < 1) ccs = 1;
+  if (ccs > 30) ccs = 30;
 
   _s->backlight = (uint8_t)bl;
   _s->th.greenMax = (uint8_t)g;
@@ -470,13 +475,14 @@ void WebManager::handleUiSave() {
   _s->audioResponseMode = (uint8_t)arm;
   _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
   _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
+  _s->calibrationCaptureMs = (uint32_t)ccs * 1000UL;
   if (_history) _history->settingsChanged();
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds\n",
-                 bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs);
+  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
+                 bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyJson(200, "{\"ok\":true}\n");
 }
 
@@ -1487,6 +1493,11 @@ R"HTML(
                     <label>Delai critique (rouge)</label>
                     <input id="critHoldSec" type="number" min="0" max="60" step="1" value="2"/>
                   </div>
+                  <div class="field">
+                    <label>Delai tampon calibration (s)</label>
+                    <input id="calCaptureSec" type="number" min="1" max="30" step="1" value="3"/>
+                    <div class="hint">Duree de capture utilisee pour chaque point de calibration.</div>
+                  </div>
                 </div>
               </div>
 
@@ -2102,6 +2113,7 @@ R"HTML(
       if ("historyMinutes" in st) $("hist").value = state.historyMinutes;
       if ("warningHoldSec" in st) $("warnHoldSec").value = warningHoldSec;
       if ("criticalHoldSec" in st) $("critHoldSec").value = criticalHoldSec;
+      if ("calibrationCaptureSec" in st) $("calCaptureSec").value = Number(st.calibrationCaptureSec ?? 3);
       if ("audioResponseMode" in st) state.uiResponseMode = Number(st.audioResponseMode ?? 0);
       syncUiLabels();
     }
@@ -2196,6 +2208,7 @@ R"HTML(
       audioResponseMode: state.uiResponseMode,
       warningHoldSec: Number($("warnHoldSec").value || 0),
       criticalHoldSec: Number($("critHoldSec").value || 0),
+      calibrationCaptureSec: Number($("calCaptureSec").value || 3),
     };
 
     try {
@@ -2469,7 +2482,7 @@ R"HTML(
 
   $("bl").addEventListener("click", toggleBacklight);
 
-  ["g", "o", "hist", "warnHoldSec", "critHoldSec"].forEach((id) => {
+  ["g", "o", "hist", "warnHoldSec", "critHoldSec", "calCaptureSec"].forEach((id) => {
     $(id).addEventListener("input", () => {
       markUiDirty();
       syncUiLabels();
