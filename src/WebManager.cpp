@@ -775,6 +775,9 @@ R"HTML(
       background:var(--panel3);border:1px solid rgba(255,255,255,.03);
       border-radius:22px;padding:18px;
     }
+    #soundLeq,#soundPeak{
+      display:block;width:100%;text-align:center;
+    }
     .clockMiniDate,.clockDate{color:var(--muted);font-variant-numeric:tabular-nums}
     .clockMiniDate{font-size:16px;text-align:center}
     .clockMiniMain{
@@ -1498,6 +1501,7 @@ R"HTML(
   const state = {
     status: null,
     historyValues: [],
+    historyInitialized: false,
     historyMinutes: 5,
     historyCapacity: 96,
     historySamplePeriodMs: 3000,
@@ -1703,6 +1707,7 @@ R"HTML(
     if (state.historyValues.length > state.historyCapacity) {
       state.historyValues = state.historyValues.slice(-state.historyCapacity);
     }
+    state.historyInitialized = true;
     state.lastHistorySampleClientMs = Date.now();
     updateHistoryLabels();
     drawHistory();
@@ -1827,9 +1832,9 @@ R"HTML(
     updateStatusSummary(st);
     updateHistoryLabels();
 
-    if (Array.isArray(st.history) && options.useHistorySnapshot) {
+    if (Array.isArray(st.history) && (options.useHistorySnapshot || !state.historyInitialized)) {
       setHistory(st.history);
-    } else if (!options.skipAppendHistory) {
+    } else if (!options.skipAppendHistory && state.historyInitialized) {
       appendHistory(db);
     }
 
@@ -1910,7 +1915,7 @@ R"HTML(
       setSystemBadgeOnline();
       applyStatus(st, {
         skipAppendHistory: true,
-        useHistorySnapshot: state.historyValues.length === 0
+        useHistorySnapshot: !state.historyInitialized
       });
     } catch (err) {
       setSystemBadgeError();
@@ -2149,15 +2154,19 @@ R"HTML(
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
 
-  syncUiLabels();
-  refreshStatus();
-  connectLiveFeed();
-  setInterval(refreshStatus, 2500);
-  setInterval(checkSystemHeartbeat, 1000);
-  loadTimeSettings();
-  loadOtaSettings();
-  loadMqttSettings();
-  setInterval(renderClock, 1000);
+  async function initPage() {
+    syncUiLabels();
+    await refreshStatus();
+    connectLiveFeed();
+    setInterval(refreshStatus, 2500);
+    setInterval(checkSystemHeartbeat, 1000);
+    loadTimeSettings();
+    loadOtaSettings();
+    loadMqttSettings();
+    setInterval(renderClock, 1000);
+  }
+
+  initPage();
 </script>
 </body>
 </html>
