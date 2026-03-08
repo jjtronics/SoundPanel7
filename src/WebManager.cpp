@@ -1413,6 +1413,10 @@ R"HTML(
                   <div class="v mono" id="settingsTime">--</div>
                 </div>
                 <div class="statusItem">
+                  <div class="k">Uptime</div>
+                  <div class="v mono" id="settingsUptime">--</div>
+                </div>
+                <div class="statusItem">
                   <div class="k">Historique</div>
                   <div class="v mono" id="settingsHistory">--</div>
                 </div>
@@ -1782,6 +1786,19 @@ R"HTML(
     return String(v).padStart(2, "0");
   }
 
+  function formatUptime(totalSeconds) {
+    const uptime = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const days = Math.floor(uptime / 86400);
+    const hours = Math.floor((uptime % 86400) / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    const seconds = uptime % 60;
+
+    if (days > 0) {
+      return `${days}j ${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+    }
+    return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+  }
+
   function zoneColor(db, greenMax, orangeMax) {
     if (db <= greenMax) return "#23C552";
     if (db <= orangeMax) return "#F0A202";
@@ -2004,6 +2021,7 @@ R"HTML(
 
   function updateStatusSummary(st) {
     $("settingsIp").textContent = st.wifi ? `${st.ip || "-"} / ${st.rssi ?? 0} dBm` : "--";
+    $("settingsUptime").textContent = formatUptime(st.uptime_s);
     $("settingsHistory").textContent = `${state.historyMinutes} min / ${state.historyCapacity} points`;
     $("settingsVersion").textContent = st.version || "--";
     $("settingsBuildDate").textContent = st.buildDate || "--";
@@ -2050,43 +2068,44 @@ R"HTML(
   }
 
   function applyStatus(st, options = {}) {
-    state.status = st;
-    state.historyMinutes = Number(st.historyMinutes ?? state.historyMinutes ?? 5);
-    state.historyCapacity = Number(st.historyCapacity ?? state.historyCapacity ?? 96);
-    state.historySamplePeriodMs = Number(st.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
+    state.status = { ...(state.status || {}), ...st };
+    const merged = state.status;
+    state.historyMinutes = Number(merged.historyMinutes ?? state.historyMinutes ?? 5);
+    state.historyCapacity = Number(merged.historyCapacity ?? state.historyCapacity ?? 96);
+    state.historySamplePeriodMs = Number(merged.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
 
-    const db = Number(st.db ?? 0);
-    const leq = Number(st.leq ?? 0);
-    const peak = Number(st.peak ?? 0);
-    const greenMax = Number(st.greenMax ?? 55);
-    const orangeMax = Number(st.orangeMax ?? 70);
-    const warningHoldSec = Number(st.warningHoldSec ?? 3);
-    const criticalHoldSec = Number(st.criticalHoldSec ?? 2);
+    const db = Number(merged.db ?? 0);
+    const leq = Number(merged.leq ?? 0);
+    const peak = Number(merged.peak ?? 0);
+    const greenMax = Number(merged.greenMax ?? 55);
+    const orangeMax = Number(merged.orangeMax ?? 70);
+    const warningHoldSec = Number(merged.warningHoldSec ?? 3);
+    const criticalHoldSec = Number(merged.criticalHoldSec ?? 2);
 
     updateGauge(db, greenMax, orangeMax);
     updateMetrics(leq, peak);
     updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
 
-    if ("time_ok" in st) syncClock(st.time_ok ? st.time : "");
-    updateStatusSummary(st);
+    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "");
+    updateStatusSummary(merged);
     updateHistoryLabels();
 
-    if (Array.isArray(st.history) && (options.useHistorySnapshot || !state.historyInitialized)) {
-      setHistory(st.history);
+    if (Array.isArray(merged.history) && (options.useHistorySnapshot || !state.historyInitialized)) {
+      setHistory(merged.history);
     } else if (!options.skipAppendHistory && state.historyInitialized) {
       appendHistory(db);
     }
 
-    $("calLiveMic").textContent = st.analogOk
-      ? `Micro live: rms=${Number(st.rawRms ?? 0).toFixed(2)}`
+    $("calLiveMic").textContent = merged.analogOk
+      ? `Micro live: rms=${Number(merged.rawRms ?? 0).toFixed(2)}`
       : "Micro live: indisponible";
-    $("calLiveLog").textContent = st.analogOk
-      ? `Log calibration live: ${Math.log10((Number(st.rawRms ?? 0) + 0.0001)).toFixed(4)}`
+    $("calLiveLog").textContent = merged.analogOk
+      ? `Log calibration live: ${Math.log10((Number(merged.rawRms ?? 0) + 0.0001)).toFixed(4)}`
       : "Log calibration live: --";
 
-    if (Array.isArray(st.cal)) {
+    if (Array.isArray(merged.cal)) {
       let validCount = 0;
-      st.cal.forEach((point, index) => {
+      merged.cal.forEach((point, index) => {
         const i = index + 1;
         if (!state.calRefsDirty[index]) {
           state.calRefs[index] = Number(point.refDb ?? state.calRefs[index] ?? 0);
@@ -2103,18 +2122,18 @@ R"HTML(
     }
 
     if (!state.uiDirty) {
-      if ("backlight" in st) {
-        const backlightOn = Number(st.backlight) > 0;
+      if ("backlight" in merged) {
+        const backlightOn = Number(merged.backlight) > 0;
         $("bl").classList.toggle("active", backlightOn);
         $("bl").setAttribute("aria-pressed", backlightOn ? "true" : "false");
       }
-      if ("greenMax" in st) $("g").value = greenMax;
-      if ("orangeMax" in st) $("o").value = orangeMax;
-      if ("historyMinutes" in st) $("hist").value = state.historyMinutes;
-      if ("warningHoldSec" in st) $("warnHoldSec").value = warningHoldSec;
-      if ("criticalHoldSec" in st) $("critHoldSec").value = criticalHoldSec;
-      if ("calibrationCaptureSec" in st) $("calCaptureSec").value = Number(st.calibrationCaptureSec ?? 3);
-      if ("audioResponseMode" in st) state.uiResponseMode = Number(st.audioResponseMode ?? 0);
+      if ("greenMax" in merged) $("g").value = greenMax;
+      if ("orangeMax" in merged) $("o").value = orangeMax;
+      if ("historyMinutes" in merged) $("hist").value = state.historyMinutes;
+      if ("warningHoldSec" in merged) $("warnHoldSec").value = warningHoldSec;
+      if ("criticalHoldSec" in merged) $("critHoldSec").value = criticalHoldSec;
+      if ("calibrationCaptureSec" in merged) $("calCaptureSec").value = Number(merged.calibrationCaptureSec ?? 3);
+      if ("audioResponseMode" in merged) state.uiResponseMode = Number(merged.audioResponseMode ?? 0);
       syncUiLabels();
     }
   }
