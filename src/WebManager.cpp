@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "AudioEngine.h"
+#include "AppConfig.h"
 
 extern AudioEngine g_audio;
 
@@ -57,12 +58,16 @@ bool WebManager::begin(SettingsStore* store,
                        SettingsV1* settings,
                        NetManager* net,
                        esp_panel::board::Board* board,
-                       SharedHistory* history) {
+                       SharedHistory* history,
+                       OtaManager* ota,
+                       MqttManager* mqtt) {
   _store = store;
   _s = settings;
   _net = net;
   _board = board;
   _history = history;
+  _ota = ota;
+  _mqtt = mqtt;
 
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
@@ -195,6 +200,8 @@ String WebManager::statusJson() const {
   String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
   int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
   uint32_t up = (millis() - g_bootMs) / 1000;
+  const float mcuTempC = temperatureRead();
+  const bool mcuTempOk = !isnan(mcuTempC);
 
   struct tm ti;
   bool hasTime = getLocalTime(&ti, 0);
@@ -212,6 +219,16 @@ String WebManager::statusJson() const {
   json += "\"uptime_s\":"; json += String(up); json += ",";
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
   json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\",";
+  json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
+  json += "\"buildDate\":\""; json += String(SOUNDPANEL7_BUILD_DATE); json += "\",";
+  json += "\"buildEnv\":\""; json += String(SOUNDPANEL7_BUILD_ENV); json += "\",";
+  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
+  json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
+  json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
+  json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
+  json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
+  json += "\"mqttConnected\":"; json += (_mqtt && _mqtt->connected() ? "true" : "false"); json += ",";
+  json += "\"mqttLastError\":\""; json += String((_mqtt && _mqtt->lastError()) ? _mqtt->lastError() : ""); json += "\",";
   json += "\"backlight\":"; json += String(_s ? _s->backlight : 0); json += ",";
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
@@ -250,6 +267,8 @@ String WebManager::statusJson() const {
 String WebManager::liveMetricsJson() const {
   String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
   int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
+  const float mcuTempC = temperatureRead();
+  const bool mcuTempOk = !isnan(mcuTempC);
   struct tm ti;
   bool hasTime = getLocalTime(&ti, 0);
   char tbuf[32] = {0};
@@ -270,6 +289,16 @@ String WebManager::liveMetricsJson() const {
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
+  json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
+  json += "\"buildDate\":\""; json += String(SOUNDPANEL7_BUILD_DATE); json += "\",";
+  json += "\"buildEnv\":\""; json += String(SOUNDPANEL7_BUILD_ENV); json += "\",";
+  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
+  json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
+  json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
+  json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
+  json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
+  json += "\"mqttConnected\":"; json += (_mqtt && _mqtt->connected() ? "true" : "false"); json += ",";
+  json += "\"mqttLastError\":\""; json += String((_mqtt && _mqtt->lastError()) ? _mqtt->lastError() : ""); json += "\",";
   json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
   json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
   json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
@@ -1259,6 +1288,26 @@ R"HTML(
                   <div class="k">Historique</div>
                   <div class="v mono" id="settingsHistory">--</div>
                 </div>
+                <div class="statusItem">
+                  <div class="k">Version</div>
+                  <div class="v mono" id="settingsVersion">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Date de build</div>
+                  <div class="v mono" id="settingsBuildDate">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Env compile</div>
+                  <div class="v mono" id="settingsBuildEnv">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Temp MCU</div>
+                  <div class="v mono" id="settingsMcuTemp">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Etat OTA / MQTT</div>
+                  <div class="v mono" id="settingsOtaMqtt">--</div>
+                </div>
               </div>
             </article>
 
@@ -1777,6 +1826,17 @@ R"HTML(
   function updateStatusSummary(st) {
     $("settingsIp").textContent = st.wifi ? `${st.ip || "-"} / ${st.rssi ?? 0} dBm` : "--";
     $("settingsHistory").textContent = `${state.historyMinutes} min / ${state.historyCapacity} points`;
+    $("settingsVersion").textContent = st.version || "--";
+    $("settingsBuildDate").textContent = st.buildDate || "--";
+    $("settingsBuildEnv").textContent = st.buildEnv || "--";
+    $("settingsMcuTemp").textContent = st.mcuTempOk ? `${Number(st.mcuTempC ?? 0).toFixed(1)} C` : "--";
+    const otaState = st.otaEnabled
+      ? (st.otaStarted ? "actif" : "configure")
+      : "off";
+    const mqttState = st.mqttEnabled
+      ? (st.mqttConnected ? "connecte" : (st.mqttLastError ? `erreur (${st.mqttLastError})` : "en attente"))
+      : "off";
+    $("settingsOtaMqtt").textContent = `OTA ${otaState} / MQTT ${mqttState}`;
     $("rawRmsAdv").textContent = Number(st.rawRms ?? 0).toFixed(2);
     $("rawPseudoDbAdv").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
     $("rawAdcMeanAdv").textContent = String(st.rawAdcMean ?? "--");

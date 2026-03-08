@@ -12,6 +12,7 @@ public:
 
   void updateMetrics(float dbInstant, float leq, float peak);
 
+  bool enabled() const { return _s && _s->mqttEnabled; }
   bool connected() { return _client.connected(); }
   const char* lastError() const { return _lastError.c_str(); }
 

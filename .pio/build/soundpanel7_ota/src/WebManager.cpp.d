@@ -356,7 +356,8 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiServer.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
- src/SharedHistory.h \
+ src/SharedHistory.h src/OtaManager.h src/MqttManager.h \
+ .pio/libdeps/soundpanel7_ota/PubSubClient/src/PubSubClient.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/include/apps/esp_sntp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/netif.h \
@@ -371,4 +372,4 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip6.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip6.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip.h \
- src/AudioEngine.h
+ src/AudioEngine.h include/AppConfig.h

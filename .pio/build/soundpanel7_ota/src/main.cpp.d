@@ -577,5 +577,6 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/cores/esp32/esp32-hal-log.h \
  .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/WebHandlerImpl.h \
  .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/WebResponseImpl.h \
- src/AudioEngine.h src/OtaManager.h src/MqttManager.h \
- .pio/libdeps/soundpanel7_ota/PubSubClient/src/PubSubClient.h
+ src/OtaManager.h src/MqttManager.h \
+ .pio/libdeps/soundpanel7_ota/PubSubClient/src/PubSubClient.h \
+ src/AudioEngine.h

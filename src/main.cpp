@@ -61,7 +61,7 @@ void setup() {
   g_net.begin(&g_settings);
   g_ota.begin(&g_settings);
   g_mqtt.begin(&g_settings);
-  g_web.begin(&g_store, &g_settings, &g_net, g_board, &g_history);
+  g_web.begin(&g_store, &g_settings, &g_net, g_board, &g_history, &g_ota, &g_mqtt);
 
   g_audio.begin(&g_settings);
 

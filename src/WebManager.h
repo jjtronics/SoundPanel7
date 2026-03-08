@@ -8,6 +8,8 @@
 #include "SettingsStore.h"
 #include "NetManager.h"
 #include "SharedHistory.h"
+#include "OtaManager.h"
+#include "MqttManager.h"
 
 class WebManager {
 public:
@@ -15,7 +17,9 @@ public:
              SettingsV1* settings,
              NetManager* net,
              esp_panel::board::Board* board,
-             SharedHistory* history);
+             SharedHistory* history,
+             OtaManager* ota,
+             MqttManager* mqtt);
   void loop();
 
   void updateMetrics(float db, float leq, float peak);
@@ -27,6 +31,8 @@ private:
   SettingsV1* _s = nullptr;
   NetManager* _net = nullptr;
   esp_panel::board::Board* _board = nullptr;
+  OtaManager* _ota = nullptr;
+  MqttManager* _mqtt = nullptr;
 
   bool _started = false;
   WebServer _srv = WebServer(80);
