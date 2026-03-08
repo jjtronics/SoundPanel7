@@ -120,10 +120,15 @@ void UiManager::redrawHistoryBars() {
   if (!_histWrap && !_histWrapFocus) return;
   _historyRevision = _history ? _history->revision() : 0;
   uint16_t count = _history ? _history->count() : 0;
+  uint16_t visibleCount = count;
+  if (visibleCount > HISTORY_BAR_COUNT) visibleCount = HISTORY_BAR_COUNT;
+  uint16_t emptyPrefix = HISTORY_BAR_COUNT - visibleCount;
 
   for (uint16_t i = 0; i < HISTORY_BAR_COUNT; i++) {
     float v = 0.0f;
-    if (_history && i < count) v = _history->valueAt(i);
+    if (_history && i >= emptyPrefix) {
+      v = _history->valueAt(i - emptyPrefix);
+    }
 
     const float histDbMin = 35.0f;   // plancher visuel
     const float histDbMax = 100.0f;  // plafond visuel
