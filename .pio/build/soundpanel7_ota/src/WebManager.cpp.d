@@ -342,4 +342,20 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiServer.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/include/apps/esp_sntp.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/err.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/pbuf.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/netif.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/stats.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/mem.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/memp.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/priv/memp_std.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/priv/memp_priv.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/priv/mem_priv.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip4.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip4.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip6.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip6.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/prot/ip.h \
  src/AudioEngine.h

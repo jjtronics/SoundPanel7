@@ -1135,7 +1135,8 @@ void UiManager::tick() {
   }
 
   struct tm ti;
-  bool hasTime = getLocalTime(&ti, 0);
+  bool hasTime = _net && _net->localTime(&ti);
+  bool timeLocked = _net && _net->timeIsValid();
 
   if (_lblClockDate && _lblClockMain && _lblClockSec) {
     if (hasTime) {
@@ -1170,7 +1171,7 @@ void UiManager::tick() {
   }
 
   if (_lblNtp) {
-    if (hasTime) {
+    if (timeLocked) {
       lv_label_set_text(_lblNtp, "NTP: LOCK");
       if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC LOCK");
     } else {

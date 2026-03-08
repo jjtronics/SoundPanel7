@@ -4,6 +4,7 @@
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
 static constexpr uint16_t SETTINGS_VERSION = 5;
+static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
 
 struct ThresholdsV1 {
   uint8_t greenMax  = 55;
@@ -22,6 +23,7 @@ struct SettingsV1 {
   // Time / locale
   char tz[64]        = "CET-1CEST,M3.5.0/2,M10.5.0/3";
   char ntpServer[64] = "fr.pool.ntp.org";
+  uint32_t ntpSyncIntervalMs = DEFAULT_NTP_SYNC_INTERVAL_MS;
 
   // WiFi portal
   char hostname[32]  = "soundpanel7";

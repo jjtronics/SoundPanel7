@@ -2,6 +2,7 @@
 #include "NetManager.h"
 
 #include <WiFiManager.h>   // tzapu WiFiManager (AutoConnect portal)
+#include <esp_sntp.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -77,8 +78,11 @@ void NetManager::loop() {
     // 2) Démarrer NTP AVEC timezone
     // configTzTime applique la TZ + configure les serveurs NTP
     configTzTime(_s->tz, _s->ntpServer);
+    sntp_set_sync_interval(_s->ntpSyncIntervalMs);
+    sntp_restart();
 
-    Serial0.println("[Net] NTP configured (configTzTime + tzset)");
+    Serial0.printf("[Net] NTP configured (interval=%lu ms)\n",
+                   (unsigned long)sntp_get_sync_interval());
     _ntpConfigured = true;
   }
 }
@@ -103,13 +107,24 @@ bool NetManager::timeIsValid() const {
   return (t > 1704067200);
 }
 
-String NetManager::timeStringLocal() const {
-  if (!timeIsValid()) return String("NTP...");
+bool NetManager::localTime(struct tm* out) const {
+  if (!out) return false;
 
-  struct tm ti;
-  if (!getLocalTime(&ti, 0)) {
-    return String("NTP...");
+  if (timeIsValid()) {
+    if (getLocalTime(out, 0)) {
+      _lastValidEpoch = time(nullptr);
+      return true;
+    }
   }
+
+  if (_lastValidEpoch <= 0) return false;
+  localtime_r(&_lastValidEpoch, out);
+  return true;
+}
+
+String NetManager::timeStringLocal() const {
+  struct tm ti;
+  if (!localTime(&ti)) return String("NTP...");
   char buf[32];
   strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &ti);
   return String(buf);

@@ -1,6 +1,7 @@
 #include "WebManager.h"
 
 #include <WiFi.h>
+#include <esp_sntp.h>
 #include <ctime>
 #include <math.h>
 #include <cstring>
@@ -345,6 +346,8 @@ void WebManager::handleTimeGet() {
   json += "{";
   json += "\"tz\":\""; json += String(_s->tz); json += "\",";
   json += "\"ntpServer\":\""; json += String(_s->ntpServer); json += "\",";
+  json += "\"ntpSyncIntervalMs\":"; json += String(_s->ntpSyncIntervalMs); json += ",";
+  json += "\"ntpSyncMinutes\":"; json += String(_s->ntpSyncIntervalMs / 60000UL); json += ",";
   json += "\"hostname\":\""; json += String(_s->hostname); json += "\"";
   json += "}";
 
@@ -362,6 +365,7 @@ void WebManager::handleTimeSave() {
   String tz  = jsonStr(body, "tz", String(_s->tz));
   String ntp = jsonStr(body, "ntpServer", String(_s->ntpServer));
   String hn  = jsonStr(body, "hostname", String(_s->hostname));
+  int ntpSyncMinutes = jsonInt(body, "ntpSyncMinutes", (int)(_s->ntpSyncIntervalMs / 60000UL));
 
   tz.trim();
   ntp.trim();
@@ -379,6 +383,10 @@ void WebManager::handleTimeSave() {
     replyJson(400, "{\"ok\":false,\"error\":\"bad hostname\"}\n");
     return;
   }
+  if (ntpSyncMinutes < 1 || ntpSyncMinutes > 1440) {
+    replyJson(400, "{\"ok\":false,\"error\":\"bad ntpSyncMinutes\"}\n");
+    return;
+  }
 
   if (!safeCopy(_s->tz, sizeof(_s->tz), tz)) {
     replyJson(400, "{\"ok\":false,\"error\":\"tz too long\"}\n");
@@ -392,16 +400,19 @@ void WebManager::handleTimeSave() {
     replyJson(400, "{\"ok\":false,\"error\":\"hostname too long\"}\n");
     return;
   }
+  _s->ntpSyncIntervalMs = (uint32_t)ntpSyncMinutes * 60000UL;
 
   _store->save(*_s);
 
   setenv("TZ", _s->tz, 1);
   tzset();
   configTzTime(_s->tz, _s->ntpServer);
+  sntp_set_sync_interval(_s->ntpSyncIntervalMs);
+  sntp_restart();
   WiFi.setHostname(_s->hostname);
 
-  Serial0.printf("[WEB] TIME saved: tz='%s' ntp='%s' hostname='%s'\n",
-                 _s->tz, _s->ntpServer, _s->hostname);
+  Serial0.printf("[WEB] TIME saved: tz='%s' ntp='%s' interval=%lu ms hostname='%s'\n",
+                 _s->tz, _s->ntpServer, (unsigned long)_s->ntpSyncIntervalMs, _s->hostname);
 
   replyJson(200, "{\"ok\":true}\n");
 }
@@ -1078,6 +1089,12 @@ R"HTML(
       </div>
 
       <div class="field">
+        <label>Sync NTP (minutes)</label>
+        <input id="ntpSyncMin" type="number" min="1" max="1440" step="1" value="180"/>
+        <div class="hint">Defaut recommande ESP32: <code>180</code> min (3 h).</div>
+      </div>
+
+      <div class="field">
         <label>TZ (POSIX)</label>
         <input id="tz" type="text" placeholder="CET-1CEST,M3.5.0/2,M10.5.0/3"/>
         <div class="hint">Ex Paris : <code>CET-1CEST,M3.5.0/2,M10.5.0/3</code></div>
@@ -1301,6 +1318,7 @@ R"HTML(
       const t = await apiGet("/api/time");
       $("tz").value = t.tz || "";
       $("ntp").value = t.ntpServer || "";
+      $("ntpSyncMin").value = String(t.ntpSyncMinutes || 180);
       $("hn").value = t.hostname || "";
     } catch(e){}
   }
@@ -1392,6 +1410,7 @@ R"HTML(
       await apiPost("/api/time", {
         tz: $("tz").value.trim(),
         ntpServer: $("ntp").value.trim(),
+        ntpSyncMinutes: parseInt($("ntpSyncMin").value, 10),
         hostname: $("hn").value.trim()
       });
       $("toastTime").textContent = "OK ✅";

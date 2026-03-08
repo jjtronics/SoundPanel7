@@ -16,6 +16,7 @@ public:
 
   // NTP / time
   bool timeIsValid() const;
+  bool localTime(struct tm* out) const;
   String timeStringLocal() const;
 
   // info strings
@@ -30,4 +31,5 @@ private:
 
   // quick cache to avoid spamming logs
   uint32_t _lastPrint = 0;
+  mutable time_t _lastValidEpoch = 0;
 };

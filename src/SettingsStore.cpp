@@ -21,6 +21,7 @@ void SettingsStore::load(SettingsV1 &out) {
 
   _prefs.getString("tz", out.tz, sizeof(out.tz));
   _prefs.getString("ntp", out.ntpServer, sizeof(out.ntpServer));
+  out.ntpSyncIntervalMs = _prefs.getUInt("ntp_ms", out.ntpSyncIntervalMs);
   _prefs.getString("hn", out.hostname, sizeof(out.hostname));
 
   out.otaEnabled = (uint8_t)_prefs.getUChar("ota_en", out.otaEnabled);
@@ -75,6 +76,9 @@ void SettingsStore::load(SettingsV1 &out) {
 
   if (out.peakHoldMs < 500) out.peakHoldMs = 500;
   if (out.peakHoldMs > 30000) out.peakHoldMs = 30000;
+
+  if (out.ntpSyncIntervalMs < 60000UL) out.ntpSyncIntervalMs = 60000UL;
+  if (out.ntpSyncIntervalMs > 86400000UL) out.ntpSyncIntervalMs = 86400000UL;
 }
 
 void SettingsStore::save(const SettingsV1 &s) {
@@ -88,6 +92,7 @@ void SettingsStore::save(const SettingsV1 &s) {
 
   _prefs.putString("tz", s.tz);
   _prefs.putString("ntp", s.ntpServer);
+  _prefs.putUInt("ntp_ms", s.ntpSyncIntervalMs);
   _prefs.putString("hn", s.hostname);
 
   _prefs.putUChar("ota_en", s.otaEnabled);
