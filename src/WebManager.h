@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <WebServer.h>
+#include <ESPAsyncWebServer.h>
 #include <esp_display_panel.hpp>
 
 #include "SettingsStore.h"
@@ -19,6 +20,7 @@ public:
 
 private:
   static constexpr uint16_t HISTORY_POINTS = 180;
+  static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 100;
 
   SettingsStore* _store = nullptr;
   SettingsV1* _s = nullptr;
@@ -27,6 +29,8 @@ private:
 
   bool _started = false;
   WebServer _srv = WebServer(80);
+  AsyncWebServer _liveSrv = AsyncWebServer(81);
+  AsyncEventSource _liveEvents = AsyncEventSource("/api/events");
 
   float _lastDb = 42.0f;
   float _lastLeq = 42.0f;
@@ -36,8 +40,11 @@ private:
   uint16_t _histCount = 0;
   uint16_t _histHead = 0;
   uint32_t _lastHistPushMs = 0;
+  uint32_t _lastLivePushMs = 0;
 
   void routes();
+  void setupLiveStream();
+  void pushLiveMetrics(bool force = false);
 
   void replyText(int code, const String& txt, const char* contentType = "text/plain");
   void replyJson(int code, const String& json);
@@ -45,6 +52,8 @@ private:
   static int jsonInt(const String& body, const char* key, int def);
   static String jsonStr(const String& body, const char* key, const String& def);
   static bool safeCopy(char* dst, size_t dstSize, const String& src);
+  String statusJson() const;
+  String liveMetricsJson() const;
 
   void handleRoot();
   void handleAdmin();

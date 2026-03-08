@@ -194,6 +194,20 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/Uri.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/middleware/Middleware.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/detail/RequestHandler.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/ESPAsyncWebServer.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/tcpbase.h \
+ .pio/libdeps/soundpanel7_ota/AsyncTCP/src/AsyncTCP.h \
+ .pio/libdeps/soundpanel7_ota/AsyncTCP/src/AsyncTCPVersion.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/pbuf.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/err.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncWebServerVersion.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/./literals.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncEventSource.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncWebSocket.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncWebServerLogging.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32/cores/esp32/esp32-hal-log.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/WebHandlerImpl.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/WebResponseImpl.h \
  .pio/libdeps/soundpanel7_ota/ESP32_Display_Panel/src/esp_display_panel.hpp \
  .pio/libdeps/soundpanel7_ota/ESP32_Display_Panel/src/esp_panel_types.h \
  .pio/libdeps/soundpanel7_ota/ESP32_Display_Panel/src/esp_panel_versions.h \
@@ -343,9 +357,7 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/Network/src/NetworkUdp.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/include/apps/esp_sntp.h \
- /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/err.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/ip.h \
- /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/pbuf.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/netif.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/stats.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/mem.h \

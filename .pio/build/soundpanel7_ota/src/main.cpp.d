@@ -563,5 +563,19 @@
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/Uri.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/middleware/Middleware.h \
  /Users/jj/.platformio/packages/framework-arduinoespressif32/libraries/WebServer/src/detail/RequestHandler.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/ESPAsyncWebServer.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/tcpbase.h \
+ .pio/libdeps/soundpanel7_ota/AsyncTCP/src/AsyncTCP.h \
+ .pio/libdeps/soundpanel7_ota/AsyncTCP/src/AsyncTCPVersion.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/pbuf.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/lwip/lwip/src/include/lwip/err.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncWebServerVersion.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/./literals.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncEventSource.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncWebSocket.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/AsyncWebServerLogging.h \
+ /Users/jj/.platformio/packages/framework-arduinoespressif32/cores/esp32/esp32-hal-log.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/WebHandlerImpl.h \
+ .pio/libdeps/soundpanel7_ota/ESPAsyncWebServer/src/WebResponseImpl.h \
  src/AudioEngine.h src/OtaManager.h src/MqttManager.h \
  .pio/libdeps/soundpanel7_ota/PubSubClient/src/PubSubClient.h

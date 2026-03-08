@@ -1,6 +1,7 @@
 #include "WebManager.h"
 
 #include <WiFi.h>
+#include <AsyncTCP.h>
 #include <esp_sntp.h>
 #include <ctime>
 #include <math.h>
@@ -66,9 +67,12 @@ bool WebManager::begin(SettingsStore* store,
 
   routes();
   _srv.begin();
+  setupLiveStream();
+  _liveSrv.begin();
   _started = true;
 
   Serial0.println("[WEB] LISTEN on 80");
+  Serial0.println("[WEB] LIVE SSE on 81");
   if (WiFi.isConnected()) {
     Serial0.printf("[WEB] URL: http://%s/\n", WiFi.localIP().toString().c_str());
   } else {
@@ -81,6 +85,11 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
   g_webDbInstant = dbInstant;
   g_webLeq = leq;
   g_webPeak = peak;
+
+  _lastDb = dbInstant;
+  _lastLeq = leq;
+  _lastPeak = peak;
+  pushLiveMetrics();
 }
 
 void WebManager::routes() {
@@ -153,12 +162,112 @@ void WebManager::loop() {
   _srv.handleClient();
 }
 
+void WebManager::setupLiveStream() {
+  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+  DefaultHeaders::Instance().addHeader("Cache-Control", "no-cache");
+
+  _liveEvents.onConnect([this](AsyncEventSourceClient* client) {
+    if (!client) return;
+    const String payload = liveMetricsJson();
+    client->send(payload.c_str(), "metrics", millis(), 1500);
+  });
+  _liveSrv.addHandler(&_liveEvents);
+}
+
+void WebManager::pushLiveMetrics(bool force) {
+  if (_liveEvents.count() == 0) return;
+
+  const uint32_t now = millis();
+  if (!force && (now - _lastLivePushMs) < LIVE_PUSH_PERIOD_MS) return;
+
+  _lastLivePushMs = now;
+  const String payload = liveMetricsJson();
+  _liveEvents.send(payload.c_str(), "metrics", now);
+}
+
 void WebManager::replyText(int code, const String& txt, const char* contentType) {
   _srv.send(code, contentType, txt);
 }
 
 void WebManager::replyJson(int code, const String& json) {
   _srv.send(code, "application/json", json);
+}
+
+String WebManager::statusJson() const {
+  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
+  int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
+  uint32_t up = (millis() - g_bootMs) / 1000;
+
+  struct tm ti;
+  bool hasTime = getLocalTime(&ti, 0);
+  char tbuf[32] = {0};
+  if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
+
+  const AudioMetrics& am = g_audio.metrics();
+
+  String json;
+  json.reserve(768);
+  json += "{";
+  json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
+  json += "\"ip\":\""; json += ip; json += "\",";
+  json += "\"rssi\":"; json += String(rssi); json += ",";
+  json += "\"uptime_s\":"; json += String(up); json += ",";
+  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
+  json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\",";
+  json += "\"backlight\":"; json += String(_s ? _s->backlight : 0); json += ",";
+  json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
+  json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
+  json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
+  json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
+  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
+  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
+  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
+  json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
+  json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
+  json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
+  json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
+  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
+
+  json += "\"cal\":[";
+  for (int i = 0; i < 3; i++) {
+    if (i) json += ",";
+    json += "{";
+    json += "\"valid\":"; json += (_s && _s->calPointValid[i] ? "true" : "false"); json += ",";
+    json += "\"refDb\":"; json += String(_s ? _s->calPointRefDb[i] : 0.0f, 1); json += ",";
+    json += "\"rawLogRms\":"; json += String(_s ? _s->calPointRawLogRms[i] : 0.0f, 4);
+    json += "}";
+  }
+  json += "]";
+  json += "}";
+
+  return json;
+}
+
+String WebManager::liveMetricsJson() const {
+  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
+  int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
+  struct tm ti;
+  bool hasTime = getLocalTime(&ti, 0);
+  char tbuf[32] = {0};
+  if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
+
+  String json;
+  json.reserve(288);
+  json += "{";
+  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
+  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
+  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
+  json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
+  json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
+  json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
+  json += "\"ip\":\""; json += ip; json += "\",";
+  json += "\"rssi\":"; json += String(rssi); json += ",";
+  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
+  json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\"";
+  json += "}";
+  return json;
 }
 
 int WebManager::jsonInt(const String& body, const char* key, int def) {
@@ -252,55 +361,7 @@ void WebManager::applyBacklightNow(uint8_t percent) {
 }
 
 void WebManager::handleStatus() {
-  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
-  int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
-  uint32_t up = (millis() - g_bootMs) / 1000;
-
-  struct tm ti;
-  bool hasTime = getLocalTime(&ti, 0);
-  char tbuf[32] = {0};
-  if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
-
-  const AudioMetrics& am = g_audio.metrics();
-
-  String json;
-  json.reserve(768);
-  json += "{";
-  json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
-  json += "\"ip\":\""; json += ip; json += "\",";
-  json += "\"rssi\":"; json += String(rssi); json += ",";
-  json += "\"uptime_s\":"; json += String(up); json += ",";
-  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
-  json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\",";
-  json += "\"backlight\":"; json += String(_s ? _s->backlight : 0); json += ",";
-  json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
-  json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
-  json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
-  json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
-  json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
-  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
-  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
-  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
-  json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
-  json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
-  json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
-  json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
-  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
-
-  json += "\"cal\":[";
-  for (int i = 0; i < 3; i++) {
-    if (i) json += ",";
-    json += "{";
-    json += "\"valid\":"; json += (_s && _s->calPointValid[i] ? "true" : "false"); json += ",";
-    json += "\"refDb\":"; json += String(_s ? _s->calPointRefDb[i] : 0.0f, 1); json += ",";
-    json += "\"rawLogRms\":"; json += String(_s ? _s->calPointRawLogRms[i] : 0.0f, 4);
-    json += "}";
-  }
-  json += "]";
-
-  json += "}";
-
-  replyJson(200, json);
+  replyJson(200, statusJson());
 }
 
 void WebManager::handleUiSave() {
@@ -789,7 +850,48 @@ R"HTML(
 
   let historyValues = [];
   let historyMinutes = 5;
-  const SAMPLE_PERIOD_MS = 1000;
+  const LIVE_SAMPLE_PERIOD_MS = 100;
+  let events = null;
+  let reconnectTimer = null;
+  let hasLiveFeed = false;
+  let clockBaseMs = 0;
+  let clockSyncClientMs = 0;
+
+  function pad2(v){
+    return String(v).padStart(2, "0");
+  }
+
+  function renderClock(){
+    if (!clockBaseMs) {
+      timeEl.textContent = "NTP...";
+      return;
+    }
+    const nowMs = clockBaseMs + (Date.now() - clockSyncClientMs);
+    const d = new Date(nowMs);
+    timeEl.textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
+
+  function syncClock(serverTime){
+    if (!serverTime) {
+      clockBaseMs = 0;
+      clockSyncClientMs = 0;
+      renderClock();
+      return;
+    }
+
+    const isoLike = serverTime.replace(" ", "T");
+    const parsed = Date.parse(isoLike);
+    if (Number.isNaN(parsed)) {
+      clockBaseMs = 0;
+      clockSyncClientMs = 0;
+      renderClock();
+      return;
+    }
+
+    clockBaseMs = parsed;
+    clockSyncClientMs = Date.now();
+    renderClock();
+  }
 
   function zoneColor(db, greenMax, orangeMax){
     if(db <= greenMax) return "#23C552";
@@ -842,7 +944,7 @@ R"HTML(
 
     if (historyValues.length < 2) return;
 
-    const maxPoints = Math.max(2, Math.floor((historyMinutes * 60 * 1000) / SAMPLE_PERIOD_MS));
+    const maxPoints = Math.max(2, Math.floor((historyMinutes * 60 * 1000) / LIVE_SAMPLE_PERIOD_MS));
     const pts = historyValues.slice(-maxPoints);
 
     const stepX = pts.length > 1 ? w / (pts.length - 1) : w;
@@ -865,53 +967,93 @@ R"HTML(
     }
   }
 
-  async function refresh(){
+  function applyLiveMetrics(st){
+    const db = Number(st.db ?? 0);
+    const leq = Number(st.leq ?? 0);
+    const peak = Number(st.peak ?? 0);
+    const greenMax = Number(st.greenMax ?? window.__greenMax ?? 55);
+    const orangeMax = Number(st.orangeMax ?? window.__orangeMax ?? 70);
+    historyMinutes = Number(st.historyMinutes ?? historyMinutes ?? 5);
+
+    window.__greenMax = greenMax;
+    window.__orangeMax = orangeMax;
+
+    const pct = Math.max(0, Math.min(100, db));
+    const color = zoneColor(db, greenMax, orangeMax);
+
+    gauge.style.setProperty("--pct", pct);
+    gauge.style.setProperty("--gaugeColor", color);
+    dot.style.background = color;
+
+    dbEl.textContent = db.toFixed(1);
+    leqEl.textContent = leq.toFixed(1);
+    peakEl.textContent = peak.toFixed(1);
+
+    const maxPoints = Math.max(2, Math.floor((historyMinutes * 60 * 1000) / LIVE_SAMPLE_PERIOD_MS));
+    historyValues.push(db);
+    if (historyValues.length > maxPoints) {
+      historyValues = historyValues.slice(-maxPoints);
+    }
+
+    if ("time_ok" in st) {
+      syncClock(st.time_ok ? st.time : "");
+    }
+
+    if ("wifi" in st) {
+      wifiEl.textContent = st.wifi ? `WiFi: OK (${st.ip})` : "WiFi: OFF";
+    }
+
+    histMeta.textContent = `${historyMinutes} min d’historique`;
+    drawHistory();
+  }
+
+  async function refreshStatus(){
     try{
       const r = await fetch("/api/status", {cache:"no-store"});
       const st = await r.json();
-
-      const db = Number(st.db ?? 0);
-      const leq = Number(st.leq ?? 0);
-      const peak = Number(st.peak ?? 0);
-      const greenMax = Number(st.greenMax ?? 55);
-      const orangeMax = Number(st.orangeMax ?? 70);
-      historyMinutes = Number(st.historyMinutes ?? 5);
-
-      window.__greenMax = greenMax;
-      window.__orangeMax = orangeMax;
-
-      const pct = Math.max(0, Math.min(100, db));
-      const color = zoneColor(db, greenMax, orangeMax);
-
-      gauge.style.setProperty("--pct", pct);
-      gauge.style.setProperty("--gaugeColor", color);
-      dot.style.background = color;
-
-      dbEl.textContent = db.toFixed(1);
-      leqEl.textContent = leq.toFixed(1);
-      peakEl.textContent = peak.toFixed(1);
-
-      wifiEl.textContent = st.wifi ? `WiFi: OK (${st.ip})` : "WiFi: OFF";
-      timeEl.textContent = st.time_ok ? st.time.split(" ")[1] : "NTP...";
-
-      const maxPoints = Math.max(2, Math.floor((historyMinutes * 60 * 1000) / SAMPLE_PERIOD_MS));
-      historyValues.push(db);
-      if (historyValues.length > maxPoints) {
-        historyValues = historyValues.slice(-maxPoints);
-      }
-
-      histMeta.textContent = `${historyMinutes} min d’historique`;
-      drawHistory();
-
+      applyLiveMetrics(st);
     }catch(e){
-      wifiEl.textContent = "WiFi: erreur";
+      wifiEl.textContent = hasLiveFeed ? wifiEl.textContent : "WiFi: erreur";
     }
+  }
+
+  function scheduleReconnect(){
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectLiveFeed();
+    }, 1500);
+  }
+
+  function connectLiveFeed(){
+    if (events) {
+      events.close();
+      events = null;
+    }
+
+    const liveUrl = `${location.protocol}//${location.hostname}:81/api/events`;
+    events = new EventSource(liveUrl);
+
+    events.addEventListener("metrics", (ev) => {
+      hasLiveFeed = true;
+      applyLiveMetrics(JSON.parse(ev.data));
+    });
+
+    events.onerror = () => {
+      hasLiveFeed = false;
+      if (events) {
+        events.close();
+        events = null;
+      }
+      scheduleReconnect();
+    };
   }
 
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();
-  refresh();
-  setInterval(refresh, SAMPLE_PERIOD_MS);
+  refreshStatus();
+  connectLiveFeed();
+  setInterval(renderClock, 1000);
 </script>
 </body>
 </html>
