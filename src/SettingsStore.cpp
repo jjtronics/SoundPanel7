@@ -34,6 +34,7 @@ void SettingsStore::load(SettingsV1 &out) {
   out.audioSource        = (uint8_t)_prefs.getUChar("a_src", out.audioSource);
   out.analogPin          = (uint8_t)_prefs.getUChar("a_pin", out.analogPin);
   out.analogRmsSamples   = (uint16_t)_prefs.getUShort("a_rms", out.analogRmsSamples);
+  out.audioResponseMode  = (uint8_t)_prefs.getUChar("a_resp", out.audioResponseMode);
   out.emaAlpha           = _prefs.getFloat("a_ema", out.emaAlpha);
   out.peakHoldMs         = _prefs.getUInt("a_peak", out.peakHoldMs);
   out.analogBaseOffsetDb = _prefs.getFloat("a_base", out.analogBaseOffsetDb);
@@ -75,6 +76,7 @@ void SettingsStore::load(SettingsV1 &out) {
 
   if (out.analogRmsSamples < 32) out.analogRmsSamples = 32;
   if (out.analogRmsSamples > 1024) out.analogRmsSamples = 1024;
+  if (out.audioResponseMode > 1) out.audioResponseMode = 0;
 
   if (out.emaAlpha < 0.01f) out.emaAlpha = 0.01f;
   if (out.emaAlpha > 0.95f) out.emaAlpha = 0.95f;
@@ -110,6 +112,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("a_src", s.audioSource);
   _prefs.putUChar("a_pin", s.analogPin);
   _prefs.putUShort("a_rms", s.analogRmsSamples);
+  _prefs.putUChar("a_resp", s.audioResponseMode);
   _prefs.putFloat("a_ema", s.emaAlpha);
   _prefs.putUInt("a_peak", s.peakHoldMs);
   _prefs.putFloat("a_base", s.analogBaseOffsetDb);

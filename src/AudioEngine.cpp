@@ -2,6 +2,18 @@
 #include <math.h>
 
 static constexpr float kRmsEpsilon = 0.0001f;
+static constexpr float kFastAlpha = 0.45f;
+static constexpr float kSlowAlpha = 0.10f;
+static constexpr uint32_t kCalibrationCaptureMs = 3000;
+static constexpr uint8_t kCalibrationSampleCount = 24;
+
+static uint8_t countValidCalibrationPoints(const SettingsV1& s) {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < 3; i++) {
+    if (s.calPointValid[i]) count++;
+  }
+  return count;
+}
 
 float AudioEngine::clampf(float v, float lo, float hi) {
   if (v < lo) return lo;
@@ -17,7 +29,17 @@ const char* AudioEngine::sourceLabel(uint8_t src) {
   }
 }
 
+const char* AudioEngine::responseModeLabel(uint8_t mode) {
+  switch (mode) {
+    case 0: return "Fast";
+    case 1: return "Slow";
+    default: return "Unknown";
+  }
+}
+
 void AudioEngine::begin(SettingsV1* settings) {
+  _fast = 45.0f;
+  _slow = 45.0f;
   _ema = 45.0f;
   _peak = 45.0f;
   _lastPeakReset = millis();
@@ -121,12 +143,66 @@ float AudioEngine::computeCalibratedDb(float rms, const SettingsV1& s) const {
   return 20.0f * x + s.analogBaseOffsetDb;
 }
 
+float AudioEngine::captureCalibrationLogRms(const SettingsV1& s, bool& okOut) {
+  okOut = false;
+
+  if ((AudioSource)s.audioSource != AudioSource::SensorAnalog) {
+    if (_m.rawRms <= 0.0f) return 0.0f;
+    okOut = true;
+    return log10f(_m.rawRms + kRmsEpsilon);
+  }
+
+  float logSamples[kCalibrationSampleCount];
+  uint8_t sampleUsed = 0;
+  uint32_t startMs = millis();
+
+  while ((millis() - startMs) < kCalibrationCaptureMs && sampleUsed < kCalibrationSampleCount) {
+    uint16_t meanAdc = 0;
+    int lastAdc = 0;
+    bool analogOk = false;
+    float rms = computeAnalogRms(s.analogPin, s.analogRmsSamples, meanAdc, lastAdc, analogOk);
+    if (analogOk && rms > 0.0f) {
+      logSamples[sampleUsed++] = log10f(rms + kRmsEpsilon);
+    }
+  }
+
+  if (sampleUsed == 0) return 0.0f;
+
+  for (uint8_t i = 0; i < sampleUsed; i++) {
+    for (uint8_t j = i + 1; j < sampleUsed; j++) {
+      if (logSamples[j] < logSamples[i]) {
+        float tmp = logSamples[i];
+        logSamples[i] = logSamples[j];
+        logSamples[j] = tmp;
+      }
+    }
+  }
+
+  uint8_t trim = sampleUsed / 6;
+  if ((trim * 2) >= sampleUsed) trim = 0;
+
+  float sum = 0.0f;
+  uint8_t kept = 0;
+  for (uint8_t i = trim; i < (sampleUsed - trim); i++) {
+    sum += logSamples[i];
+    kept++;
+  }
+
+  if (kept == 0) return 0.0f;
+
+  okOut = true;
+  return sum / (float)kept;
+}
+
 bool AudioEngine::captureCalibrationPoint(SettingsV1& s, uint8_t index, float refDb) {
   if (index >= 3) return false;
-  if (_m.rawRms <= 0.0f) return false;
+
+  bool ok = false;
+  float capturedLogRms = captureCalibrationLogRms(s, ok);
+  if (!ok) return false;
 
   s.calPointRefDb[index] = refDb;
-  s.calPointRawLogRms[index] = log10f(_m.rawRms + kRmsEpsilon);
+  s.calPointRawLogRms[index] = capturedLogRms;
   s.calPointValid[index] = 1;
   return true;
 }
@@ -144,6 +220,7 @@ void AudioEngine::clearCalibration(SettingsV1& s) {
 void AudioEngine::update(SettingsV1* settings) {
   if (!settings) return;
 
+  float dbRaw = 0.0f;
   float dbInst = 0.0f;
   float rawRms = 0.0f;
   uint16_t meanAdc = 0;
@@ -152,8 +229,8 @@ void AudioEngine::update(SettingsV1* settings) {
 
   switch ((AudioSource)settings->audioSource) {
     case AudioSource::Demo:
-      dbInst = computeDemoDb();
-      rawRms = powf(10.0f, dbInst / 20.0f);
+      dbRaw = computeDemoDb();
+      rawRms = powf(10.0f, dbRaw / 20.0f);
       meanAdc = 2048;
       lastAdc = 2048;
       analogOk = true;
@@ -161,27 +238,37 @@ void AudioEngine::update(SettingsV1* settings) {
 
     case AudioSource::SensorAnalog:
       rawRms = computeAnalogRms(settings->analogPin, settings->analogRmsSamples, meanAdc, lastAdc, analogOk);
-      dbInst = computeCalibratedDb(rawRms, *settings);
-      dbInst += settings->analogExtraOffsetDb;
-      dbInst = clampf(dbInst, 0.0f, 120.0f);
+      dbRaw = computeCalibratedDb(rawRms, *settings);
+      // Keep the legacy global offset only for the uncalibrated fallback path.
+      // Once at least one calibration point exists, the captured references define
+      // the absolute dB mapping and must not be shifted again.
+      if (countValidCalibrationPoints(*settings) == 0) {
+        dbRaw += settings->analogExtraOffsetDb;
+      }
+      dbRaw = clampf(dbRaw, 0.0f, 120.0f);
       break;
 
     default:
-      dbInst = computeDemoDb();
-      rawRms = powf(10.0f, dbInst / 20.0f);
+      dbRaw = computeDemoDb();
+      rawRms = powf(10.0f, dbRaw / 20.0f);
       meanAdc = 2048;
       lastAdc = 2048;
       analogOk = true;
       break;
   }
 
-  float a = clampf(settings->emaAlpha, 0.01f, 0.95f);
-  _ema = a * dbInst + (1.0f - a) * _ema;
+  _fast = kFastAlpha * dbRaw + (1.0f - kFastAlpha) * _fast;
+  _slow = kSlowAlpha * dbRaw + (1.0f - kSlowAlpha) * _slow;
 
-  if (dbInst > _peak) _peak = dbInst;
+  float a = clampf(settings->emaAlpha, 0.01f, 0.95f);
+  _ema = a * dbRaw + (1.0f - a) * _ema;
+
+  dbInst = (settings->audioResponseMode == 1) ? _slow : _fast;
+
+  if (dbRaw > _peak) _peak = dbRaw;
   uint32_t now = millis();
   if (now - _lastPeakReset > settings->peakHoldMs) {
-    _peak = dbInst;
+    _peak = dbRaw;
     _lastPeakReset = now;
   }
 

@@ -217,6 +217,7 @@ String WebManager::statusJson() const {
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"audioResponseMode\":"; json += String(_s ? _s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
   json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
@@ -385,6 +386,7 @@ void WebManager::handleUiSave() {
   int g  = jsonInt(body, "greenMax",  (int)_s->th.greenMax);
   int o  = jsonInt(body, "orangeMax", (int)_s->th.orangeMax);
   int hm = jsonInt(body, "historyMinutes", (int)_s->historyMinutes);
+  int arm = jsonInt(body, "audioResponseMode", (int)_s->audioResponseMode);
   int whs = jsonInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / 1000UL));
   int chs = jsonInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / 1000UL));
 
@@ -396,6 +398,8 @@ void WebManager::handleUiSave() {
   if (o > 100) o = 100;
   if (hm < 1) hm = 1;
   if (hm > 60) hm = 60;
+  if (arm < 0) arm = 0;
+  if (arm > 1) arm = 1;
   if (whs < 0) whs = 0;
   if (whs > 60) whs = 60;
   if (chs < 0) chs = 0;
@@ -405,6 +409,7 @@ void WebManager::handleUiSave() {
   _s->th.greenMax = (uint8_t)g;
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
+  _s->audioResponseMode = (uint8_t)arm;
   _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
   _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
   if (_history) _history->settingsChanged();
@@ -412,8 +417,8 @@ void WebManager::handleUiSave() {
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d warn=%ds crit=%ds\n",
-                 bl, g, o, hm, whs, chs);
+  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds\n",
+                 bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs);
   replyJson(200, "{\"ok\":true}\n");
 }
 
@@ -1306,6 +1311,15 @@ R"HTML(
       </div>
 
       <div class="field">
+        <label>Réponse sonomètre</label>
+        <select id="audioResponseMode">
+          <option value="0">Fast</option>
+          <option value="1">Slow</option>
+        </select>
+        <div class="hint">Fast reste réactif. Slow stabilise l'affichage. Peak garde les transitoires.</div>
+      </div>
+
+      <div class="field">
         <label>Délai warning (orange)</label>
         <input id="warnHoldSec" type="number" min="0" max="60" step="1" value="3"/>
         <div class="hint">Temps en secondes avant alerte warning.</div>
@@ -1556,6 +1570,8 @@ R"HTML(
   bindRange("g","gVal");
   bindRange("o","oVal");
   bindRange("hist","hVal");
+  $("audioResponseMode").addEventListener("input", markUiDirty);
+  $("audioResponseMode").addEventListener("change", markUiDirty);
   $("warnHoldSec").addEventListener("input", markUiDirty);
   $("warnHoldSec").addEventListener("change", markUiDirty);
   $("critHoldSec").addEventListener("input", markUiDirty);
@@ -1620,6 +1636,9 @@ R"HTML(
           $("hist").value = st.historyMinutes;
           $("hVal").textContent = st.historyMinutes;
         }
+        if (typeof st.audioResponseMode === "number") {
+          $("audioResponseMode").value = String(st.audioResponseMode);
+        }
         if (typeof st.warningHoldSec === "number") {
           $("warnHoldSec").value = String(st.warningHoldSec);
         }
@@ -1648,6 +1667,7 @@ R"HTML(
         greenMax: g,
         orangeMax: o,
         historyMinutes: parseInt($("hist").value,10),
+        audioResponseMode: parseInt($("audioResponseMode").value,10),
         warningHoldSec: parseInt($("warnHoldSec").value,10),
         criticalHoldSec: parseInt($("critHoldSec").value,10)
       });

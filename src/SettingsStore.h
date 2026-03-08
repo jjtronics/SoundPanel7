@@ -38,6 +38,8 @@ struct SettingsV1 {
   // Analog mic on Sensor AD = GPIO6
   uint8_t analogPin = 6;
   uint16_t analogRmsSamples = 256;
+  // 0 = Fast, 1 = Slow
+  uint8_t audioResponseMode = 0;
   float emaAlpha = 0.12f;
   uint32_t peakHoldMs = 5000;
 

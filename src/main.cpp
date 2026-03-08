@@ -66,9 +66,10 @@ void setup() {
   g_audio.begin(&g_settings);
 
   Serial0.printf("[AUDIO] source=%s\n", AudioEngine::sourceLabel(g_settings.audioSource));
-  Serial0.printf("[AUDIO] analogPin=%u rmsSamples=%u ema=%.2f peakHold=%lu ms\n",
+  Serial0.printf("[AUDIO] analogPin=%u rmsSamples=%u response=%s ema=%.2f peakHold=%lu ms\n",
                  g_settings.analogPin,
                  g_settings.analogRmsSamples,
+                 AudioEngine::responseModeLabel(g_settings.audioResponseMode),
                  g_settings.emaAlpha,
                  (unsigned long)g_settings.peakHoldMs);
 

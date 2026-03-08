@@ -31,9 +31,12 @@ public:
   void clearCalibration(SettingsV1& s);
 
   static const char* sourceLabel(uint8_t src);
+  static const char* responseModeLabel(uint8_t mode);
 
 private:
   AudioMetrics _m;
+  float _fast = 45.0f;
+  float _slow = 45.0f;
   float _ema = 45.0f;
   float _peak = 45.0f;
   uint32_t _lastPeakReset = 0;
@@ -42,5 +45,6 @@ private:
   float computeDemoDb();
   float computeAnalogRms(uint8_t pin, uint16_t sampleCount, uint16_t& meanOut, int& lastOut, bool& okOut);
   float computeCalibratedDb(float rms, const SettingsV1& s) const;
+  float captureCalibrationLogRms(const SettingsV1& s, bool& okOut);
   static float clampf(float v, float lo, float hi);
 };
