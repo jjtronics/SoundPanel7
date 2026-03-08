@@ -1,4 +1,4 @@
-# SoundPanel 7
+# 🎚️ SoundPanel 7
 
 <p align="center">
   <strong>A connected wall panel for sound awareness, precision time, and calm workspaces.</strong>
@@ -54,9 +54,9 @@
 
 ---
 
-## Francais
+## 🇫🇷 Francais
 
-### Vision
+### ✨ Vision
 
 SoundPanel 7 est un panneau mural connecte qui rend deux informations visibles en un coup d'oeil :
 
@@ -80,7 +80,7 @@ et de s'integrer proprement dans un environnement connecte.
 
 ![SoundPanel 7 product overview](docs/images/soundpanel7-hero-overview.jpg)
 
-### Points forts
+### 🚀 Points forts
 
 - Grand affichage tactile 7" lisible a distance
 - Mesure sonore en temps reel avec **dB instantane**, **Leq** et **Peak**
@@ -91,7 +91,7 @@ et de s'integrer proprement dans un environnement connecte.
 - Mises a jour **OTA**
 - Stockage persistant des reglages
 
-### Cas d'usage
+### 🎯 Cas d'usage
 
 - Open space trop bruyant : rendre le niveau sonore visible sans agressivite
 - Studio d'enregistrement : garder les niveaux et l'heure sous les yeux
@@ -104,9 +104,9 @@ et de s'integrer proprement dans un environnement connecte.
 
 ![SoundPanel 7 in studio showing clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
 
-### Fonctionnalites
+### 🧩 Fonctionnalites
 
-#### Monitoring sonore
+#### 🔊 Monitoring sonore
 
 - mesure continue du niveau sonore
 - calcul du **Leq**
@@ -115,7 +115,7 @@ et de s'integrer proprement dans un environnement connecte.
 - historique glissant configurable
 - calibration micro en 3 points
 
-#### Horloge et synchronisation
+#### 🕒 Horloge et synchronisation
 
 - horloge grand format affichee en permanence
 - affichage des **secondes** pour les usages de diffusion, prise et synchro
@@ -123,14 +123,14 @@ et de s'integrer proprement dans un environnement connecte.
 - configuration du serveur NTP et de la timezone
 - statut de synchronisation visible dans l'UI
 
-#### Interface locale
+#### 🖥️ Interface locale
 
 - pilotage tactile sur ecran 7"
 - lecture immediate des niveaux et de l'heure
 - consultation des informations systeme
 - usage autonome sans navigateur
 
-#### Interface web
+#### 🌐 Interface web
 
 - page de statut temps reel
 - page d'administration
@@ -138,7 +138,7 @@ et de s'integrer proprement dans un environnement connecte.
 - calibration depuis le navigateur
 - actions systeme : reboot, reset usine, portail Wi-Fi
 
-#### Connectivite
+#### 📡 Connectivite
 
 - Wi-Fi via portail de configuration
 - MQTT
@@ -146,9 +146,9 @@ et de s'integrer proprement dans un environnement connecte.
 - integration Home Assistant native via Zeroconf/mDNS
 - OTA via `espota`
 
-### Materiel cible
+### 🛠️ Materiel cible
 
-#### Carte principale
+#### 🧠 Carte principale
 
 - **Waveshare ESP32-S3-Touch-LCD-7**
 - ecran tactile 7"
@@ -158,7 +158,7 @@ et de s'integrer proprement dans un environnement connecte.
 - USB
 - retroeclairage pilotable
 
-#### Entree audio
+#### 🎤 Entree audio
 
 Le firmware est pense pour un **micro analogique** branche sur l'entree capteur.
 
@@ -178,7 +178,7 @@ Dans [`platformio.ini`](platformio.ini), le flag suivant est actif par defaut :
 
 Si tu branches une vraie entree analogique, verifie ce point avant d'evaluer le comportement du panneau.
 
-### Demarrage rapide
+### ⚡ Demarrage rapide
 
 #### 1. Cloner le depot
 
@@ -226,7 +226,7 @@ Au boot, le firmware initialise successivement :
 6. l'interface web
 7. le moteur audio
 
-### Configuration par defaut
+### ⚙️ Configuration par defaut
 
 Valeurs actuelles du firmware :
 
@@ -242,7 +242,7 @@ Valeurs actuelles du firmware :
 
 Ces reglages sont definis dans [`src/SettingsStore.h`](src/SettingsStore.h).
 
-### Interface web
+### 🌐 Interface web
 
 Une fois l'appareil connecte au Wi-Fi :
 
@@ -264,7 +264,7 @@ L'interface permet notamment de regler :
 
 ![SoundPanel 7 admin web interface](docs/images/soundpanel7-admin-web-interface.png)
 
-### Horloge NTP
+### 🕒 Horloge NTP
 
 SoundPanel 7 est aussi une **grande horloge reseau**.
 
@@ -284,7 +284,7 @@ Par defaut, le serveur NTP configure est `fr.pool.ntp.org`.
 
 ![SoundPanel 7 studio clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
 
-### MQTT
+### 📶 MQTT
 
 Le panneau peut publier ses mesures vers un broker MQTT.
 
@@ -310,7 +310,7 @@ soundpanel7/wifi/rssi
 soundpanel7/wifi/ip
 ```
 
-### Home Assistant
+### 🏠 Home Assistant
 
 Deux approches sont proposees.
 
@@ -365,7 +365,7 @@ Si rien n'apparait, verifier en priorite :
 
 ![SoundPanel 7 Home Assistant discovery](docs/images/soundpanel7-home-assistant-discovery.png)
 
-### OTA
+### 🚀 OTA
 
 Quand l'OTA est configuree et activee sur l'appareil :
 
@@ -381,7 +381,7 @@ L'environnement OTA de [`platformio.ini`](platformio.ini) repose sur :
 
 Pense a ajuster `upload_port` a l'adresse IP reelle de ton appareil.
 
-### Calibration
+### 🎚️ Calibration
 
 Le systeme de calibration fonctionne en **3 points**.
 
@@ -402,7 +402,7 @@ Le firmware stocke ensuite les points et corrige la lecture.
 
 ![SoundPanel 7 calibration workflow](docs/images/soundpanel7-calibration-workflow.png)
 
-### Architecture
+### 🧠 Architecture
 
 Le coeur du projet reste volontairement simple :
 
@@ -422,7 +422,7 @@ Composants principaux :
 - [`src/OtaManager.cpp`](src/OtaManager.cpp) : OTA
 - [`src/SettingsStore.cpp`](src/SettingsStore.cpp) : persistance NVS
 
-### Arborescence
+### 📁 Arborescence
 
 ```text
 .
@@ -433,7 +433,7 @@ Composants principaux :
 └── platformio.ini             Build, flash et environnements
 ```
 
-### Etat du projet
+### 🔧 Etat du projet
 
 Le projet est deja exploitable, mais reste evolutif :
 
@@ -444,7 +444,7 @@ Le projet est deja exploitable, mais reste evolutif :
 
 En clair : c'est un projet serieux, vivant, et deja tres utile.
 
-### Contribution
+### 🤝 Contribution
 
 Les contributions sont bienvenues, surtout sur :
 
@@ -464,9 +464,9 @@ Point d'entree recommande :
 
 ---
 
-## English
+## 🇬🇧 English
 
-### Overview
+### ✨ Overview
 
 SoundPanel 7 is a connected wall panel that makes two things instantly visible:
 
@@ -490,7 +490,7 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 
 ![SoundPanel 7 product overview](docs/images/soundpanel7-hero-overview.jpg)
 
-### Key features
+### 🚀 Key features
 
 - Large 7" touchscreen display readable from a distance
 - Real-time sound monitoring with **instant dB**, **Leq**, and **Peak**
@@ -501,7 +501,7 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 - **OTA** firmware updates
 - Persistent settings storage
 
-### Use cases
+### 🎯 Use cases
 
 - Noisy open space: make sound levels visible without turning into the noise police
 - Recording studio: keep both sound level and precise time in view
@@ -514,9 +514,9 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 
 ![SoundPanel 7 in studio showing clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
 
-### Hardware target
+### 🛠️ Hardware target
 
-#### Main board
+#### 🧠 Main board
 
 - **Waveshare ESP32-S3-Touch-LCD-7**
 - 7" touchscreen
@@ -526,7 +526,7 @@ It is a **local monitoring panel** for sound, time, network visibility, and conn
 - USB
 - controllable backlight
 
-#### Audio input
+#### 🎤 Audio input
 
 The firmware is designed around an **analog microphone** connected to the sensor input.
 
@@ -546,7 +546,7 @@ In [`platformio.ini`](platformio.ini), this flag is enabled by default:
 
 If you connect a real analog input, check that setting first before judging the panel's behavior.
 
-### Quick start
+### ⚡ Quick start
 
 #### 1. Clone the repository
 
@@ -594,7 +594,7 @@ At boot, the firmware initializes:
 6. web interface
 7. audio engine
 
-### Default configuration
+### ⚙️ Default configuration
 
 Current firmware defaults:
 
@@ -610,7 +610,7 @@ Current firmware defaults:
 
 These settings are defined in [`src/SettingsStore.h`](src/SettingsStore.h).
 
-### Web interface
+### 🌐 Web interface
 
 Once the device is connected to Wi-Fi:
 
@@ -632,7 +632,7 @@ The interface lets you configure:
 
 ![SoundPanel 7 admin web interface](docs/images/soundpanel7-admin-web-interface.png)
 
-### NTP clock
+### 🕒 NTP clock
 
 SoundPanel 7 is also a **large network clock**.
 
@@ -652,7 +652,7 @@ The default NTP server is `fr.pool.ntp.org`.
 
 ![SoundPanel 7 studio clock and sound levels](docs/images/soundpanel7-studio-clock-and-levels.jpg)
 
-### MQTT and Home Assistant
+### 📶 MQTT and Home Assistant
 
 The panel can publish its metrics to an MQTT broker.
 
@@ -722,7 +722,7 @@ If the device does not show up, check:
 
 ![SoundPanel 7 Home Assistant discovery](docs/images/soundpanel7-home-assistant-discovery.png)
 
-### OTA updates
+### 🚀 OTA updates
 
 Once OTA is configured and enabled on the device:
 
@@ -738,7 +738,7 @@ The OTA environment in [`platformio.ini`](platformio.ini) uses:
 
 Remember to adjust `upload_port` to the real IP address of your device.
 
-### Calibration workflow
+### 🎚️ Calibration workflow
 
 The calibration system uses **3 reference points**.
 
@@ -759,7 +759,7 @@ Typical useful values:
 
 The firmware stores those points and applies the correction curve accordingly.
 
-### Firmware architecture
+### 🧠 Firmware architecture
 
 The core flow remains intentionally simple:
 
@@ -779,7 +779,7 @@ Main components:
 - [`src/OtaManager.cpp`](src/OtaManager.cpp): OTA updates
 - [`src/SettingsStore.cpp`](src/SettingsStore.cpp): NVS persistence
 
-### Project layout
+### 📁 Project layout
 
 ```text
 .
@@ -790,7 +790,7 @@ Main components:
 └── platformio.ini             Build, flash, and environments
 ```
 
-### Project status
+### 🔧 Project status
 
 The project is already useful and operational, but still evolving:
 
@@ -801,7 +801,7 @@ The project is already useful and operational, but still evolving:
 
 In short: this is a serious project, a living one, and already a very practical tool.
 
-## License
+## 📜 License
 
 Open-source project.  
 Add the final repository license here if you want the README to state it explicitly.
