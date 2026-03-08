@@ -325,11 +325,13 @@ void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
   lv_obj_t* cUi = mgmtCard(scroll, "UI");
   createSettingHeader(cUi, "Backlight", &_lblBacklightValue);
 
-  _slBacklight = lv_slider_create(cUi);
-  lv_obj_set_width(_slBacklight, lv_pct(100));
-  lv_slider_set_range(_slBacklight, 0, 100);
-  lv_slider_set_value(_slBacklight, _s ? _s->backlight : 80, LV_ANIM_OFF);
-  lv_obj_add_event_cb(_slBacklight, UiManager::onSliderBacklight, LV_EVENT_VALUE_CHANGED, this);
+  _btnBacklight = lv_btn_create(cUi);
+  lv_obj_set_size(_btnBacklight, lv_pct(100), 44);
+  lv_obj_set_style_radius(_btnBacklight, 14, 0);
+  lv_obj_add_event_cb(_btnBacklight, UiManager::onToggleBacklight, LV_EVENT_CLICKED, this);
+  _lblBacklightToggle = lv_label_create(_btnBacklight);
+  lv_label_set_text(_lblBacklightToggle, "ON");
+  lv_obj_center(_lblBacklightToggle);
 
   lv_obj_t* cTh = mgmtCard(scroll, "Seuils dB");
   createSettingHeader(cTh, "Vert <=", &_lblGreenValue);
@@ -1033,9 +1035,17 @@ void UiManager::refreshSettingsControls() {
   if (!_s) return;
 
   if (_lblBacklightValue) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%u %%", (unsigned)_s->backlight);
-    lv_label_set_text(_lblBacklightValue, buf);
+    lv_label_set_text(_lblBacklightValue, _s->backlight == 0 ? "OFF" : "ON");
+  }
+
+  if (_btnBacklight) {
+    const bool active = _s->backlight > 0;
+    lv_obj_set_style_bg_color(_btnBacklight, active ? lv_color_hex(0x7A1E2C) : lv_color_hex(0x16202E), 0);
+    lv_obj_set_style_text_color(_btnBacklight, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
+  }
+
+  if (_lblBacklightToggle) {
+    lv_label_set_text(_lblBacklightToggle, _s->backlight == 0 ? "OFF" : "ON");
   }
 
   if (_lblGreenValue) {
@@ -1492,13 +1502,13 @@ void UiManager::onOverviewCard(lv_event_t* e) {
   self->setDashboardPage((uint8_t)page);
 }
 
-void UiManager::onSliderBacklight(lv_event_t* e) {
+void UiManager::onToggleBacklight(lv_event_t* e) {
   UiManager* self = selfFromEvent(e);
-  int v = lv_slider_get_value(self->_slBacklight);
+  if (!self || !self->_s) return;
 
-  if (self->_s) self->_s->backlight = (uint8_t)v;
+  self->_s->backlight = self->_s->backlight == 0 ? 100 : 0;
   self->refreshSettingsControls();
-  self->applyBacklight((uint8_t)v);
+  self->applyBacklight(self->_s->backlight);
 
   if (self->_store && self->_s) self->_store->save(*self->_s);
 }

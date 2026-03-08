@@ -276,16 +276,20 @@ String WebManager::liveMetricsJson() const {
   const AudioMetrics& am = g_audio.metrics();
 
   String json;
-  json.reserve(416);
+  json.reserve(512);
   json += "{";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
   json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
+  json += "\"backlight\":"; json += String(_s ? _s->backlight : 0); json += ",";
   json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
   json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
   json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
+  json += "\"audioResponseMode\":"; json += String(_s ? _s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
+  json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
+  json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
   json += "\"rssi\":"; json += String(rssi); json += ",";
@@ -968,6 +972,23 @@ R"HTML(
     .field + .field{margin-top:12px}
     label{font-size:12px;color:var(--muted)}
     input[type="range"]{width:100%}
+    .switchRow{display:flex;align-items:center;justify-content:space-between;gap:14px}
+    .switchText{display:flex;flex-direction:column;gap:4px}
+    .switchState{font-size:12px;color:#d8e0e8}
+    .switch{
+      position:relative;display:inline-block;width:58px;height:32px;flex:0 0 auto;
+      padding:0;border:1px solid var(--line);border-radius:999px;background:#16202E;cursor:pointer;
+      transition:.18s ease;
+    }
+    .switchTrack{
+      position:absolute;inset:0;border-radius:999px;transition:.18s ease;
+    }
+    .switchTrack::after{
+      content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;
+      background:#d8e0e8;transition:.18s ease;
+    }
+    .switch.active{background:var(--accent);border-color:transparent}
+    .switch.active .switchTrack::after{transform:translateX(26px);background:#fff}
     input[type="number"], input[type="text"], select{
       width:100%;border:1px solid var(--line);background:var(--panel3);color:var(--txt);
       border-radius:12px;padding:10px 12px;outline:none;font-weight:700;
@@ -1320,8 +1341,15 @@ R"HTML(
               </div>
 
               <div class="field">
-                <label>Backlight <span class="mono" id="blVal">--</span>%</label>
-                <input id="bl" type="range" min="0" max="100" value="80"/>
+                <div class="switchRow">
+                  <div class="switchText">
+                    <label>Backlight</label>
+                    <div class="switchState mono" id="blVal">--</div>
+                  </div>
+                  <button class="switch" id="bl" type="button" aria-label="Activer ou couper le backlight" aria-pressed="true">
+                    <span class="switchTrack"></span>
+                  </button>
+                </div>
               </div>
 
               <div class="field">
@@ -1924,13 +1952,17 @@ R"HTML(
     }
 
     if (!state.uiDirty) {
-      $("bl").value = Number(st.backlight ?? 80);
-      $("g").value = greenMax;
-      $("o").value = orangeMax;
-      $("hist").value = state.historyMinutes;
-      $("warnHoldSec").value = warningHoldSec;
-      $("critHoldSec").value = criticalHoldSec;
-      state.uiResponseMode = Number(st.audioResponseMode ?? 0);
+      if ("backlight" in st) {
+        const backlightOn = Number(st.backlight) > 0;
+        $("bl").classList.toggle("active", backlightOn);
+        $("bl").setAttribute("aria-pressed", backlightOn ? "true" : "false");
+      }
+      if ("greenMax" in st) $("g").value = greenMax;
+      if ("orangeMax" in st) $("o").value = orangeMax;
+      if ("historyMinutes" in st) $("hist").value = state.historyMinutes;
+      if ("warningHoldSec" in st) $("warnHoldSec").value = warningHoldSec;
+      if ("criticalHoldSec" in st) $("critHoldSec").value = criticalHoldSec;
+      if ("audioResponseMode" in st) state.uiResponseMode = Number(st.audioResponseMode ?? 0);
       syncUiLabels();
     }
   }
@@ -1940,7 +1972,9 @@ R"HTML(
     const o = Math.max(g, Number($("o").value));
     $("o").value = o;
 
-    $("blVal").textContent = $("bl").value;
+    const backlightOn = $("bl").classList.contains("active");
+    $("bl").setAttribute("aria-pressed", backlightOn ? "true" : "false");
+    $("blVal").textContent = backlightOn ? "ON" : "OFF";
     $("gVal").textContent = g;
     $("oVal").textContent = o;
     $("hVal").textContent = $("hist").value;
@@ -2015,7 +2049,7 @@ R"HTML(
 
   async function saveUi() {
     const payload = {
-      backlight: Number($("bl").value),
+      backlight: $("bl").classList.contains("active") ? 100 : 0,
       greenMax: Number($("g").value),
       orangeMax: Number($("o").value),
       historyMinutes: Number($("hist").value),
@@ -2030,6 +2064,25 @@ R"HTML(
       state.uiDirty = false;
       await refreshStatus();
     } catch (err) {
+      $("uiToast").textContent = `Erreur: ${err.message}`;
+    }
+  }
+
+  async function toggleBacklight() {
+    const wasOn = $("bl").classList.contains("active");
+    const nextOn = !wasOn;
+
+    $("bl").classList.toggle("active", nextOn);
+    syncUiLabels();
+    $("uiToast").textContent = "Sauvegarde...";
+
+    try {
+      await apiPost("/api/ui", { backlight: nextOn ? 100 : 0 });
+      $("uiToast").textContent = "Backlight sauve.";
+      await refreshStatus();
+    } catch (err) {
+      $("bl").classList.toggle("active", wasOn);
+      syncUiLabels();
       $("uiToast").textContent = `Erreur: ${err.message}`;
     }
   }
@@ -2174,7 +2227,9 @@ R"HTML(
     tab.addEventListener("click", () => setActivePage(tab.dataset.page));
   });
 
-  ["bl", "g", "o", "hist", "warnHoldSec", "critHoldSec"].forEach((id) => {
+  $("bl").addEventListener("click", toggleBacklight);
+
+  ["g", "o", "hist", "warnHoldSec", "critHoldSec"].forEach((id) => {
     $(id).addEventListener("input", () => {
       markUiDirty();
       syncUiLabels();

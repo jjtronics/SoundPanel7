@@ -104,12 +104,13 @@ private:
   lv_obj_t* _msgboxConfirm = nullptr;
 
   // Management
-  lv_obj_t* _slBacklight = nullptr;
+  lv_obj_t* _btnBacklight = nullptr;
   lv_obj_t* _slGreen = nullptr;
   lv_obj_t* _slOrange = nullptr;
   lv_obj_t* _slHistory = nullptr;
   lv_obj_t* _btnResponseFast = nullptr;
   lv_obj_t* _btnResponseSlow = nullptr;
+  lv_obj_t* _lblBacklightToggle = nullptr;
   lv_obj_t* _lblBacklightValue = nullptr;
   lv_obj_t* _lblGreenValue = nullptr;
   lv_obj_t* _lblOrangeValue = nullptr;
@@ -169,7 +170,7 @@ private:
   static void onDashTab(lv_event_t* e);
   static void onDashGesture(lv_event_t* e);
   static void onOverviewCard(lv_event_t* e);
-  static void onSliderBacklight(lv_event_t* e);
+  static void onToggleBacklight(lv_event_t* e);
   static void onSliderThresholds(lv_event_t* e);
   static void onSliderHistory(lv_event_t* e);
   static void onResponseMode(lv_event_t* e);
