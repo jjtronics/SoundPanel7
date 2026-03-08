@@ -23,6 +23,10 @@ public:
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = 96;
   static constexpr uint8_t DASH_PAGE_COUNT = 4;
+  static constexpr uint32_t ORANGE_ALERT_HOLD_MS = 3000;
+  static constexpr uint32_t RED_ALERT_HOLD_MS = 2000;
+  static constexpr uint16_t RED_HISTORY_SAMPLE_COUNT = 3600;
+  static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
 
   enum DashPage : uint8_t {
     DASH_PAGE_OVERVIEW = 0,
@@ -47,6 +51,9 @@ private:
   lv_obj_t* _arc = nullptr;
   lv_obj_t* _dot = nullptr;
   lv_obj_t* _lblDb = nullptr;
+  lv_obj_t* _dbCard = nullptr;
+  lv_obj_t* _alertBadge = nullptr;
+  lv_obj_t* _lblAlertBadge = nullptr;
   lv_obj_t* _lblLeq = nullptr;
   lv_obj_t* _lblPeak = nullptr;
   lv_obj_t* _lblWifi = nullptr;
@@ -63,10 +70,14 @@ private:
   lv_obj_t* _arcFocus = nullptr;
   lv_obj_t* _dotFocus = nullptr;
   lv_obj_t* _lblDbFocus = nullptr;
+  lv_obj_t* _dbCardFocus = nullptr;
+  lv_obj_t* _alertBadgeFocus = nullptr;
+  lv_obj_t* _lblAlertBadgeFocus = nullptr;
   lv_obj_t* _lblLeqFocus = nullptr;
   lv_obj_t* _lblPeakFocus = nullptr;
   lv_obj_t* _histWrapFocus = nullptr;
   lv_obj_t* _lblHistFocus = nullptr;
+  lv_obj_t* _lblAlertTimeFocus = nullptr;
   lv_obj_t* _lblHistTLeftFocus = nullptr;
   lv_obj_t* _lblHistTMidFocus = nullptr;
   lv_obj_t* _lblHistTRightFocus = nullptr;
@@ -81,6 +92,7 @@ private:
 
   lv_obj_t* _histWrap = nullptr;
   lv_obj_t* _lblHist = nullptr;
+  lv_obj_t* _lblAlertTime = nullptr;
   lv_obj_t* _lblHistYLow = nullptr;
   lv_obj_t* _lblHistYHigh = nullptr;
   lv_obj_t* _lblHistTLeft = nullptr;
@@ -108,6 +120,13 @@ private:
   float _lastDb = 0.0f;
   float _lastLeq = 0.0f;
   float _lastPeak = 0.0f;
+  uint32_t _orangeZoneSinceMs = 0;
+  uint32_t _redZoneSinceMs = 0;
+  uint32_t _lastRedHistorySampleMs = 0;
+  uint8_t _redHistory[RED_HISTORY_SAMPLE_COUNT] = {0};
+  uint16_t _redHistoryHead = 0;
+  uint16_t _redHistoryCount = 0;
+  uint16_t _redHistorySum = 0;
 
   void buildDashboard();
   void buildManagement();
@@ -132,6 +151,10 @@ private:
 
   void applyBacklight(uint8_t percent);
   lv_color_t zoneColorForDb(float db);
+  void updateAlertState(uint32_t now);
+  void recordRedHistorySample(uint32_t now);
+  uint16_t redSecondsWithinWindow() const;
+  void applyAlertVisuals(uint32_t now);
   void powerOffNow();
 
   uint32_t historySamplePeriodMs() const;

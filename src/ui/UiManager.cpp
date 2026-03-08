@@ -32,6 +32,16 @@ static lv_obj_t* makeCard(lv_obj_t* parent, int w, int h) {
   return c;
 }
 
+static bool isOrangeZone(const SettingsV1* s, float db) {
+  if (!s) return false;
+  return db > s->th.greenMax && db <= s->th.orangeMax;
+}
+
+static bool isRedZone(const SettingsV1* s, float db) {
+  if (!s) return false;
+  return db > s->th.orangeMax;
+}
+
 static lv_obj_t* mgmtCard(lv_obj_t* parent, const char* title) {
   lv_obj_t* c = lv_obj_create(parent);
   lv_obj_set_width(c, lv_pct(94));
@@ -346,7 +356,13 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblClockSec, lv_color_hex(0xDFE7EF), 0);
   lv_obj_center(_lblClockSec);
 
-  _arc = lv_arc_create(upper);
+  _dbCard = makeCard(upper, 250, 204);
+  lv_obj_align(_dbCard, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(_dbCard, lv_color_hex(0x111824), 0);
+  lv_obj_set_style_radius(_dbCard, 24, 0);
+  lv_obj_set_style_pad_all(_dbCard, 0, 0);
+
+  _arc = lv_arc_create(_dbCard);
   lv_obj_set_size(_arc, 206, 206);
   lv_obj_align(_arc, LV_ALIGN_CENTER, 0, 0);
   lv_arc_set_range(_arc, 0, 100);
@@ -360,19 +376,19 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_set_style_arc_color(_arc, lv_color_hex(0x1A2332), LV_PART_MAIN);
   lv_obj_set_style_arc_color(_arc, lv_color_hex(0x23C552), LV_PART_INDICATOR);
 
-  _lblDb = lv_label_create(upper);
+  _lblDb = lv_label_create(_dbCard);
   lv_label_set_text(_lblDb, "--.-");
   lv_obj_set_style_text_font(_lblDb, &lv_font_montserrat_48, 0);
   lv_obj_set_style_text_color(_lblDb, lv_color_hex(0xDFE7EF), 0);
   lv_obj_align_to(_lblDb, _arc, LV_ALIGN_CENTER, 0, -10);
 
-  lv_obj_t* unit = lv_label_create(upper);
+  lv_obj_t* unit = lv_label_create(_dbCard);
   lv_label_set_text(unit, "dB");
   lv_obj_set_style_text_font(unit, &lv_font_montserrat_20, 0);
   lv_obj_set_style_text_color(unit, lv_color_hex(0x8EA1B3), 0);
   lv_obj_align_to(unit, _lblDb, LV_ALIGN_OUT_BOTTOM_MID, 0, -2);
 
-  _dot = lv_obj_create(upper);
+  _dot = lv_obj_create(_dbCard);
   lv_obj_set_size(_dot, 14, 14);
   lv_obj_set_style_radius(_dot, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(_dot, lv_color_hex(0x23C552), 0);
@@ -489,10 +505,28 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   const lv_coord_t cardGap = 12;
 
   lv_obj_t* mainCard = makeCard(parent, 752, 212);
+  _dbCardFocus = mainCard;
   lv_obj_align(mainCard, LV_ALIGN_TOP_MID, 0, 10);
   lv_obj_set_style_bg_color(mainCard, lv_color_hex(0x111824), 0);
   lv_obj_set_style_radius(mainCard, 26, 0);
   lv_obj_set_style_pad_all(mainCard, 20, 0);
+
+  _alertBadgeFocus = lv_obj_create(mainCard);
+  lv_obj_set_size(_alertBadgeFocus, 112, 34);
+  lv_obj_set_style_bg_color(_alertBadgeFocus, lv_color_hex(0xE53935), 0);
+  lv_obj_set_style_bg_opa(_alertBadgeFocus, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_alertBadgeFocus, 0, 0);
+  lv_obj_set_style_radius(_alertBadgeFocus, 17, 0);
+  lv_obj_set_style_pad_all(_alertBadgeFocus, 0, 0);
+  lv_obj_add_flag(_alertBadgeFocus, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(_alertBadgeFocus, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(_alertBadgeFocus, LV_SCROLLBAR_MODE_OFF);
+
+  _lblAlertBadgeFocus = lv_label_create(_alertBadgeFocus);
+  lv_label_set_text(_lblAlertBadgeFocus, "ALERTE");
+  lv_obj_set_style_text_font(_lblAlertBadgeFocus, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_lblAlertBadgeFocus, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_center(_lblAlertBadgeFocus);
 
   _arcFocus = lv_arc_create(mainCard);
   lv_obj_set_size(_arcFocus, 196, 196);
@@ -507,6 +541,8 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_set_style_arc_width(_arcFocus, 22, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(_arcFocus, lv_color_hex(0x1A2332), LV_PART_MAIN);
   lv_obj_set_style_arc_color(_arcFocus, lv_color_hex(0x23C552), LV_PART_INDICATOR);
+  lv_obj_align_to(_alertBadgeFocus, _arcFocus, LV_ALIGN_OUT_RIGHT_MID, 20, -44);
+  lv_obj_move_foreground(_alertBadgeFocus);
 
   _lblDbFocus = lv_label_create(mainCard);
   lv_label_set_text(_lblDbFocus, "--.-");
@@ -606,6 +642,12 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
   lv_obj_set_style_text_color(title, lv_color_hex(0x8EA1B3), 0);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
 
+  lv_obj_t* alertTime = lv_label_create(wrap);
+  lv_label_set_text(alertTime, "Rouge 0 s");
+  lv_obj_set_style_text_font(alertTime, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(alertTime, lv_color_hex(0xE53935), 0);
+  lv_obj_align(alertTime, LV_ALIGN_TOP_RIGHT, 0, 2);
+
   lv_obj_t* histArea = lv_obj_create(wrap);
   lv_obj_set_size(histArea, lv_pct(100), 68);
   lv_obj_align(histArea, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -657,6 +699,12 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
   *leftOut = left;
   *midOut = mid;
   *rightOut = right;
+
+  if (wrapOut == &_histWrap) {
+    _lblAlertTime = alertTime;
+  } else if (wrapOut == &_histWrapFocus) {
+    _lblAlertTimeFocus = alertTime;
+  }
 }
 
 void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
@@ -1048,6 +1096,136 @@ lv_color_t UiManager::zoneColorForDb(float db) {
   return lv_color_hex(0xE53935);
 }
 
+void UiManager::updateAlertState(uint32_t now) {
+  if (!_s) return;
+
+  const bool orange = isOrangeZone(_s, _lastDb);
+  const bool red = isRedZone(_s, _lastDb);
+
+  if (orange) {
+    if (_orangeZoneSinceMs == 0) _orangeZoneSinceMs = now;
+  } else {
+    _orangeZoneSinceMs = 0;
+  }
+
+  if (red) {
+    if (_redZoneSinceMs == 0) _redZoneSinceMs = now;
+  } else {
+    _redZoneSinceMs = 0;
+  }
+}
+
+void UiManager::recordRedHistorySample(uint32_t now) {
+  if (now - _lastRedHistorySampleMs < RED_HISTORY_SAMPLE_MS) return;
+  _lastRedHistorySampleMs = now;
+
+  const uint8_t sample = isRedZone(_s, _lastDb) ? 1 : 0;
+
+  if (_redHistoryCount == RED_HISTORY_SAMPLE_COUNT) {
+    _redHistorySum -= _redHistory[_redHistoryHead];
+  } else {
+    _redHistoryCount++;
+  }
+
+  _redHistory[_redHistoryHead] = sample;
+  _redHistorySum += sample;
+  _redHistoryHead = (_redHistoryHead + 1) % RED_HISTORY_SAMPLE_COUNT;
+}
+
+uint16_t UiManager::redSecondsWithinWindow() const {
+  if (!_s || _redHistoryCount == 0) return 0;
+
+  uint16_t wanted = (uint16_t)_s->historyMinutes * 60U;
+  if (wanted > RED_HISTORY_SAMPLE_COUNT) wanted = RED_HISTORY_SAMPLE_COUNT;
+  if (wanted == 0) return 0;
+
+  uint16_t available = _redHistoryCount < wanted ? _redHistoryCount : wanted;
+  uint16_t start = (_redHistoryHead + RED_HISTORY_SAMPLE_COUNT - available) % RED_HISTORY_SAMPLE_COUNT;
+  uint16_t total = 0;
+  for (uint16_t i = 0; i < available; i++) {
+    total += _redHistory[(start + i) % RED_HISTORY_SAMPLE_COUNT];
+  }
+  return total;
+}
+
+void UiManager::applyAlertVisuals(uint32_t now) {
+  const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= ORANGE_ALERT_HOLD_MS;
+  const bool redAlert = _redZoneSinceMs != 0 && (now - _redZoneSinceMs) >= RED_ALERT_HOLD_MS;
+
+  lv_color_t screenBase = lv_color_hex(0x0B0F14);
+  lv_color_t screenRed = lv_color_hex(0x22080B);
+  lv_color_t base = lv_color_hex(0x111824);
+  lv_color_t orangeBase = lv_color_hex(0x3D2810);
+  lv_color_t orangePulse = lv_color_hex(0x6C4311);
+  lv_color_t redBase = lv_color_hex(0x4A161B);
+  lv_color_t redPulse = lv_color_hex(0x8E1F28);
+  lv_color_t borderBase = lv_color_hex(0x111824);
+  lv_color_t orangeBorder = lv_color_hex(0xF0A202);
+  lv_color_t redBorder = lv_color_hex(0xFF5A5F);
+
+  lv_color_t dbCardColor = base;
+  lv_color_t screenColor = screenBase;
+  lv_color_t borderColor = borderBase;
+  lv_opa_t borderOpa = LV_OPA_TRANSP;
+  lv_coord_t borderWidth = 0;
+  lv_coord_t shadowWidth = 0;
+  if (redAlert) {
+    uint32_t phase = (now / 120) % 10;
+    dbCardColor = (phase < 5) ? redPulse : redBase;
+    screenColor = screenRed;
+    borderColor = redBorder;
+    borderOpa = LV_OPA_90;
+    borderWidth = 3;
+    shadowWidth = 26;
+  } else if (orangeAlert) {
+    uint32_t phase = (now / 180) % 10;
+    dbCardColor = (phase < 5) ? orangePulse : orangeBase;
+    borderColor = orangeBorder;
+    borderOpa = LV_OPA_70;
+    borderWidth = 2;
+    shadowWidth = 14;
+  }
+
+  if (_scrDash) lv_obj_set_style_bg_color(_scrDash, screenColor, 0);
+  if (_dbCard) lv_obj_set_style_bg_color(_dbCard, dbCardColor, 0);
+  if (_dbCardFocus) lv_obj_set_style_bg_color(_dbCardFocus, dbCardColor, 0);
+  if (_dbCard) {
+    lv_obj_set_style_border_color(_dbCard, borderColor, 0);
+    lv_obj_set_style_border_opa(_dbCard, borderOpa, 0);
+    lv_obj_set_style_border_width(_dbCard, borderWidth, 0);
+    lv_obj_set_style_shadow_color(_dbCard, borderColor, 0);
+    lv_obj_set_style_shadow_width(_dbCard, shadowWidth, 0);
+    lv_obj_set_style_shadow_opa(_dbCard, redAlert ? LV_OPA_50 : (orangeAlert ? LV_OPA_30 : LV_OPA_TRANSP), 0);
+  }
+  if (_dbCardFocus) {
+    lv_obj_set_style_border_color(_dbCardFocus, borderColor, 0);
+    lv_obj_set_style_border_opa(_dbCardFocus, borderOpa, 0);
+    lv_obj_set_style_border_width(_dbCardFocus, borderWidth, 0);
+    lv_obj_set_style_shadow_color(_dbCardFocus, borderColor, 0);
+    lv_obj_set_style_shadow_width(_dbCardFocus, shadowWidth, 0);
+    lv_obj_set_style_shadow_opa(_dbCardFocus, redAlert ? LV_OPA_50 : (orangeAlert ? LV_OPA_30 : LV_OPA_TRANSP), 0);
+  }
+
+  if (_alertBadgeFocus) {
+    if (redAlert) lv_obj_clear_flag(_alertBadgeFocus, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(_alertBadgeFocus, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_alertBadgeFocus);
+  }
+
+  char buf[40];
+  uint16_t redSeconds = redSecondsWithinWindow();
+  if (redSeconds >= 60) {
+    snprintf(buf, sizeof(buf), "Rouge %um%02us / %um",
+             redSeconds / 60, redSeconds % 60, (unsigned)(_s ? _s->historyMinutes : 0));
+  } else {
+    snprintf(buf, sizeof(buf), "Rouge %us / %um",
+             redSeconds, (unsigned)(_s ? _s->historyMinutes : 0));
+  }
+
+  if (_lblAlertTime) lv_label_set_text(_lblAlertTime, buf);
+  if (_lblAlertTimeFocus) lv_label_set_text(_lblAlertTimeFocus, buf);
+}
+
 void UiManager::powerOffNow() {
   lv_obj_t* msg = lv_obj_create(lv_scr_act());
   lv_obj_set_size(msg, 260, 90);
@@ -1114,6 +1292,9 @@ void UiManager::setDb(float dbInstant, float leq, float peak) {
   if (_dotFocus) lv_obj_set_style_bg_color(_dotFocus, c, 0);
 
   uint32_t now = millis();
+  updateAlertState(now);
+  applyAlertVisuals(now);
+
   if (now - _lastHistoryPushMs >= historySamplePeriodMs()) {
     _lastHistoryPushMs = now;
     pushHistory(dbInstant);
@@ -1124,6 +1305,10 @@ void UiManager::tick() {
   uint32_t now = millis();
   if (now - _lastTickMs < 250) return;
   _lastTickMs = now;
+
+  updateAlertState(now);
+  recordRedHistorySample(now);
+  applyAlertVisuals(now);
 
   if (_lblWifi && _net) {
     if (_net->isWifiConnected()) {
@@ -1265,6 +1450,13 @@ void UiManager::onSliderThresholds(lv_event_t* e) {
   }
 
   self->redrawHistoryBars();
+  self->_orangeZoneSinceMs = 0;
+  self->_redZoneSinceMs = 0;
+  self->_redHistoryHead = 0;
+  self->_redHistoryCount = 0;
+  self->_redHistorySum = 0;
+  memset(self->_redHistory, 0, sizeof(self->_redHistory));
+  self->applyAlertVisuals(millis());
 
   if (self->_store && self->_s) self->_store->save(*self->_s);
 }
