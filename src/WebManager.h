@@ -48,10 +48,14 @@ private:
 
   void replyText(int code, const String& txt, const char* contentType = "text/plain");
   void replyJson(int code, const String& json);
-
-  static int jsonInt(const String& body, const char* key, int def);
-  static String jsonStr(const String& body, const char* key, const String& def);
-  static bool safeCopy(char* dst, size_t dstSize, const String& src);
+  void replyOkJson(bool trailingNewline = false);
+  void replyOkJsonRebootRecommended();
+  void replyOkJsonRebootRequired();
+  void replyErrorJson(int code, const String& error, bool trailingNewline = false);
+  bool requireSettingsText();
+  bool requireSettingsJson();
+  bool requireStoreAndSettingsText();
+  bool requireStoreAndSettingsJson();
   String statusJson() const;
   String liveMetricsJson() const;
 

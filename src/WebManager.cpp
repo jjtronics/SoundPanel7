@@ -1,4 +1,5 @@
 #include "WebManager.h"
+#include "JsonHelpers.h"
 
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -20,41 +21,74 @@ static float g_webDbInstant = 0.0f;
 static float g_webLeq = 0.0f;
 static float g_webPeak = 0.0f;
 
-static float jsonFloatLocal(const String& body, const char* key, float def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
+static void appendWifiJson(String& json, bool wifiConnected, const String& ip, int rssi) {
+  json += "\"wifi\":"; json += (wifiConnected ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "ip", ip.c_str());
+  json += "\"rssi\":"; json += String(rssi); json += ",";
+}
 
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+static void appendTimeJson(String& json, bool hasTime, const char* timeText) {
+  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "time", hasTime ? timeText : "");
+}
 
-  bool neg = false;
-  if (p < (int)body.length() && body[p] == '-') {
-    neg = true;
-    p++;
+static void appendDeviceJson(String& json,
+                             const float mcuTempC,
+                             const bool mcuTempOk,
+                             const OtaManager* ota,
+                             MqttManager* mqtt) {
+  json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
+  json += "\"buildDate\":\""; json += String(SOUNDPANEL7_BUILD_DATE); json += "\",";
+  json += "\"buildEnv\":\""; json += String(SOUNDPANEL7_BUILD_ENV); json += "\",";
+  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
+  json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
+  json += "\"otaEnabled\":"; json += (ota && ota->enabled() ? "true" : "false"); json += ",";
+  json += "\"otaStarted\":"; json += (ota && ota->started() ? "true" : "false"); json += ",";
+  json += "\"mqttEnabled\":"; json += (mqtt && mqtt->enabled() ? "true" : "false"); json += ",";
+  json += "\"mqttConnected\":"; json += (mqtt && mqtt->connected() ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "mqttLastError", (mqtt && mqtt->lastError()) ? mqtt->lastError() : "");
+}
+
+static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHistory* history, bool includeCalibrationPointCount) {
+  json += "\"backlight\":"; json += String(s ? s->backlight : 0); json += ",";
+  json += "\"greenMax\":"; json += String(s ? s->th.greenMax : DEFAULT_GREEN_MAX); json += ",";
+  json += "\"orangeMax\":"; json += String(s ? s->th.orangeMax : DEFAULT_ORANGE_MAX); json += ",";
+  json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
+  json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
+  json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
+  json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
+  json += "\"warningHoldSec\":"; json += String(s ? (s->orangeAlertHoldMs / MS_PER_SECOND) : (DEFAULT_WARNING_HOLD_MS / MS_PER_SECOND)); json += ",";
+  json += "\"criticalHoldSec\":"; json += String(s ? (s->redAlertHoldMs / MS_PER_SECOND) : (DEFAULT_CRITICAL_HOLD_MS / MS_PER_SECOND)); json += ",";
+  if (includeCalibrationPointCount) {
+    json += "\"calibrationPointCount\":"; json += String(s ? s->calibrationPointCount : 3); json += ",";
   }
+  json += "\"calibrationCaptureSec\":"; json += String(s ? (s->calibrationCaptureMs / MS_PER_SECOND) : (DEFAULT_CALIBRATION_CAPTURE_MS / MS_PER_SECOND)); json += ",";
+}
 
-  String num;
-  bool dotSeen = false;
-  while (p < (int)body.length()) {
-    char c = body[p];
-    if (c >= '0' && c <= '9') {
-      num += c;
-      p++;
-      continue;
-    }
-    if (c == '.' && !dotSeen) {
-      dotSeen = true;
-      num += c;
-      p++;
-      continue;
-    }
-    break;
-  }
+static void appendAudioMetricsJson(String& json, const AudioMetrics& am) {
+  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
+  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
+  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
+  json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
+  json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
+  json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
+  json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
+  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
+}
 
-  if (num.isEmpty()) return def;
-  float v = num.toFloat();
-  return neg ? -v : v;
+static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
+  json += "\"lvglIdlePct\":"; json += String(stats.lvglIdlePct); json += ",";
+  json += "\"lvglLoadPct\":"; json += String(stats.lvglLoadPct); json += ",";
+  json += "\"lvglUiWorkUs\":"; json += String(stats.uiWorkLastUs); json += ",";
+  json += "\"lvglUiWorkMaxUs\":"; json += String(stats.uiWorkMaxUs); json += ",";
+  json += "\"lvglHandlerUs\":"; json += String(stats.lvHandlerLastUs); json += ",";
+  json += "\"lvglHandlerMaxUs\":"; json += String(stats.lvHandlerMaxUs); json += ",";
+  json += "\"lvglObjCount\":"; json += String(stats.lvObjCount); json += ",";
+  json += "\"heapInternalFree\":"; json += String(stats.heapInternalFree); json += ",";
+  json += "\"heapInternalMin\":"; json += String(stats.heapInternalMin); json += ",";
+  json += "\"heapPsramFree\":"; json += String(stats.heapPsramFree); json += ",";
+  json += "\"heapPsramMin\":"; json += String(stats.heapPsramMin); json += ",";
+  sp7json::appendEscapedField(json, "activePage", stats.activePage);
 }
 
 bool WebManager::begin(SettingsStore* store,
@@ -167,9 +201,54 @@ void WebManager::replyJson(int code, const String& json) {
   _srv.send(code, "application/json", json);
 }
 
+void WebManager::replyOkJson(bool trailingNewline) {
+  replyJson(200, trailingNewline ? "{\"ok\":true}\n" : "{\"ok\":true}");
+}
+
+void WebManager::replyOkJsonRebootRecommended() {
+  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+}
+
+void WebManager::replyOkJsonRebootRequired() {
+  replyJson(200, "{\"ok\":true,\"rebootRequired\":true}");
+}
+
+void WebManager::replyErrorJson(int code, const String& error, bool trailingNewline) {
+  String json = "{\"ok\":false,\"error\":\"";
+  json += error;
+  json += "\"}";
+  if (trailingNewline) json += "\n";
+  replyJson(code, json);
+}
+
+bool WebManager::requireSettingsText() {
+  if (_s) return true;
+  replyText(500, "settings missing\n");
+  return false;
+}
+
+bool WebManager::requireSettingsJson() {
+  if (_s) return true;
+  replyErrorJson(500, "settings missing");
+  return false;
+}
+
+bool WebManager::requireStoreAndSettingsText() {
+  if (_store && _s) return true;
+  replyText(500, "store/settings missing\n");
+  return false;
+}
+
+bool WebManager::requireStoreAndSettingsJson() {
+  if (_store && _s) return true;
+  replyErrorJson(500, "store/settings missing");
+  return false;
+}
+
 String WebManager::statusJson() const {
-  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
-  int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
+  const bool wifiConnected = WiFi.isConnected();
+  String ip = wifiConnected ? WiFi.localIP().toString() : String("");
+  int rssi = wifiConnected ? WiFi.RSSI() : 0;
   uint32_t up = (millis() - g_bootMs) / 1000;
   uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
   const float mcuTempC = temperatureRead();
@@ -185,54 +264,14 @@ String WebManager::statusJson() const {
   String json;
   json.reserve(1500);
   json += "{";
-  json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
-  json += "\"ip\":\""; json += ip; json += "\",";
-  json += "\"rssi\":"; json += String(rssi); json += ",";
+  appendWifiJson(json, wifiConnected, ip, rssi);
   json += "\"uptime_s\":"; json += String(up); json += ",";
   json += "\"backupTs\":"; json += String(backupTs); json += ",";
-  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
-  json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\",";
-  json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
-  json += "\"buildDate\":\""; json += String(SOUNDPANEL7_BUILD_DATE); json += "\",";
-  json += "\"buildEnv\":\""; json += String(SOUNDPANEL7_BUILD_ENV); json += "\",";
-  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
-  json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
-  json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
-  json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
-  json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
-  json += "\"mqttConnected\":"; json += (_mqtt && _mqtt->connected() ? "true" : "false"); json += ",";
-  json += "\"mqttLastError\":\""; json += String((_mqtt && _mqtt->lastError()) ? _mqtt->lastError() : ""); json += "\",";
-  json += "\"backlight\":"; json += String(_s ? _s->backlight : 0); json += ",";
-  json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
-  json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
-  json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
-  json += "\"audioResponseMode\":"; json += String(_s ? _s->audioResponseMode : 0); json += ",";
-  json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
-  json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
-  json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
-  json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
-  json += "\"calibrationPointCount\":"; json += String(_s ? _s->calibrationPointCount : 3); json += ",";
-  json += "\"calibrationCaptureSec\":"; json += String(_s ? (_s->calibrationCaptureMs / 1000UL) : 3); json += ",";
-  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
-  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
-  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
-  json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
-  json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
-  json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
-  json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
-  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
-  json += "\"lvglIdlePct\":"; json += String(g_runtimeStats.lvglIdlePct); json += ",";
-  json += "\"lvglLoadPct\":"; json += String(g_runtimeStats.lvglLoadPct); json += ",";
-  json += "\"lvglUiWorkUs\":"; json += String(g_runtimeStats.uiWorkLastUs); json += ",";
-  json += "\"lvglUiWorkMaxUs\":"; json += String(g_runtimeStats.uiWorkMaxUs); json += ",";
-  json += "\"lvglHandlerUs\":"; json += String(g_runtimeStats.lvHandlerLastUs); json += ",";
-  json += "\"lvglHandlerMaxUs\":"; json += String(g_runtimeStats.lvHandlerMaxUs); json += ",";
-  json += "\"lvglObjCount\":"; json += String(g_runtimeStats.lvObjCount); json += ",";
-  json += "\"heapInternalFree\":"; json += String(g_runtimeStats.heapInternalFree); json += ",";
-  json += "\"heapInternalMin\":"; json += String(g_runtimeStats.heapInternalMin); json += ",";
-  json += "\"heapPsramFree\":"; json += String(g_runtimeStats.heapPsramFree); json += ",";
-  json += "\"heapPsramMin\":"; json += String(g_runtimeStats.heapPsramMin); json += ",";
-  json += "\"activePage\":\""; json += String(g_runtimeStats.activePage); json += "\",";
+  appendTimeJson(json, hasTime, tbuf);
+  appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
+  appendUiStateJson(json, _s, _history, true);
+  appendAudioMetricsJson(json, am);
+  appendRuntimeStatsJson(json, g_runtimeStats);
 
   json += "\"cal\":[";
   for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
@@ -252,8 +291,9 @@ String WebManager::statusJson() const {
 }
 
 String WebManager::liveMetricsJson() const {
-  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("");
-  int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
+  const bool wifiConnected = WiFi.isConnected();
+  String ip = wifiConnected ? WiFi.localIP().toString() : String("");
+  int rssi = wifiConnected ? WiFi.RSSI() : 0;
   const float mcuTempC = temperatureRead();
   const bool mcuTempOk = !isnan(mcuTempC);
   struct tm ti;
@@ -265,118 +305,15 @@ String WebManager::liveMetricsJson() const {
   String json;
   json.reserve(960);
   json += "{";
-  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
-  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
-  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
-  json += "\"backlight\":"; json += String(_s ? _s->backlight : 0); json += ",";
-  json += "\"greenMax\":"; json += String(_s ? _s->th.greenMax : 55); json += ",";
-  json += "\"orangeMax\":"; json += String(_s ? _s->th.orangeMax : 70); json += ",";
-  json += "\"historyMinutes\":"; json += String(_s ? _s->historyMinutes : 5); json += ",";
-  json += "\"audioResponseMode\":"; json += String(_s ? _s->audioResponseMode : 0); json += ",";
-  json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
-  json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
-  json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
-  json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
-  json += "\"calibrationCaptureSec\":"; json += String(_s ? (_s->calibrationCaptureMs / 1000UL) : 3); json += ",";
-  json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
-  json += "\"ip\":\""; json += ip; json += "\",";
-  json += "\"rssi\":"; json += String(rssi); json += ",";
-  json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
-  json += "\"buildDate\":\""; json += String(SOUNDPANEL7_BUILD_DATE); json += "\",";
-  json += "\"buildEnv\":\""; json += String(SOUNDPANEL7_BUILD_ENV); json += "\",";
-  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
-  json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
-  json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
-  json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
-  json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
-  json += "\"mqttConnected\":"; json += (_mqtt && _mqtt->connected() ? "true" : "false"); json += ",";
-  json += "\"mqttLastError\":\""; json += String((_mqtt && _mqtt->lastError()) ? _mqtt->lastError() : ""); json += "\",";
-  json += "\"rawRms\":"; json += String(am.rawRms, 2); json += ",";
-  json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
-  json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
-  json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
-  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
-  json += "\"lvglIdlePct\":"; json += String(g_runtimeStats.lvglIdlePct); json += ",";
-  json += "\"lvglLoadPct\":"; json += String(g_runtimeStats.lvglLoadPct); json += ",";
-  json += "\"lvglUiWorkUs\":"; json += String(g_runtimeStats.uiWorkLastUs); json += ",";
-  json += "\"lvglUiWorkMaxUs\":"; json += String(g_runtimeStats.uiWorkMaxUs); json += ",";
-  json += "\"lvglHandlerUs\":"; json += String(g_runtimeStats.lvHandlerLastUs); json += ",";
-  json += "\"lvglHandlerMaxUs\":"; json += String(g_runtimeStats.lvHandlerMaxUs); json += ",";
-  json += "\"lvglObjCount\":"; json += String(g_runtimeStats.lvObjCount); json += ",";
-  json += "\"heapInternalFree\":"; json += String(g_runtimeStats.heapInternalFree); json += ",";
-  json += "\"heapInternalMin\":"; json += String(g_runtimeStats.heapInternalMin); json += ",";
-  json += "\"heapPsramFree\":"; json += String(g_runtimeStats.heapPsramFree); json += ",";
-  json += "\"heapPsramMin\":"; json += String(g_runtimeStats.heapPsramMin); json += ",";
-  json += "\"activePage\":\""; json += String(g_runtimeStats.activePage); json += "\",";
+  appendAudioMetricsJson(json, am);
+  appendUiStateJson(json, _s, _history, false);
+  appendWifiJson(json, wifiConnected, ip, rssi);
+  appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
+  appendRuntimeStatsJson(json, g_runtimeStats);
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
   json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\"";
   json += "}";
   return json;
-}
-
-int WebManager::jsonInt(const String& body, const char* key, int def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-
-  bool neg = false;
-  if (p < (int)body.length() && body[p] == '-') {
-    neg = true;
-    p++;
-  }
-
-  long v = 0;
-  bool ok = false;
-  while (p < (int)body.length()) {
-    char c = body[p];
-    if (c < '0' || c > '9') break;
-    ok = true;
-    v = v * 10 + (c - '0');
-    p++;
-  }
-  if (!ok) return def;
-  return neg ? (int)-v : (int)v;
-}
-
-String WebManager::jsonStr(const String& body, const char* key, const String& def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  if (p >= (int)body.length() || body[p] != '"') return def;
-  p++;
-
-  String out;
-  out.reserve(64);
-
-  while (p < (int)body.length()) {
-    char c = body[p++];
-    if (c == '\\') {
-      if (p >= (int)body.length()) break;
-      char n = body[p++];
-      if (n == 'n') out += '\n';
-      else if (n == 't') out += '\t';
-      else out += n;
-      continue;
-    }
-    if (c == '"') break;
-    out += c;
-  }
-
-  if (out.length() == 0) return def;
-  return out;
-}
-
-bool WebManager::safeCopy(char* dst, size_t dstSize, const String& src) {
-  if (!dst || dstSize == 0) return false;
-  if (src.length() >= dstSize) return false;
-  memcpy(dst, src.c_str(), src.length() + 1);
-  return true;
 }
 
 void WebManager::applyBacklightNow(uint8_t percent) {
@@ -428,22 +365,19 @@ void WebManager::handleStatus() {
 }
 
 void WebManager::handleUiSave() {
-  if (!_store || !_s) {
-    replyText(500, "store/settings missing\n");
-    return;
-  }
+  if (!requireStoreAndSettingsText()) return;
 
   String body = _srv.arg("plain");
 
-  int bl = jsonInt(body, "backlight", (int)_s->backlight);
-  int g  = jsonInt(body, "greenMax",  (int)_s->th.greenMax);
-  int o  = jsonInt(body, "orangeMax", (int)_s->th.orangeMax);
-  int hm = jsonInt(body, "historyMinutes", (int)_s->historyMinutes);
-  int arm = jsonInt(body, "audioResponseMode", (int)_s->audioResponseMode);
-  int whs = jsonInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / 1000UL));
-  int chs = jsonInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / 1000UL));
-  int calCount = jsonInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
-  int ccs = jsonInt(body, "calibrationCaptureSec", (int)(_s->calibrationCaptureMs / 1000UL));
+  int bl = sp7json::parseInt(body, "backlight", (int)_s->backlight);
+  int g  = sp7json::parseInt(body, "greenMax",  (int)_s->th.greenMax);
+  int o  = sp7json::parseInt(body, "orangeMax", (int)_s->th.orangeMax);
+  int hm = sp7json::parseInt(body, "historyMinutes", (int)_s->historyMinutes);
+  int arm = sp7json::parseInt(body, "audioResponseMode", (int)_s->audioResponseMode);
+  int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
+  int chs = sp7json::parseInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / MS_PER_SECOND));
+  int calCount = sp7json::parseInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
+  int ccs = sp7json::parseInt(body, "calibrationCaptureSec", (int)(_s->calibrationCaptureMs / MS_PER_SECOND));
 
   if (bl < 0) bl = 0;
   if (bl > 100) bl = 100;
@@ -459,7 +393,7 @@ void WebManager::handleUiSave() {
   if (whs > 60) whs = 60;
   if (chs < 0) chs = 0;
   if (chs > 60) chs = 60;
-  calCount = (calCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  calCount = normalizedCalibrationPointCount((uint8_t)calCount);
   if (ccs < 1) ccs = 1;
   if (ccs > 30) ccs = 30;
 
@@ -468,10 +402,10 @@ void WebManager::handleUiSave() {
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
   _s->audioResponseMode = (uint8_t)arm;
-  _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
-  _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
+  _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
+  _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
   _s->calibrationPointCount = (uint8_t)calCount;
-  _s->calibrationCaptureMs = (uint32_t)ccs * 1000UL;
+  _s->calibrationCaptureMs = (uint32_t)ccs * MS_PER_SECOND;
   if (_history) _history->settingsChanged();
 
   _store->save(*_s);
@@ -479,59 +413,50 @@ void WebManager::handleUiSave() {
 
   Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
                  bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
-  replyJson(200, "{\"ok\":true}\n");
+  replyOkJson(true);
 }
 
 void WebManager::handleCalPoint() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
-  int index = jsonInt(body, "index", -1);
-  float refDb = jsonFloatLocal(body, "refDb", -1.0f);
+  int index = sp7json::parseInt(body, "index", -1);
+  float refDb = sp7json::parseFloat(body, "refDb", -1.0f);
 
   if (index < 0 || index >= _s->calibrationPointCount) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad index\"}");
+    replyErrorJson(400, "bad index");
     return;
   }
   if (refDb <= 0.0f || refDb > 140.0f) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad refDb\"}");
+    replyErrorJson(400, "bad refDb");
     return;
   }
 
   if (!g_audio.captureCalibrationPoint(*_s, (uint8_t)index, refDb)) {
-    replyJson(500, "{\"ok\":false,\"error\":\"capture failed\"}");
+    replyErrorJson(500, "capture failed");
     return;
   }
 
   _store->save(*_s);
   Serial0.printf("[WEB] CAL point %d/%d saved @ %.1f dB\n", index + 1, _s->calibrationPointCount, refDb);
-  replyJson(200, "{\"ok\":true}");
+  replyOkJson();
 }
 
 void WebManager::handleCalClear() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   g_audio.clearCalibration(*_s);
   _store->save(*_s);
   Serial0.println("[WEB] CAL cleared");
-  replyJson(200, "{\"ok\":true}");
+  replyOkJson();
 }
 
 void WebManager::handleCalMode() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
-  int pointCount = jsonInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
-  pointCount = (pointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  int pointCount = sp7json::parseInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
+  pointCount = normalizedCalibrationPointCount((uint8_t)pointCount);
 
   if ((uint8_t)pointCount != _s->calibrationPointCount) {
     _s->calibrationPointCount = (uint8_t)pointCount;
@@ -540,75 +465,69 @@ void WebManager::handleCalMode() {
   }
 
   Serial0.printf("[WEB] CAL mode set to %d points\n", pointCount);
-  replyJson(200, "{\"ok\":true}");
+  replyOkJson();
 }
 
 void WebManager::handleTimeGet() {
-  if (!_s) {
-    replyText(500, "settings missing\n");
-    return;
-  }
+  if (!requireSettingsText()) return;
 
   String json;
   json.reserve(256);
   json += "{";
-  json += "\"tz\":\""; json += String(_s->tz); json += "\",";
-  json += "\"ntpServer\":\""; json += String(_s->ntpServer); json += "\",";
+  sp7json::appendEscapedField(json, "tz", _s->tz);
+  sp7json::appendEscapedField(json, "ntpServer", _s->ntpServer);
   json += "\"ntpSyncIntervalMs\":"; json += String(_s->ntpSyncIntervalMs); json += ",";
-  json += "\"ntpSyncMinutes\":"; json += String(_s->ntpSyncIntervalMs / 60000UL); json += ",";
-  json += "\"hostname\":\""; json += String(_s->hostname); json += "\"";
+  json += "\"ntpSyncMinutes\":"; json += String(_s->ntpSyncIntervalMs / MS_PER_MINUTE); json += ",";
+  sp7json::appendEscapedField(json, "hostname", _s->hostname, false);
   json += "}";
 
   replyJson(200, json);
 }
 
 void WebManager::handleTimeSave() {
-  if (!_store || !_s) {
-    replyText(500, "store/settings missing\n");
-    return;
-  }
+  if (!requireStoreAndSettingsText()) return;
 
   String body = _srv.arg("plain");
 
-  String tz  = jsonStr(body, "tz", String(_s->tz));
-  String ntp = jsonStr(body, "ntpServer", String(_s->ntpServer));
-  String hn  = jsonStr(body, "hostname", String(_s->hostname));
-  int ntpSyncMinutes = jsonInt(body, "ntpSyncMinutes", (int)(_s->ntpSyncIntervalMs / 60000UL));
+  String tz  = sp7json::parseString(body, "tz", String(_s->tz), false);
+  String ntp = sp7json::parseString(body, "ntpServer", String(_s->ntpServer), false);
+  String hn  = sp7json::parseString(body, "hostname", String(_s->hostname), false);
+  int ntpSyncMinutes = sp7json::parseInt(body, "ntpSyncMinutes", (int)(_s->ntpSyncIntervalMs / MS_PER_MINUTE));
 
   tz.trim();
   ntp.trim();
   hn.trim();
 
   if (tz.length() < 3) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad tz\"}\n");
+    replyErrorJson(400, "bad tz", true);
     return;
   }
   if (ntp.length() < 3) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad ntpServer\"}\n");
+    replyErrorJson(400, "bad ntpServer", true);
     return;
   }
   if (hn.length() < 1) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad hostname\"}\n");
+    replyErrorJson(400, "bad hostname", true);
     return;
   }
   if (ntpSyncMinutes < 1 || ntpSyncMinutes > 1440) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad ntpSyncMinutes\"}\n");
+    replyErrorJson(400, "bad ntpSyncMinutes", true);
     return;
   }
 
-  if (!safeCopy(_s->tz, sizeof(_s->tz), tz)) {
-    replyJson(400, "{\"ok\":false,\"error\":\"tz too long\"}\n");
+  if (!sp7json::safeCopy(_s->tz, sizeof(_s->tz), tz)) {
+    replyErrorJson(400, "tz too long", true);
     return;
   }
-  if (!safeCopy(_s->ntpServer, sizeof(_s->ntpServer), ntp)) {
-    replyJson(400, "{\"ok\":false,\"error\":\"ntpServer too long\"}\n");
+  if (!sp7json::safeCopy(_s->ntpServer, sizeof(_s->ntpServer), ntp)) {
+    replyErrorJson(400, "ntpServer too long", true);
     return;
   }
-  if (!safeCopy(_s->hostname, sizeof(_s->hostname), hn)) {
-    replyJson(400, "{\"ok\":false,\"error\":\"hostname too long\"}\n");
+  if (!sp7json::safeCopy(_s->hostname, sizeof(_s->hostname), hn)) {
+    replyErrorJson(400, "hostname too long", true);
     return;
   }
-  _s->ntpSyncIntervalMs = (uint32_t)ntpSyncMinutes * 60000UL;
+  _s->ntpSyncIntervalMs = (uint32_t)ntpSyncMinutes * MS_PER_MINUTE;
 
   _store->save(*_s);
   applySettingsRuntimeState();
@@ -616,103 +535,85 @@ void WebManager::handleTimeSave() {
   Serial0.printf("[WEB] TIME saved: tz='%s' ntp='%s' interval=%lu ms hostname='%s'\n",
                  _s->tz, _s->ntpServer, (unsigned long)_s->ntpSyncIntervalMs, _s->hostname);
 
-  replyJson(200, "{\"ok\":true}\n");
+  replyOkJson(true);
 }
 
 void WebManager::handleConfigExport() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   replyJson(200, _store->exportJson(*_s));
 }
 
 void WebManager::handleConfigImport() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   String err;
   String body = _srv.arg("plain");
   if (!_store->importJson(*_s, body, &err)) {
-    String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
-    replyJson(400, json);
+    replyErrorJson(400, err);
     return;
   }
 
   _store->save(*_s);
   applySettingsRuntimeState();
   pushLiveMetrics(true);
-  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+  replyOkJsonRebootRecommended();
 }
 
 void WebManager::handleConfigBackup() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   if (!_store->saveBackup(*_s)) {
-    replyJson(500, "{\"ok\":false,\"error\":\"backup failed\"}");
+    replyErrorJson(500, "backup failed");
     return;
   }
 
-  replyJson(200, "{\"ok\":true}");
+  replyOkJson();
 }
 
 void WebManager::handleConfigRestore() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   String err;
   if (!_store->restoreBackup(*_s, &err)) {
-    String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
-    replyJson(400, json);
+    replyErrorJson(400, err);
     return;
   }
 
   _store->save(*_s);
   applySettingsRuntimeState();
   pushLiveMetrics(true);
-  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+  replyOkJsonRebootRecommended();
 }
 
 void WebManager::handleConfigResetPartial() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
-  String scope = jsonStr(body, "scope", "");
+  String scope = sp7json::parseString(body, "scope", "", false);
   scope.trim();
   scope.toLowerCase();
 
   String err;
   if (!_store->resetSection(*_s, scope, &err)) {
-    String json = "{\"ok\":false,\"error\":\"" + err + "\"}";
-    replyJson(400, json);
+    replyErrorJson(400, err);
     return;
   }
 
   _store->save(*_s);
   applySettingsRuntimeState();
   pushLiveMetrics(true);
-  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+  replyOkJsonRebootRecommended();
 }
 
 void WebManager::handleReboot() {
-  replyJson(200, "{\"ok\":true}\n");
+  replyOkJson(true);
   delay(150);
   ESP.restart();
 }
 
 void WebManager::handleShutdown() {
-  replyJson(200, "{\"ok\":true}\n");
+  replyOkJson(true);
   delay(150);
 
   applyBacklightNow(0);
@@ -734,23 +635,20 @@ void WebManager::handleShutdown() {
 
 void WebManager::handleFactoryReset() {
   if (_store) _store->factoryReset();
-  replyJson(200, "{\"ok\":true}\n");
+  replyOkJson(true);
   delay(150);
   ESP.restart();
 }
 
 void WebManager::handleOtaGet() {
-  if (!_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"settings missing\"}");
-    return;
-  }
+  if (!requireSettingsJson()) return;
 
   String json;
   json.reserve(256);
   json += "{";
   json += "\"enabled\":"; json += (_s->otaEnabled ? "true" : "false"); json += ",";
   json += "\"port\":"; json += String(_s->otaPort); json += ",";
-  json += "\"hostname\":\""; json += String(_s->otaHostname); json += "\",";
+  sp7json::appendEscapedField(json, "hostname", _s->otaHostname);
   json += "\"passwordConfigured\":"; json += (strlen(_s->otaPassword) ? "true" : "false");
   json += "}";
 
@@ -758,33 +656,30 @@ void WebManager::handleOtaGet() {
 }
 
 void WebManager::handleOtaSave() {
-  if (!_store || !_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-    return;
-  }
+  if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
 
-  int enabled = jsonInt(body, "enabled", _s->otaEnabled ? 1 : 0);
-  int port = jsonInt(body, "port", (int)_s->otaPort);
-  String hn = jsonStr(body, "hostname", String(_s->otaHostname));
-  String pwd = jsonStr(body, "password", String(_s->otaPassword));
+  int enabled = sp7json::parseInt(body, "enabled", _s->otaEnabled ? 1 : 0);
+  int port = sp7json::parseInt(body, "port", (int)_s->otaPort);
+  String hn = sp7json::parseString(body, "hostname", String(_s->otaHostname), false);
+  String pwd = sp7json::parseString(body, "password", String(_s->otaPassword), false);
 
   hn.trim();
   pwd.trim();
 
   if (port < 1 || port > 65535) {
-    replyJson(400, "{\"ok\":false,\"error\":\"bad port\"}");
+    replyErrorJson(400, "bad port");
     return;
   }
 
-  if (!safeCopy(_s->otaHostname, sizeof(_s->otaHostname), hn)) {
-    replyJson(400, "{\"ok\":false,\"error\":\"hostname too long\"}");
+  if (!sp7json::safeCopy(_s->otaHostname, sizeof(_s->otaHostname), hn)) {
+    replyErrorJson(400, "hostname too long");
     return;
   }
 
-  if (!safeCopy(_s->otaPassword, sizeof(_s->otaPassword), pwd)) {
-    replyJson(400, "{\"ok\":false,\"error\":\"password too long\"}");
+  if (!sp7json::safeCopy(_s->otaPassword, sizeof(_s->otaPassword), pwd)) {
+    replyErrorJson(400, "password too long");
     return;
   }
 
@@ -799,24 +694,21 @@ void WebManager::handleOtaSave() {
                  _s->otaHostname,
                  strlen(_s->otaPassword) ? "<set>" : "<empty>");
 
-  replyJson(200, "{\"ok\":true,\"rebootRequired\":true}");
+  replyOkJsonRebootRequired();
 }
 
 void WebManager::handleMqttGet() {
-  if (!_s) {
-    replyJson(500, "{\"ok\":false,\"error\":\"settings missing\"}");
-    return;
-  }
+  if (!requireSettingsJson()) return;
 
   String json;
   json.reserve(512);
   json += "{";
   json += "\"enabled\":"; json += (_s->mqttEnabled ? "true" : "false"); json += ",";
-  json += "\"host\":\""; json += String(_s->mqttHost); json += "\",";
+  sp7json::appendEscapedField(json, "host", _s->mqttHost);
   json += "\"port\":"; json += String(_s->mqttPort); json += ",";
-  json += "\"username\":\""; json += String(_s->mqttUsername); json += "\",";
-  json += "\"clientId\":\""; json += String(_s->mqttClientId); json += "\",";
-  json += "\"baseTopic\":\""; json += String(_s->mqttBaseTopic); json += "\",";
+  sp7json::appendEscapedField(json, "username", _s->mqttUsername);
+  sp7json::appendEscapedField(json, "clientId", _s->mqttClientId);
+  sp7json::appendEscapedField(json, "baseTopic", _s->mqttBaseTopic);
   json += "\"publishPeriodMs\":"; json += String(_s->mqttPublishPeriodMs); json += ",";
   json += "\"retain\":"; json += (_s->mqttRetain ? "true" : "false"); json += ",";
   json += "\"passwordConfigured\":"; json += (strlen(_s->mqttPassword) ? "true" : "false");
@@ -828,25 +720,23 @@ void WebManager::handleMqttGet() {
 void WebManager::handleMqttSave() {
   Serial0.println("[WEB] /api/mqtt POST received");
 
-  if (!_store || !_s) {
+  if (!requireStoreAndSettingsJson()) {
     Serial0.println("[WEB] MQTT save failed: store/settings missing");
-    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
     return;
   }
 
   String body = _srv.arg("plain");
-  Serial0.printf("[WEB] MQTT raw body: %s\n", body.c_str());
 
-  int enabled = jsonInt(body, "enabled", _s->mqttEnabled ? 1 : 0);
-  int port = jsonInt(body, "port", (int)_s->mqttPort);
-  int publishMs = jsonInt(body, "publishPeriodMs", (int)_s->mqttPublishPeriodMs);
-  int retain = jsonInt(body, "retain", _s->mqttRetain ? 1 : 0);
+  int enabled = sp7json::parseInt(body, "enabled", _s->mqttEnabled ? 1 : 0);
+  int port = sp7json::parseInt(body, "port", (int)_s->mqttPort);
+  int publishMs = sp7json::parseInt(body, "publishPeriodMs", (int)_s->mqttPublishPeriodMs);
+  int retain = sp7json::parseInt(body, "retain", _s->mqttRetain ? 1 : 0);
 
-  String host = jsonStr(body, "host", String(_s->mqttHost));
-  String username = jsonStr(body, "username", String(_s->mqttUsername));
-  String password = jsonStr(body, "password", String(_s->mqttPassword));
-  String clientId = jsonStr(body, "clientId", String(_s->mqttClientId));
-  String baseTopic = jsonStr(body, "baseTopic", String(_s->mqttBaseTopic));
+  String host = sp7json::parseString(body, "host", String(_s->mqttHost), false);
+  String username = sp7json::parseString(body, "username", String(_s->mqttUsername), false);
+  String password = sp7json::parseString(body, "password", String(_s->mqttPassword), false);
+  String clientId = sp7json::parseString(body, "clientId", String(_s->mqttClientId), false);
+  String baseTopic = sp7json::parseString(body, "baseTopic", String(_s->mqttBaseTopic), false);
 
   host.trim();
   username.trim();
@@ -854,55 +744,55 @@ void WebManager::handleMqttSave() {
   clientId.trim();
   baseTopic.trim();
 
-  if (enabled) {
+    if (enabled) {
     if (host.length() < 1) {
       Serial0.println("[WEB] MQTT save error: bad host");
-      replyJson(400, "{\"ok\":false,\"error\":\"bad host\"}");
+      replyErrorJson(400, "bad host");
       return;
     }
     if (port < 1 || port > 65535) {
       Serial0.println("[WEB] MQTT save error: bad port");
-      replyJson(400, "{\"ok\":false,\"error\":\"bad port\"}");
+      replyErrorJson(400, "bad port");
       return;
     }
     if (clientId.length() < 1) {
       Serial0.println("[WEB] MQTT save error: bad clientId");
-      replyJson(400, "{\"ok\":false,\"error\":\"bad clientId\"}");
+      replyErrorJson(400, "bad clientId");
       return;
     }
     if (baseTopic.length() < 1) {
       Serial0.println("[WEB] MQTT save error: bad baseTopic");
-      replyJson(400, "{\"ok\":false,\"error\":\"bad baseTopic\"}");
+      replyErrorJson(400, "bad baseTopic");
       return;
     }
   }
 
-  if (publishMs < 250) publishMs = 250;
-  if (publishMs > 60000) publishMs = 60000;
+  if (publishMs < MIN_MQTT_PUBLISH_PERIOD_MS) publishMs = MIN_MQTT_PUBLISH_PERIOD_MS;
+  if (publishMs > MAX_MQTT_PUBLISH_PERIOD_MS) publishMs = MAX_MQTT_PUBLISH_PERIOD_MS;
 
-  if (!safeCopy(_s->mqttHost, sizeof(_s->mqttHost), host)) {
+  if (!sp7json::safeCopy(_s->mqttHost, sizeof(_s->mqttHost), host)) {
     Serial0.println("[WEB] MQTT save error: host too long");
-    replyJson(400, "{\"ok\":false,\"error\":\"host too long\"}");
+    replyErrorJson(400, "host too long");
     return;
   }
-  if (!safeCopy(_s->mqttUsername, sizeof(_s->mqttUsername), username)) {
+  if (!sp7json::safeCopy(_s->mqttUsername, sizeof(_s->mqttUsername), username)) {
     Serial0.println("[WEB] MQTT save error: username too long");
-    replyJson(400, "{\"ok\":false,\"error\":\"username too long\"}");
+    replyErrorJson(400, "username too long");
     return;
   }
-  if (!safeCopy(_s->mqttPassword, sizeof(_s->mqttPassword), password)) {
+  if (!sp7json::safeCopy(_s->mqttPassword, sizeof(_s->mqttPassword), password)) {
     Serial0.println("[WEB] MQTT save error: password too long");
-    replyJson(400, "{\"ok\":false,\"error\":\"password too long\"}");
+    replyErrorJson(400, "password too long");
     return;
   }
-  if (!safeCopy(_s->mqttClientId, sizeof(_s->mqttClientId), clientId)) {
+  if (!sp7json::safeCopy(_s->mqttClientId, sizeof(_s->mqttClientId), clientId)) {
     Serial0.println("[WEB] MQTT save error: clientId too long");
-    replyJson(400, "{\"ok\":false,\"error\":\"clientId too long\"}");
+    replyErrorJson(400, "clientId too long");
     return;
   }
-  if (!safeCopy(_s->mqttBaseTopic, sizeof(_s->mqttBaseTopic), baseTopic)) {
+  if (!sp7json::safeCopy(_s->mqttBaseTopic, sizeof(_s->mqttBaseTopic), baseTopic)) {
     Serial0.println("[WEB] MQTT save error: baseTopic too long");
-    replyJson(400, "{\"ok\":false,\"error\":\"baseTopic too long\"}");
+    replyErrorJson(400, "baseTopic too long");
     return;
   }
 
@@ -920,7 +810,7 @@ void WebManager::handleMqttSave() {
                  _s->mqttClientId,
                  _s->mqttBaseTopic);
 
-  replyJson(200, "{\"ok\":true,\"rebootRecommended\":true}");
+  replyOkJsonRebootRecommended();
 }
 
 void WebManager::handleRoot() {
@@ -2391,6 +2281,79 @@ R"HTML(
     return await res.json();
   }
 
+  function setToast(id, message) {
+    $(id).textContent = message;
+  }
+
+  function setToastError(id, err) {
+    setToast(id, `Erreur: ${err.message}`);
+  }
+
+  function setFieldValue(id, value, fallback = "") {
+    $(id).value = value || fallback;
+  }
+
+  function setNumericFieldValue(id, value, fallback) {
+    $(id).value = value || fallback;
+  }
+
+  function setBoolSelectValue(id, enabled) {
+    $(id).value = enabled ? "1" : "0";
+  }
+
+  function getFieldValue(id) {
+    return $(id).value || "";
+  }
+
+  function getTrimmedValue(id) {
+    return getFieldValue(id).trim();
+  }
+
+  function getIntValue(id, fallback = 0) {
+    return parseInt(getFieldValue(id) || String(fallback), 10);
+  }
+
+  function getNumberValue(id, fallback = 0) {
+    return Number(getFieldValue(id) || fallback);
+  }
+
+  function resetPasswordField(id, configuredPlaceholder, emptyPlaceholder, configured) {
+    $(id).value = "";
+    $(id).placeholder = configured ? configuredPlaceholder : emptyPlaceholder;
+  }
+
+  async function postAction(url, successMessage, toastId = "actionsToast") {
+    try {
+      await apiPost(url, {});
+      setToast(toastId, successMessage);
+    } catch (err) {
+      setToastError(toastId, err);
+    }
+  }
+
+  async function runToastRequest(toastId, pendingMessage, request, successMessage, afterSuccess = null) {
+    setToast(toastId, pendingMessage);
+    try {
+      const result = await request();
+      setToast(toastId, typeof successMessage === "function" ? successMessage(result) : successMessage);
+      if (afterSuccess) await afterSuccess(result);
+      return result;
+    } catch (err) {
+      setToastError(toastId, err);
+      return null;
+    }
+  }
+
+  async function runConfigRequest(pendingMessage, request, successMessage, reloadPanels = false) {
+    return await runToastRequest(
+      "configToast",
+      pendingMessage,
+      request,
+      successMessage,
+      reloadPanels ? () => refreshSettingsPanels() : () => refreshStatus()
+    );
+  }
+
   async function refreshStatus() {
     try {
       const st = await apiGet("/api/status");
@@ -2439,22 +2402,22 @@ R"HTML(
   async function saveUi() {
     const payload = {
       backlight: $("bl").classList.contains("active") ? 100 : 0,
-      greenMax: Number($("g").value),
-      orangeMax: Number($("o").value),
-      historyMinutes: Number($("hist").value),
+      greenMax: getNumberValue("g"),
+      orangeMax: getNumberValue("o"),
+      historyMinutes: getNumberValue("hist"),
       audioResponseMode: state.uiResponseMode,
-      warningHoldSec: Number($("warnHoldSec").value || 0),
-      criticalHoldSec: Number($("critHoldSec").value || 0),
-      calibrationCaptureSec: Number($("calCaptureSec").value || 3),
+      warningHoldSec: getNumberValue("warnHoldSec", 0),
+      criticalHoldSec: getNumberValue("critHoldSec", 0),
+      calibrationCaptureSec: getNumberValue("calCaptureSec", 3),
     };
 
     try {
       await apiPost("/api/ui", payload);
-      $("uiToast").textContent = "UI sauvee.";
+      setToast("uiToast", "UI sauvee.");
       state.uiDirty = false;
       await refreshStatus();
     } catch (err) {
-      $("uiToast").textContent = `Erreur: ${err.message}`;
+      setToastError("uiToast", err);
     }
   }
 
@@ -2473,16 +2436,16 @@ R"HTML(
 
     $("bl").classList.toggle("active", nextOn);
     syncUiLabels();
-    $("uiToast").textContent = "Sauvegarde...";
+    setToast("uiToast", "Sauvegarde...");
 
     try {
       await apiPost("/api/ui", { backlight: nextOn ? 100 : 0 });
-      $("uiToast").textContent = "Backlight sauve.";
+      setToast("uiToast", "Backlight sauve.");
       await refreshStatus();
     } catch (err) {
       $("bl").classList.toggle("active", wasOn);
       syncUiLabels();
-      $("uiToast").textContent = `Erreur: ${err.message}`;
+      setToastError("uiToast", err);
     }
   }
 
@@ -2505,22 +2468,22 @@ R"HTML(
   }
 
   async function exportConfig() {
-    $("configToast").textContent = "Export...";
+    setToast("configToast", "Export...");
     try {
       const cfg = await apiGet("/api/config/export");
       const text = JSON.stringify(cfg, null, 2);
       $("configJsonBox").value = text;
       downloadTextFile(exportFilename(), text);
-      $("configToast").textContent = "Config exportee.";
+      setToast("configToast", "Config exportee.");
     } catch (err) {
-      $("configToast").textContent = `Erreur: ${err.message}`;
+      setToastError("configToast", err);
     }
   }
 
   async function importConfig() {
     const raw = ($("configJsonBox").value || "").trim();
     if (!raw) {
-      $("configToast").textContent = "Colle un JSON ou charge un fichier.";
+      setToast("configToast", "Colle un JSON ou charge un fichier.");
       return;
     }
 
@@ -2528,29 +2491,20 @@ R"HTML(
     try {
       payload = JSON.parse(raw);
     } catch (err) {
-      $("configToast").textContent = `JSON invalide: ${err.message}`;
+      setToast("configToast", `JSON invalide: ${err.message}`);
       return;
     }
 
-    $("configToast").textContent = "Import...";
-    try {
-      const r = await apiPost("/api/config/import", payload);
-      $("configToast").textContent = r.rebootRecommended ? "Config importee. Reboot recommande." : "Config importee.";
-      await refreshSettingsPanels();
-    } catch (err) {
-      $("configToast").textContent = `Erreur: ${err.message}`;
-    }
+    await runConfigRequest(
+      "Import...",
+      () => apiPost("/api/config/import", payload),
+      (r) => r.rebootRecommended ? "Config importee. Reboot recommande." : "Config importee.",
+      true
+    );
   }
 
   async function backupConfig() {
-    $("configToast").textContent = "Backup...";
-    try {
-      await apiPost("/api/config/backup", {});
-      $("configToast").textContent = "Backup enregistre.";
-      await refreshStatus();
-    } catch (err) {
-      $("configToast").textContent = `Erreur: ${err.message}`;
-    }
+    await runConfigRequest("Backup...", () => apiPost("/api/config/backup", {}), "Backup enregistre.");
   }
 
   async function restoreConfig() {
@@ -2558,131 +2512,106 @@ R"HTML(
     if (!confirm(backupDate === "--"
       ? "Restaurer le dernier backup ?"
       : `Restaurer le dernier backup ?\n${backupDate}`)) return;
-    $("configToast").textContent = "Restore...";
-    try {
-      const r = await apiPost("/api/config/restore", {});
-      $("configToast").textContent = r.rebootRecommended ? "Backup restaure. Reboot recommande." : "Backup restaure.";
-      await refreshSettingsPanels();
-    } catch (err) {
-      $("configToast").textContent = `Erreur: ${err.message}`;
-    }
+    await runConfigRequest(
+      "Restore...",
+      () => apiPost("/api/config/restore", {}),
+      (r) => r.rebootRecommended ? "Backup restaure. Reboot recommande." : "Backup restaure.",
+      true
+    );
   }
 
   async function partialReset() {
     const scope = $("configResetScope").value;
     if (!confirm(`Reset partiel ${scope} ?`)) return;
-    $("configToast").textContent = "Reset...";
-    try {
-      const r = await apiPost("/api/config/reset_partial", { scope });
-      $("configToast").textContent = r.rebootRecommended ? `Section ${scope} reset. Reboot recommande.` : `Section ${scope} reset.`;
-      await refreshSettingsPanels();
-    } catch (err) {
-      $("configToast").textContent = `Erreur: ${err.message}`;
-    }
+    await runConfigRequest(
+      "Reset...",
+      () => apiPost("/api/config/reset_partial", { scope }),
+      (r) => r.rebootRecommended ? `Section ${scope} reset. Reboot recommande.` : `Section ${scope} reset.`,
+      true
+    );
   }
 
   async function loadTimeSettings() {
     try {
       const t = await apiGet("/api/time");
-      $("tzAdv").value = t.tz || "";
-      $("ntpServerAdv").value = t.ntpServer || "";
-      $("ntpSyncMinAdv").value = String(t.ntpSyncMinutes || 180);
-      $("hostnameAdv").value = t.hostname || "";
+      setFieldValue("tzAdv", t.tz);
+      setFieldValue("ntpServerAdv", t.ntpServer);
+      setNumericFieldValue("ntpSyncMinAdv", String(t.ntpSyncMinutes || 180), 180);
+      setFieldValue("hostnameAdv", t.hostname);
     } catch (err) {
-      $("toastTimeAdv").textContent = `Erreur: ${err.message}`;
+      setToastError("toastTimeAdv", err);
     }
   }
 
   async function saveTimeSettings() {
-    $("toastTimeAdv").textContent = "Sauvegarde...";
-    try {
-      await apiPost("/api/time", {
-        tz: $("tzAdv").value.trim(),
-        ntpServer: $("ntpServerAdv").value.trim(),
-        ntpSyncMinutes: parseInt($("ntpSyncMinAdv").value, 10),
-        hostname: $("hostnameAdv").value.trim()
-      });
-      $("toastTimeAdv").textContent = "Heure sauvee.";
-      await refreshStatus();
-    } catch (err) {
-      $("toastTimeAdv").textContent = `Erreur: ${err.message}`;
-    }
+    await runToastRequest("toastTimeAdv", "Sauvegarde...", () => apiPost("/api/time", {
+        tz: getTrimmedValue("tzAdv"),
+        ntpServer: getTrimmedValue("ntpServerAdv"),
+        ntpSyncMinutes: getIntValue("ntpSyncMinAdv"),
+        hostname: getTrimmedValue("hostnameAdv")
+      }), "Heure sauvee.", () => refreshStatus());
   }
 
   async function loadOtaSettings() {
     try {
       const o = await apiGet("/api/ota");
-      $("otaEnabledAdv").value = o.enabled ? "1" : "0";
-      $("otaHostnameAdv").value = o.hostname || "";
-      $("otaPortAdv").value = o.port || 3232;
-      $("otaPasswordAdv").value = "";
-      $("otaPasswordAdv").placeholder = o.passwordConfigured ? "********" : "laisser vide = aucun mot de passe";
+      setBoolSelectValue("otaEnabledAdv", o.enabled);
+      setFieldValue("otaHostnameAdv", o.hostname);
+      setNumericFieldValue("otaPortAdv", o.port, 3232);
+      resetPasswordField("otaPasswordAdv", "********", "laisser vide = aucun mot de passe", o.passwordConfigured);
     } catch (err) {
-      $("toastOtaAdv").textContent = `Erreur: ${err.message}`;
+      setToastError("toastOtaAdv", err);
     }
   }
 
   async function saveOtaSettings() {
-    $("toastOtaAdv").textContent = "Sauvegarde...";
-    try {
-      const r = await apiPost("/api/ota", {
-        enabled: parseInt($("otaEnabledAdv").value, 10),
-        hostname: $("otaHostnameAdv").value.trim(),
-        port: parseInt($("otaPortAdv").value, 10),
-        password: $("otaPasswordAdv").value
-      });
-      $("toastOtaAdv").textContent = r.rebootRequired ? "OTA sauvee. Reboot requis." : "OTA sauvee.";
-    } catch (err) {
-      $("toastOtaAdv").textContent = `Erreur: ${err.message}`;
-    }
+    await runToastRequest("toastOtaAdv", "Sauvegarde...", () => apiPost("/api/ota", {
+        enabled: getIntValue("otaEnabledAdv"),
+        hostname: getTrimmedValue("otaHostnameAdv"),
+        port: getIntValue("otaPortAdv"),
+        password: getFieldValue("otaPasswordAdv")
+      }), (r) => r.rebootRequired ? "OTA sauvee. Reboot requis." : "OTA sauvee.");
   }
 
   async function loadMqttSettings() {
     try {
       const m = await apiGet("/api/mqtt");
-      $("mqttEnabledAdv").value = m.enabled ? "1" : "0";
-      $("mqttHostAdv").value = m.host || "";
-      $("mqttPortAdv").value = m.port || 1883;
-      $("mqttUsernameAdv").value = m.username || "";
-      $("mqttPasswordAdv").value = "";
-      $("mqttPasswordAdv").placeholder = m.passwordConfigured ? "********" : "laisser vide si non utilise";
-      $("mqttClientIdAdv").value = m.clientId || "soundpanel7";
-      $("mqttBaseTopicAdv").value = m.baseTopic || "soundpanel7";
-      $("mqttPublishPeriodMsAdv").value = m.publishPeriodMs || 1000;
-      $("mqttRetainAdv").value = m.retain ? "1" : "0";
+      setBoolSelectValue("mqttEnabledAdv", m.enabled);
+      setFieldValue("mqttHostAdv", m.host);
+      setNumericFieldValue("mqttPortAdv", m.port, 1883);
+      setFieldValue("mqttUsernameAdv", m.username);
+      resetPasswordField("mqttPasswordAdv", "********", "laisser vide si non utilise", m.passwordConfigured);
+      setFieldValue("mqttClientIdAdv", m.clientId, "soundpanel7");
+      setFieldValue("mqttBaseTopicAdv", m.baseTopic, "soundpanel7");
+      setNumericFieldValue("mqttPublishPeriodMsAdv", m.publishPeriodMs, 1000);
+      setBoolSelectValue("mqttRetainAdv", m.retain);
     } catch (err) {
-      $("toastMqttAdv").textContent = `Erreur: ${err.message}`;
+      setToastError("toastMqttAdv", err);
     }
   }
 
   async function saveMqttSettings() {
-    $("toastMqttAdv").textContent = "Sauvegarde...";
-    try {
-      const r = await apiPost("/api/mqtt", {
-        enabled: parseInt($("mqttEnabledAdv").value || "0", 10),
-        host: ($("mqttHostAdv").value || "").trim(),
-        port: parseInt($("mqttPortAdv").value || "1883", 10),
-        username: ($("mqttUsernameAdv").value || "").trim(),
-        password: ($("mqttPasswordAdv").value || ""),
-        clientId: ($("mqttClientIdAdv").value || "").trim(),
-        baseTopic: ($("mqttBaseTopicAdv").value || "").trim(),
-        publishPeriodMs: parseInt($("mqttPublishPeriodMsAdv").value || "1000", 10),
-        retain: parseInt($("mqttRetainAdv").value || "0", 10)
-      });
-      $("toastMqttAdv").textContent = r.rebootRecommended ? "MQTT sauve. Reboot recommande." : "MQTT sauve.";
-    } catch (err) {
-      $("toastMqttAdv").textContent = `Erreur: ${err.message}`;
-    }
+    await runToastRequest("toastMqttAdv", "Sauvegarde...", () => apiPost("/api/mqtt", {
+        enabled: getIntValue("mqttEnabledAdv", 0),
+        host: getTrimmedValue("mqttHostAdv"),
+        port: getIntValue("mqttPortAdv", 1883),
+        username: getTrimmedValue("mqttUsernameAdv"),
+        password: getFieldValue("mqttPasswordAdv"),
+        clientId: getTrimmedValue("mqttClientIdAdv"),
+        baseTopic: getTrimmedValue("mqttBaseTopicAdv"),
+        publishPeriodMs: getIntValue("mqttPublishPeriodMsAdv", 1000),
+        retain: getIntValue("mqttRetainAdv", 0)
+      }), (r) => r.rebootRecommended ? "MQTT sauve. Reboot recommande." : "MQTT sauve.");
   }
 
   async function captureCalibration(index) {
     try {
       await apiPost("/api/calibrate", { index, refDb: state.calRefs[index] });
       state.calRefsDirty[index] = false;
-      $("calToast").textContent = `Point ${index + 1} capture.`;
+      setToast("calToast", `Point ${index + 1} capture.`);
       await refreshStatus();
     } catch (err) {
-      $("calToast").textContent = `Erreur: ${err.message}`;
+      setToastError("calToast", err);
     }
   }
 
@@ -2694,10 +2623,10 @@ R"HTML(
       state.calibrationPointCount = nextCount;
       state.calRefs = [...calibrationRecommendations[nextCount]];
       state.calRefsDirty = [false, false, false, false, false];
-      $("calToast").textContent = `Mode calibration ${nextCount} points.`;
+      setToast("calToast", `Mode calibration ${nextCount} points.`);
       await refreshStatus();
     } catch (err) {
-      $("calToast").textContent = `Erreur: ${err.message}`;
+      setToastError("calToast", err);
       syncCalibrationModeButtons();
     }
   }
@@ -2707,40 +2636,25 @@ R"HTML(
     try {
       await apiPost("/api/calibrate/clear", {});
       state.calRefsDirty = [false, false, false, false, false];
-      $("calToast").textContent = "Calibration effacee.";
+      setToast("calToast", "Calibration effacee.");
       await refreshStatus();
     } catch (err) {
-      $("calToast").textContent = `Erreur: ${err.message}`;
+      setToastError("calToast", err);
     }
   }
 
   async function reboot() {
-    try {
-      await apiPost("/api/reboot", {});
-      $("actionsToast").textContent = "Reboot demande.";
-    } catch (err) {
-      $("actionsToast").textContent = `Erreur: ${err.message}`;
-    }
+    await postAction("/api/reboot", "Reboot demande.");
   }
 
   async function shutdown() {
     if (!confirm("Eteindre le systeme ? Reveil via bouton BOOT.")) return;
-    try {
-      await apiPost("/api/shutdown", {});
-      $("actionsToast").textContent = "Shutdown demande.";
-    } catch (err) {
-      $("actionsToast").textContent = `Erreur: ${err.message}`;
-    }
+    await postAction("/api/shutdown", "Shutdown demande.");
   }
 
   async function factoryReset() {
     if (!confirm("Factory reset ?")) return;
-    try {
-      await apiPost("/api/factory_reset", {});
-      $("actionsToast").textContent = "Factory reset demande.";
-    } catch (err) {
-      $("actionsToast").textContent = `Erreur: ${err.message}`;
-    }
+    await postAction("/api/factory_reset", "Factory reset demande.");
   }
 
   document.querySelectorAll(".tab").forEach((tab) => {
@@ -2803,9 +2717,9 @@ R"HTML(
     if (!file) return;
     try {
       $("configJsonBox").value = await file.text();
-      $("configToast").textContent = `Fichier charge: ${file.name}`;
+      setToast("configToast", `Fichier charge: ${file.name}`);
     } catch (err) {
-      $("configToast").textContent = `Erreur lecture fichier: ${err.message}`;
+      setToast("configToast", `Erreur lecture fichier: ${err.message}`);
     }
   });
 

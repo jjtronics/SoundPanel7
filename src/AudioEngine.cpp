@@ -5,11 +5,9 @@ static constexpr float kRmsEpsilon = 0.0001f;
 static constexpr float kFastAlpha = 0.45f;
 static constexpr float kSlowAlpha = 0.10f;
 static constexpr uint8_t kCalibrationSampleCount = 24;
-static constexpr float kRecommendedCalibration3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
-static constexpr float kRecommendedCalibration5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
 
 static uint8_t configuredCalibrationPointCount(const SettingsV1& s) {
-  return (s.calibrationPointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  return normalizedCalibrationPointCount(s.calibrationPointCount);
 }
 
 static uint8_t countValidCalibrationPoints(const SettingsV1& s) {
@@ -219,8 +217,8 @@ bool AudioEngine::captureCalibrationPoint(SettingsV1& s, uint8_t index, float re
 
 void AudioEngine::clearCalibration(SettingsV1& s) {
   const float* recommended = (configuredCalibrationPointCount(s) == CALIBRATION_POINT_MAX)
-    ? kRecommendedCalibration5
-    : kRecommendedCalibration3;
+    ? RECOMMENDED_CALIBRATION_5
+    : RECOMMENDED_CALIBRATION_3;
 
   for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     s.calPointRefDb[i] = recommended[i];

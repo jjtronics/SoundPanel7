@@ -3,6 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-data/video/*.mp4
-
+.DS_Store
+__pycache__/
+*.pyc
 data/video/*.mp4

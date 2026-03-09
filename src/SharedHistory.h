@@ -28,13 +28,13 @@ public:
   }
 
   uint32_t samplePeriodMs() const {
-    uint8_t minutes = (_settings ? _settings->historyMinutes : 5);
+    uint8_t minutes = (_settings ? _settings->historyMinutes : DEFAULT_HISTORY_MINUTES);
     if (minutes < 1) minutes = 1;
     if (minutes > 60) minutes = 60;
 
-    uint32_t totalMs = (uint32_t)minutes * 60UL * 1000UL;
+    uint32_t totalMs = (uint32_t)minutes * MS_PER_MINUTE;
     uint32_t period = totalMs / POINT_COUNT;
-    if (period < 250) period = 250;
+    if (period < MIN_HISTORY_SAMPLE_PERIOD_MS) period = MIN_HISTORY_SAMPLE_PERIOD_MS;
     return period;
   }
 

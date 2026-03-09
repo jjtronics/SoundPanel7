@@ -13,4 +13,7 @@ public:
 private:
   SettingsV1* _s = nullptr;
   bool _started = false;
+  uint32_t _lastStartAttemptMs = 0;
+
+  bool tryStart();
 };

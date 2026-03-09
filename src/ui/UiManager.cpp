@@ -354,14 +354,14 @@ void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
   _slGreen = lv_slider_create(cTh);
   lv_obj_set_width(_slGreen, lv_pct(100));
   lv_slider_set_range(_slGreen, 0, 100);
-  lv_slider_set_value(_slGreen, _s ? _s->th.greenMax : 55, LV_ANIM_OFF);
+  lv_slider_set_value(_slGreen, _s ? _s->th.greenMax : DEFAULT_GREEN_MAX, LV_ANIM_OFF);
   lv_obj_add_event_cb(_slGreen, UiManager::onSliderThresholds, LV_EVENT_VALUE_CHANGED, this);
   createSettingHeader(cTh, "Orange <=", &_lblOrangeValue);
 
   _slOrange = lv_slider_create(cTh);
   lv_obj_set_width(_slOrange, lv_pct(100));
   lv_slider_set_range(_slOrange, 0, 100);
-  lv_slider_set_value(_slOrange, _s ? _s->th.orangeMax : 70, LV_ANIM_OFF);
+  lv_slider_set_value(_slOrange, _s ? _s->th.orangeMax : DEFAULT_ORANGE_MAX, LV_ANIM_OFF);
   lv_obj_add_event_cb(_slOrange, UiManager::onSliderThresholds, LV_EVENT_VALUE_CHANGED, this);
 
   createSettingHeader(cTh, "Reponse", &_lblResponseValue);
@@ -403,7 +403,7 @@ void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
   _slHistory = lv_slider_create(cHist);
   lv_obj_set_width(_slHistory, lv_pct(100));
   lv_slider_set_range(_slHistory, 1, 60);
-  lv_slider_set_value(_slHistory, _s ? _s->historyMinutes : 5, LV_ANIM_OFF);
+  lv_slider_set_value(_slHistory, _s ? _s->historyMinutes : DEFAULT_HISTORY_MINUTES, LV_ANIM_OFF);
   lv_obj_add_event_cb(_slHistory, UiManager::onSliderHistory, LV_EVENT_VALUE_CHANGED, this);
 
   lv_obj_t* cMaint = mgmtCard(scroll, "Maintenance");
@@ -1114,7 +1114,7 @@ void UiManager::refreshCalibrationView() {
   }
 
   uint8_t validCount = 0;
-  const uint8_t activeCount = (_s->calibrationPointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  const uint8_t activeCount = normalizedCalibrationPointCount(_s->calibrationPointCount);
   for (uint8_t i = 0; i < activeCount; i++) {
     if (_s->calPointValid[i]) validCount++;
   }
@@ -1268,7 +1268,7 @@ void UiManager::onCalibrationMode(lv_event_t* e) {
 
   lv_obj_t* btn = lv_event_get_target(e);
   uint8_t pointCount = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
-  pointCount = (pointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  pointCount = normalizedCalibrationPointCount((uint8_t)pointCount);
   if (pointCount == self->_s->calibrationPointCount) return;
 
   self->_s->calibrationPointCount = pointCount;
@@ -1383,8 +1383,8 @@ uint16_t UiManager::redSecondsWithinWindow() const {
 }
 
 void UiManager::applyAlertVisuals(uint32_t now) {
-  const uint32_t orangeAlertHoldMs = _s ? _s->orangeAlertHoldMs : 3000UL;
-  const uint32_t redAlertHoldMs = _s ? _s->redAlertHoldMs : 2000UL;
+  const uint32_t orangeAlertHoldMs = _s ? _s->orangeAlertHoldMs : DEFAULT_WARNING_HOLD_MS;
+  const uint32_t redAlertHoldMs = _s ? _s->redAlertHoldMs : DEFAULT_CRITICAL_HOLD_MS;
   const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= orangeAlertHoldMs;
   const bool redAlert = _redZoneSinceMs != 0 && (now - _redZoneSinceMs) >= redAlertHoldMs;
   const uint8_t alertState = redAlert ? 2 : (orangeAlert ? 1 : 0);
@@ -1480,10 +1480,10 @@ void UiManager::powerOffNow() {
   lv_obj_center(lbl);
 
   lv_timer_handler();
-  delay(250);
+  delay(POWER_OFF_DIALOG_SETTLE_MS);
 
   applyBacklight(0);
-  delay(80);
+  delay(POWER_OFF_BACKLIGHT_DELAY_MS);
 
   gpio_hold_dis(GPIO_NUM_0);
   rtc_gpio_pullup_dis(GPIO_NUM_0);
@@ -1494,7 +1494,7 @@ void UiManager::powerOffNow() {
 
   Serial0.println("[PWR] Deep sleep - wake on BOOT(GPIO0)");
   Serial0.flush();
-  delay(50);
+  delay(POWER_OFF_FINAL_DELAY_MS);
 
   esp_deep_sleep_start();
 }
@@ -1515,7 +1515,7 @@ void UiManager::setDb(float dbInstant, float leq, float peak) {
   if (_currentDashPage != DASH_PAGE_OVERVIEW && _currentDashPage != DASH_PAGE_SOUND) {
     return;
   }
-  if (_lastSoundUiUpdateMs != 0 && (now - _lastSoundUiUpdateMs) < 160) {
+  if (_lastSoundUiUpdateMs != 0 && (now - _lastSoundUiUpdateMs) < SOUND_UI_UPDATE_MS) {
     return;
   }
   _lastSoundUiUpdateMs = now;
@@ -1565,7 +1565,7 @@ void UiManager::setDb(float dbInstant, float leq, float peak) {
 
 void UiManager::tick() {
   uint32_t now = millis();
-  if (now - _lastTickMs < 250) return;
+  if (now - _lastTickMs < UI_TICK_PERIOD_MS) return;
   _lastTickMs = now;
 
   updateAlertState(now);
@@ -1577,7 +1577,7 @@ void UiManager::tick() {
   bool timeLocked = _net && _net->timeIsValid();
 
   if ((_currentDashPage == DASH_PAGE_OVERVIEW || _currentDashPage == DASH_PAGE_CLOCK) &&
-      (_lastClockUiUpdateMs == 0 || (now - _lastClockUiUpdateMs) >= 1000)) {
+      (_lastClockUiUpdateMs == 0 || (now - _lastClockUiUpdateMs) >= CLOCK_UI_UPDATE_MS)) {
     _lastClockUiUpdateMs = now;
     bool clockChanged = false;
     if (hasTime) {
@@ -1629,7 +1629,7 @@ void UiManager::tick() {
   }
 
   if (_currentDashPage == DASH_PAGE_SETTINGS &&
-      (_lastSettingsUiUpdateMs == 0 || (now - _lastSettingsUiUpdateMs) >= 1000) &&
+      (_lastSettingsUiUpdateMs == 0 || (now - _lastSettingsUiUpdateMs) >= SETTINGS_UI_UPDATE_MS) &&
       _net && _s) {
     _lastSettingsUiUpdateMs = now;
     if (_lblWifiStatus) {
@@ -1666,7 +1666,7 @@ void UiManager::tick() {
   }
 
   if (_currentDashPage == DASH_PAGE_CALIBRATION &&
-      (_lastCalibrationUiUpdateMs == 0 || (now - _lastCalibrationUiUpdateMs) >= 250)) {
+      (_lastCalibrationUiUpdateMs == 0 || (now - _lastCalibrationUiUpdateMs) >= CALIBRATION_UI_UPDATE_MS)) {
     _lastCalibrationUiUpdateMs = now;
     refreshCalibrationView();
   }
@@ -1855,7 +1855,7 @@ void UiManager::onConfirmResetYes(lv_event_t* e) {
   }
 
   if (self->_store) self->_store->factoryReset();
-  delay(200);
+  delay(FACTORY_RESET_RESTART_DELAY_MS);
   ESP.restart();
 }
 

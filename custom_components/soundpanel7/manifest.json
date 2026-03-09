@@ -3,7 +3,7 @@
   "name": "SoundPanel 7",
   "codeowners": ["@jj"],
   "config_flow": true,
-  "documentation": "https://github.com/yourusername/soundpanel7",
+  "documentation": "https://github.com/jjtronics/SoundPanel7",
   "integration_type": "device",
   "iot_class": "local_polling",
   "requirements": [],

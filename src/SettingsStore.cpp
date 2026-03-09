@@ -1,198 +1,8 @@
 #include "SettingsStore.h"
+#include "JsonHelpers.h"
 
-#include <cstring>
 #include <ctime>
 #include <math.h>
-
-static int jsonIntLocal(const String& body, const char* key, int def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-
-  bool neg = false;
-  if (p < (int)body.length() && body[p] == '-') {
-    neg = true;
-    p++;
-  }
-
-  long v = 0;
-  bool ok = false;
-  while (p < (int)body.length()) {
-    char c = body[p];
-    if (c < '0' || c > '9') break;
-    ok = true;
-    v = v * 10 + (c - '0');
-    p++;
-  }
-
-  if (!ok) return def;
-  return neg ? (int)-v : (int)v;
-}
-
-static float jsonFloatLocal(const String& body, const char* key, float def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-
-  bool neg = false;
-  if (p < (int)body.length() && body[p] == '-') {
-    neg = true;
-    p++;
-  }
-
-  String num;
-  bool dotSeen = false;
-  while (p < (int)body.length()) {
-    char c = body[p];
-    if (c >= '0' && c <= '9') {
-      num += c;
-      p++;
-      continue;
-    }
-    if (c == '.' && !dotSeen) {
-      dotSeen = true;
-      num += c;
-      p++;
-      continue;
-    }
-    break;
-  }
-
-  if (num.isEmpty()) return def;
-  float v = num.toFloat();
-  return neg ? -v : v;
-}
-
-static String jsonStrLocal(const String& body, const char* key, const String& def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  if (p >= (int)body.length() || body[p] != '"') return def;
-  p++;
-
-  String out;
-  while (p < (int)body.length()) {
-    char c = body[p++];
-    if (c == '\\' && p < (int)body.length()) {
-      char n = body[p++];
-      if (n == '"' || n == '\\' || n == '/') out += n;
-      else if (n == 'n') out += '\n';
-      else if (n == 'r') out += '\r';
-      else if (n == 't') out += '\t';
-      else out += n;
-      continue;
-    }
-    if (c == '"') break;
-    out += c;
-  }
-
-  return out;
-}
-
-static bool jsonBoolLocal(const String& body, const char* key, bool def) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return def;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  if (body.startsWith("true", p)) return true;
-  if (body.startsWith("false", p)) return false;
-  if (p < (int)body.length() && body[p] == '1') return true;
-  if (p < (int)body.length() && body[p] == '0') return false;
-  return def;
-}
-
-template <size_t N>
-static bool jsonFloatArrayLocal(const String& body, const char* key, float (&out)[N]) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return false;
-  p += k.length();
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  if (p >= (int)body.length() || body[p] != '[') return false;
-  p++;
-
-  size_t count = 0;
-  while (count < N) {
-    while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-    if (p < (int)body.length() && body[p] == ']') break;
-
-    bool neg = false;
-    if (p < (int)body.length() && body[p] == '-') {
-      neg = true;
-      p++;
-    }
-
-    String num;
-    bool dotSeen = false;
-    while (p < (int)body.length()) {
-      char c = body[p];
-      if (c >= '0' && c <= '9') {
-        num += c;
-        p++;
-        continue;
-      }
-      if (c == '.' && !dotSeen) {
-        dotSeen = true;
-        num += c;
-        p++;
-        continue;
-      }
-      break;
-    }
-
-    if (num.isEmpty()) return false;
-    out[count] = neg ? -num.toFloat() : num.toFloat();
-    count++;
-
-    while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-    if (p < (int)body.length() && body[p] == ',') {
-      p++;
-      continue;
-    }
-    break;
-  }
-
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  return count > 0 && p < (int)body.length() && body[p] == ']';
-}
-
-template <size_t N>
-static bool jsonU8ArrayLocal(const String& body, const char* key, uint8_t (&out)[N]) {
-  float vals[N] = {};
-  if (!jsonFloatArrayLocal(body, key, vals)) return false;
-  for (size_t i = 0; i < N; i++) out[i] = vals[i] > 0.5f ? 1 : 0;
-  return true;
-}
-
-static String jsonEscapeLocal(const char* src) {
-  String out;
-  if (!src) return out;
-  for (size_t i = 0; src[i]; i++) {
-    char c = src[i];
-    if (c == '\\' || c == '"') out += '\\';
-    out += c;
-  }
-  return out;
-}
-
-static bool safeCopyLocal(char* dst, size_t dstSize, const String& src) {
-  if (!dst || dstSize == 0) return false;
-  if (src.length() >= dstSize) return false;
-  memcpy(dst, src.c_str(), src.length() + 1);
-  return true;
-}
 
 bool SettingsStore::begin(const char* nvsNamespace) {
   _ns = nvsNamespace ? nvsNamespace : "sp7";
@@ -323,9 +133,6 @@ void SettingsStore::factoryReset() {
 }
 
 void SettingsStore::sanitize(SettingsV1& s) {
-  static const float kRecommended3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
-  static const float kRecommended5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
-
   if (s.backlight > 100) s.backlight = 100;
   if (s.th.greenMax > 100) s.th.greenMax = 100;
   if (s.th.orangeMax > 100) s.th.orangeMax = 100;
@@ -334,8 +141,8 @@ void SettingsStore::sanitize(SettingsV1& s) {
   if (s.historyMinutes < 1) s.historyMinutes = 1;
   if (s.historyMinutes > 60) s.historyMinutes = 60;
 
-  if (s.orangeAlertHoldMs > 60000UL) s.orangeAlertHoldMs = 60000UL;
-  if (s.redAlertHoldMs > 60000UL) s.redAlertHoldMs = 60000UL;
+  if (s.orangeAlertHoldMs > MAX_ALERT_HOLD_MS) s.orangeAlertHoldMs = MAX_ALERT_HOLD_MS;
+  if (s.redAlertHoldMs > MAX_ALERT_HOLD_MS) s.redAlertHoldMs = MAX_ALERT_HOLD_MS;
 
   if (s.audioSource > 1) s.audioSource = 1;
   if (s.analogRmsSamples < 32) s.analogRmsSamples = 32;
@@ -344,23 +151,23 @@ void SettingsStore::sanitize(SettingsV1& s) {
   if (s.emaAlpha < 0.01f) s.emaAlpha = 0.01f;
   if (s.emaAlpha > 0.95f) s.emaAlpha = 0.95f;
   if (s.peakHoldMs < 500) s.peakHoldMs = 500;
-  if (s.peakHoldMs > 30000UL) s.peakHoldMs = 30000UL;
-  s.calibrationPointCount = (s.calibrationPointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
-  if (s.calibrationCaptureMs < 1000UL) s.calibrationCaptureMs = 1000UL;
-  if (s.calibrationCaptureMs > 30000UL) s.calibrationCaptureMs = 30000UL;
+  if (s.peakHoldMs > MAX_PEAK_HOLD_MS) s.peakHoldMs = MAX_PEAK_HOLD_MS;
+  s.calibrationPointCount = normalizedCalibrationPointCount(s.calibrationPointCount);
+  if (s.calibrationCaptureMs < MIN_CALIBRATION_CAPTURE_MS) s.calibrationCaptureMs = MIN_CALIBRATION_CAPTURE_MS;
+  if (s.calibrationCaptureMs > MAX_CALIBRATION_CAPTURE_MS) s.calibrationCaptureMs = MAX_CALIBRATION_CAPTURE_MS;
 
-  if (s.ntpSyncIntervalMs < 60000UL) s.ntpSyncIntervalMs = 60000UL;
-  if (s.ntpSyncIntervalMs > 86400000UL) s.ntpSyncIntervalMs = 86400000UL;
+  if (s.ntpSyncIntervalMs < MIN_NTP_SYNC_INTERVAL_MS) s.ntpSyncIntervalMs = MIN_NTP_SYNC_INTERVAL_MS;
+  if (s.ntpSyncIntervalMs > MAX_NTP_SYNC_INTERVAL_MS) s.ntpSyncIntervalMs = MAX_NTP_SYNC_INTERVAL_MS;
 
   if (s.otaPort == 0) s.otaPort = 3232;
   if (s.mqttPort == 0) s.mqttPort = 1883;
-  if (s.mqttPublishPeriodMs < 250) s.mqttPublishPeriodMs = 250;
-  if (s.mqttPublishPeriodMs > 60000) s.mqttPublishPeriodMs = 60000;
+  if (s.mqttPublishPeriodMs < MIN_MQTT_PUBLISH_PERIOD_MS) s.mqttPublishPeriodMs = MIN_MQTT_PUBLISH_PERIOD_MS;
+  if (s.mqttPublishPeriodMs > MAX_MQTT_PUBLISH_PERIOD_MS) s.mqttPublishPeriodMs = MAX_MQTT_PUBLISH_PERIOD_MS;
   s.otaEnabled = s.otaEnabled ? 1 : 0;
   s.mqttEnabled = s.mqttEnabled ? 1 : 0;
   s.mqttRetain = s.mqttRetain ? 1 : 0;
 
-  const float* recommended = (s.calibrationPointCount == CALIBRATION_POINT_MAX) ? kRecommended5 : kRecommended3;
+  const float* recommended = (s.calibrationPointCount == CALIBRATION_POINT_MAX) ? RECOMMENDED_CALIBRATION_5 : RECOMMENDED_CALIBRATION_3;
   for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
     s.calPointValid[i] = s.calPointValid[i] ? 1 : 0;
     if (!isfinite(s.calPointRefDb[i])) s.calPointRefDb[i] = recommended[i];
@@ -380,12 +187,12 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"greenMax\":"; json += String(s.th.greenMax); json += ",";
   json += "\"orangeMax\":"; json += String(s.th.orangeMax); json += ",";
   json += "\"historyMinutes\":"; json += String(s.historyMinutes); json += ",";
-  json += "\"warningHoldSec\":"; json += String(s.orangeAlertHoldMs / 1000UL); json += ",";
-  json += "\"criticalHoldSec\":"; json += String(s.redAlertHoldMs / 1000UL); json += ",";
-  json += "\"tz\":\""; json += jsonEscapeLocal(s.tz); json += "\",";
-  json += "\"ntpServer\":\""; json += jsonEscapeLocal(s.ntpServer); json += "\",";
-  json += "\"ntpSyncMinutes\":"; json += String(s.ntpSyncIntervalMs / 60000UL); json += ",";
-  json += "\"hostname\":\""; json += jsonEscapeLocal(s.hostname); json += "\",";
+  json += "\"warningHoldSec\":"; json += String(s.orangeAlertHoldMs / MS_PER_SECOND); json += ",";
+  json += "\"criticalHoldSec\":"; json += String(s.redAlertHoldMs / MS_PER_SECOND); json += ",";
+  json += "\"tz\":\""; json += sp7json::escape(s.tz); json += "\",";
+  json += "\"ntpServer\":\""; json += sp7json::escape(s.ntpServer); json += "\",";
+  json += "\"ntpSyncMinutes\":"; json += String(s.ntpSyncIntervalMs / MS_PER_MINUTE); json += ",";
+  json += "\"hostname\":\""; json += sp7json::escape(s.hostname); json += "\",";
   json += "\"audioSource\":"; json += String(s.audioSource); json += ",";
   json += "\"analogPin\":"; json += String(s.analogPin); json += ",";
   json += "\"analogRmsSamples\":"; json += String(s.analogRmsSamples); json += ",";
@@ -393,7 +200,7 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"emaAlpha\":"; json += String(s.emaAlpha, 4); json += ",";
   json += "\"peakHoldMs\":"; json += String(s.peakHoldMs); json += ",";
   json += "\"calibrationPointCount\":"; json += String(s.calibrationPointCount); json += ",";
-  json += "\"calibrationCaptureSec\":"; json += String(s.calibrationCaptureMs / 1000UL); json += ",";
+  json += "\"calibrationCaptureSec\":"; json += String(s.calibrationCaptureMs / MS_PER_SECOND); json += ",";
   json += "\"analogBaseOffsetDb\":"; json += String(s.analogBaseOffsetDb, 4); json += ",";
   json += "\"analogExtraOffsetDb\":"; json += String(s.analogExtraOffsetDb, 4); json += ",";
   json += "\"calPointRefDb\":[";
@@ -416,15 +223,15 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "],";
   json += "\"otaEnabled\":"; json += (s.otaEnabled ? "true" : "false"); json += ",";
   json += "\"otaPort\":"; json += String(s.otaPort); json += ",";
-  json += "\"otaHostname\":\""; json += jsonEscapeLocal(s.otaHostname); json += "\",";
-  json += "\"otaPassword\":\""; json += jsonEscapeLocal(s.otaPassword); json += "\",";
+  json += "\"otaHostname\":\""; json += sp7json::escape(s.otaHostname); json += "\",";
+  json += "\"otaPassword\":\""; json += sp7json::escape(s.otaPassword); json += "\",";
   json += "\"mqttEnabled\":"; json += (s.mqttEnabled ? "true" : "false"); json += ",";
-  json += "\"mqttHost\":\""; json += jsonEscapeLocal(s.mqttHost); json += "\",";
+  json += "\"mqttHost\":\""; json += sp7json::escape(s.mqttHost); json += "\",";
   json += "\"mqttPort\":"; json += String(s.mqttPort); json += ",";
-  json += "\"mqttUsername\":\""; json += jsonEscapeLocal(s.mqttUsername); json += "\",";
-  json += "\"mqttPassword\":\""; json += jsonEscapeLocal(s.mqttPassword); json += "\",";
-  json += "\"mqttClientId\":\""; json += jsonEscapeLocal(s.mqttClientId); json += "\",";
-  json += "\"mqttBaseTopic\":\""; json += jsonEscapeLocal(s.mqttBaseTopic); json += "\",";
+  json += "\"mqttUsername\":\""; json += sp7json::escape(s.mqttUsername); json += "\",";
+  json += "\"mqttPassword\":\""; json += sp7json::escape(s.mqttPassword); json += "\",";
+  json += "\"mqttClientId\":\""; json += sp7json::escape(s.mqttClientId); json += "\",";
+  json += "\"mqttBaseTopic\":\""; json += sp7json::escape(s.mqttBaseTopic); json += "\",";
   json += "\"mqttPublishPeriodMs\":"; json += String(s.mqttPublishPeriodMs); json += ",";
   json += "\"mqttRetain\":"; json += (s.mqttRetain ? "true" : "false");
   json += "}";
@@ -434,98 +241,98 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
 bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   SettingsV1 next = s;
 
-  next.backlight = (uint8_t)jsonIntLocal(json, "backlight", next.backlight);
-  next.th.greenMax = (uint8_t)jsonIntLocal(json, "greenMax", next.th.greenMax);
-  next.th.orangeMax = (uint8_t)jsonIntLocal(json, "orangeMax", next.th.orangeMax);
-  next.historyMinutes = (uint8_t)jsonIntLocal(json, "historyMinutes", next.historyMinutes);
-  next.orangeAlertHoldMs = (uint32_t)jsonIntLocal(json, "warningHoldSec", (int)(next.orangeAlertHoldMs / 1000UL)) * 1000UL;
-  next.redAlertHoldMs = (uint32_t)jsonIntLocal(json, "criticalHoldSec", (int)(next.redAlertHoldMs / 1000UL)) * 1000UL;
+  next.backlight = (uint8_t)sp7json::parseInt(json, "backlight", next.backlight);
+  next.th.greenMax = (uint8_t)sp7json::parseInt(json, "greenMax", next.th.greenMax);
+  next.th.orangeMax = (uint8_t)sp7json::parseInt(json, "orangeMax", next.th.orangeMax);
+  next.historyMinutes = (uint8_t)sp7json::parseInt(json, "historyMinutes", next.historyMinutes);
+  next.orangeAlertHoldMs = (uint32_t)sp7json::parseInt(json, "warningHoldSec", (int)(next.orangeAlertHoldMs / MS_PER_SECOND)) * MS_PER_SECOND;
+  next.redAlertHoldMs = (uint32_t)sp7json::parseInt(json, "criticalHoldSec", (int)(next.redAlertHoldMs / MS_PER_SECOND)) * MS_PER_SECOND;
 
-  String tz = jsonStrLocal(json, "tz", String(next.tz));
-  String ntp = jsonStrLocal(json, "ntpServer", String(next.ntpServer));
-  String hostname = jsonStrLocal(json, "hostname", String(next.hostname));
-  if (!safeCopyLocal(next.tz, sizeof(next.tz), tz)) {
+  String tz = sp7json::parseString(json, "tz", String(next.tz));
+  String ntp = sp7json::parseString(json, "ntpServer", String(next.ntpServer));
+  String hostname = sp7json::parseString(json, "hostname", String(next.hostname));
+  if (!sp7json::safeCopy(next.tz, sizeof(next.tz), tz)) {
     if (err) *err = "tz too long";
     return false;
   }
-  if (!safeCopyLocal(next.ntpServer, sizeof(next.ntpServer), ntp)) {
+  if (!sp7json::safeCopy(next.ntpServer, sizeof(next.ntpServer), ntp)) {
     if (err) *err = "ntpServer too long";
     return false;
   }
-  if (!safeCopyLocal(next.hostname, sizeof(next.hostname), hostname)) {
+  if (!sp7json::safeCopy(next.hostname, sizeof(next.hostname), hostname)) {
     if (err) *err = "hostname too long";
     return false;
   }
-  next.ntpSyncIntervalMs = (uint32_t)jsonIntLocal(json, "ntpSyncMinutes", (int)(next.ntpSyncIntervalMs / 60000UL)) * 60000UL;
+  next.ntpSyncIntervalMs = (uint32_t)sp7json::parseInt(json, "ntpSyncMinutes", (int)(next.ntpSyncIntervalMs / MS_PER_MINUTE)) * MS_PER_MINUTE;
 
-  next.audioSource = (uint8_t)jsonIntLocal(json, "audioSource", next.audioSource);
-  next.analogPin = (uint8_t)jsonIntLocal(json, "analogPin", next.analogPin);
-  next.analogRmsSamples = (uint16_t)jsonIntLocal(json, "analogRmsSamples", next.analogRmsSamples);
-  next.audioResponseMode = (uint8_t)jsonIntLocal(json, "audioResponseMode", next.audioResponseMode);
-  next.emaAlpha = jsonFloatLocal(json, "emaAlpha", next.emaAlpha);
-  next.peakHoldMs = (uint32_t)jsonIntLocal(json, "peakHoldMs", next.peakHoldMs);
-  next.calibrationPointCount = (uint8_t)jsonIntLocal(json, "calibrationPointCount", next.calibrationPointCount);
-  next.calibrationCaptureMs = (uint32_t)jsonIntLocal(json, "calibrationCaptureSec", (int)(next.calibrationCaptureMs / 1000UL)) * 1000UL;
-  next.analogBaseOffsetDb = jsonFloatLocal(json, "analogBaseOffsetDb", next.analogBaseOffsetDb);
-  next.analogExtraOffsetDb = jsonFloatLocal(json, "analogExtraOffsetDb", next.analogExtraOffsetDb);
+  next.audioSource = (uint8_t)sp7json::parseInt(json, "audioSource", next.audioSource);
+  next.analogPin = (uint8_t)sp7json::parseInt(json, "analogPin", next.analogPin);
+  next.analogRmsSamples = (uint16_t)sp7json::parseInt(json, "analogRmsSamples", next.analogRmsSamples);
+  next.audioResponseMode = (uint8_t)sp7json::parseInt(json, "audioResponseMode", next.audioResponseMode);
+  next.emaAlpha = sp7json::parseFloat(json, "emaAlpha", next.emaAlpha);
+  next.peakHoldMs = (uint32_t)sp7json::parseInt(json, "peakHoldMs", next.peakHoldMs);
+  next.calibrationPointCount = (uint8_t)sp7json::parseInt(json, "calibrationPointCount", next.calibrationPointCount);
+  next.calibrationCaptureMs = (uint32_t)sp7json::parseInt(json, "calibrationCaptureSec", (int)(next.calibrationCaptureMs / MS_PER_SECOND)) * MS_PER_SECOND;
+  next.analogBaseOffsetDb = sp7json::parseFloat(json, "analogBaseOffsetDb", next.analogBaseOffsetDb);
+  next.analogExtraOffsetDb = sp7json::parseFloat(json, "analogExtraOffsetDb", next.analogExtraOffsetDb);
 
   float calRef[CALIBRATION_POINT_MAX];
   memcpy(calRef, next.calPointRefDb, sizeof(calRef));
-  if (jsonFloatArrayLocal(json, "calPointRefDb", calRef)) {
+  if (sp7json::parseFloatArray(json, "calPointRefDb", calRef)) {
     for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointRefDb[i] = calRef[i];
   }
   float calRaw[CALIBRATION_POINT_MAX];
   memcpy(calRaw, next.calPointRawLogRms, sizeof(calRaw));
-  if (jsonFloatArrayLocal(json, "calPointRawLogRms", calRaw)) {
+  if (sp7json::parseFloatArray(json, "calPointRawLogRms", calRaw)) {
     for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointRawLogRms[i] = calRaw[i];
   }
   uint8_t calValid[CALIBRATION_POINT_MAX];
   memcpy(calValid, next.calPointValid, sizeof(calValid));
-  if (jsonU8ArrayLocal(json, "calPointValid", calValid)) {
+  if (sp7json::parseU8Array(json, "calPointValid", calValid)) {
     for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointValid[i] = calValid[i];
   }
 
-  next.otaEnabled = jsonBoolLocal(json, "otaEnabled", next.otaEnabled != 0) ? 1 : 0;
-  next.otaPort = (uint16_t)jsonIntLocal(json, "otaPort", next.otaPort);
-  String otaHostname = jsonStrLocal(json, "otaHostname", String(next.otaHostname));
-  String otaPassword = jsonStrLocal(json, "otaPassword", String(next.otaPassword));
-  if (!safeCopyLocal(next.otaHostname, sizeof(next.otaHostname), otaHostname)) {
+  next.otaEnabled = sp7json::parseBool(json, "otaEnabled", next.otaEnabled != 0) ? 1 : 0;
+  next.otaPort = (uint16_t)sp7json::parseInt(json, "otaPort", next.otaPort);
+  String otaHostname = sp7json::parseString(json, "otaHostname", String(next.otaHostname));
+  String otaPassword = sp7json::parseString(json, "otaPassword", String(next.otaPassword));
+  if (!sp7json::safeCopy(next.otaHostname, sizeof(next.otaHostname), otaHostname)) {
     if (err) *err = "otaHostname too long";
     return false;
   }
-  if (!safeCopyLocal(next.otaPassword, sizeof(next.otaPassword), otaPassword)) {
+  if (!sp7json::safeCopy(next.otaPassword, sizeof(next.otaPassword), otaPassword)) {
     if (err) *err = "otaPassword too long";
     return false;
   }
 
-  next.mqttEnabled = jsonBoolLocal(json, "mqttEnabled", next.mqttEnabled != 0) ? 1 : 0;
-  next.mqttPort = (uint16_t)jsonIntLocal(json, "mqttPort", next.mqttPort);
-  next.mqttPublishPeriodMs = (uint16_t)jsonIntLocal(json, "mqttPublishPeriodMs", next.mqttPublishPeriodMs);
-  next.mqttRetain = jsonBoolLocal(json, "mqttRetain", next.mqttRetain != 0) ? 1 : 0;
+  next.mqttEnabled = sp7json::parseBool(json, "mqttEnabled", next.mqttEnabled != 0) ? 1 : 0;
+  next.mqttPort = (uint16_t)sp7json::parseInt(json, "mqttPort", next.mqttPort);
+  next.mqttPublishPeriodMs = (uint16_t)sp7json::parseInt(json, "mqttPublishPeriodMs", next.mqttPublishPeriodMs);
+  next.mqttRetain = sp7json::parseBool(json, "mqttRetain", next.mqttRetain != 0) ? 1 : 0;
 
-  String mqttHost = jsonStrLocal(json, "mqttHost", String(next.mqttHost));
-  String mqttUsername = jsonStrLocal(json, "mqttUsername", String(next.mqttUsername));
-  String mqttPassword = jsonStrLocal(json, "mqttPassword", String(next.mqttPassword));
-  String mqttClientId = jsonStrLocal(json, "mqttClientId", String(next.mqttClientId));
-  String mqttBaseTopic = jsonStrLocal(json, "mqttBaseTopic", String(next.mqttBaseTopic));
+  String mqttHost = sp7json::parseString(json, "mqttHost", String(next.mqttHost));
+  String mqttUsername = sp7json::parseString(json, "mqttUsername", String(next.mqttUsername));
+  String mqttPassword = sp7json::parseString(json, "mqttPassword", String(next.mqttPassword));
+  String mqttClientId = sp7json::parseString(json, "mqttClientId", String(next.mqttClientId));
+  String mqttBaseTopic = sp7json::parseString(json, "mqttBaseTopic", String(next.mqttBaseTopic));
 
-  if (!safeCopyLocal(next.mqttHost, sizeof(next.mqttHost), mqttHost)) {
+  if (!sp7json::safeCopy(next.mqttHost, sizeof(next.mqttHost), mqttHost)) {
     if (err) *err = "mqttHost too long";
     return false;
   }
-  if (!safeCopyLocal(next.mqttUsername, sizeof(next.mqttUsername), mqttUsername)) {
+  if (!sp7json::safeCopy(next.mqttUsername, sizeof(next.mqttUsername), mqttUsername)) {
     if (err) *err = "mqttUsername too long";
     return false;
   }
-  if (!safeCopyLocal(next.mqttPassword, sizeof(next.mqttPassword), mqttPassword)) {
+  if (!sp7json::safeCopy(next.mqttPassword, sizeof(next.mqttPassword), mqttPassword)) {
     if (err) *err = "mqttPassword too long";
     return false;
   }
-  if (!safeCopyLocal(next.mqttClientId, sizeof(next.mqttClientId), mqttClientId)) {
+  if (!sp7json::safeCopy(next.mqttClientId, sizeof(next.mqttClientId), mqttClientId)) {
     if (err) *err = "mqttClientId too long";
     return false;
   }
-  if (!safeCopyLocal(next.mqttBaseTopic, sizeof(next.mqttBaseTopic), mqttBaseTopic)) {
+  if (!sp7json::safeCopy(next.mqttBaseTopic, sizeof(next.mqttBaseTopic), mqttBaseTopic)) {
     if (err) *err = "mqttBaseTopic too long";
     return false;
   }

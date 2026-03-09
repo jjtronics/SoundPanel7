@@ -15,7 +15,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         host=entry.data[CONF_HOST],
         port=entry.data.get(CONF_PORT, DEFAULT_PORT),
         api_path=entry.data.get(CONF_API_PATH, DEFAULT_API_PATH),
-        title=entry.title or entry.data.get(CONF_NAME, entry.data[CONF_HOST]),
     )
     await coordinator.async_config_entry_first_refresh()
 

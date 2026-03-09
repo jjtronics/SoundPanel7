@@ -26,6 +26,15 @@ private:
   static constexpr uint8_t DASH_PAGE_COUNT = 5;
   static constexpr uint16_t RED_HISTORY_SAMPLE_COUNT = 3600;
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
+  static constexpr uint32_t SOUND_UI_UPDATE_MS = 160;
+  static constexpr uint32_t UI_TICK_PERIOD_MS = 250;
+  static constexpr uint32_t CLOCK_UI_UPDATE_MS = 1000;
+  static constexpr uint32_t SETTINGS_UI_UPDATE_MS = 1000;
+  static constexpr uint32_t CALIBRATION_UI_UPDATE_MS = 250;
+  static constexpr uint32_t POWER_OFF_DIALOG_SETTLE_MS = 250;
+  static constexpr uint32_t POWER_OFF_BACKLIGHT_DELAY_MS = 80;
+  static constexpr uint32_t POWER_OFF_FINAL_DELAY_MS = 50;
+  static constexpr uint32_t FACTORY_RESET_RESTART_DELAY_MS = 200;
 
   enum DashPage : uint8_t {
     DASH_PAGE_OVERVIEW = 0,

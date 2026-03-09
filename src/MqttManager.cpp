@@ -1,9 +1,12 @@
 #include "MqttManager.h"
 #include "AppConfig.h"
 
+static constexpr uint16_t kMqttClientBufferSize = 2048;
+static constexpr uint32_t kMqttReconnectIntervalMs = 5000;
+
 bool MqttManager::begin(SettingsV1* settings) {
   _s = settings;
-  _client.setBufferSize(2048);
+  _client.setBufferSize(kMqttClientBufferSize);
 
   if (!_s) {
     _lastError = "settings=null";
@@ -169,7 +172,7 @@ bool MqttManager::connectIfNeeded() {
   if (_client.connected()) return true;
 
   uint32_t now = millis();
-  if (now - _lastConnectAttemptMs < 5000) return false;
+  if (now - _lastConnectAttemptMs < kMqttReconnectIntervalMs) return false;
   _lastConnectAttemptMs = now;
 
   _client.setServer(_s->mqttHost, _s->mqttPort);
@@ -243,7 +246,7 @@ void MqttManager::loop() {
   if (!_discoveryPublished) publishDiscovery();
 
   uint32_t period = _s->mqttPublishPeriodMs;
-  if (period < 250) period = 250;
+  if (period < MIN_MQTT_PUBLISH_PERIOD_MS) period = MIN_MQTT_PUBLISH_PERIOD_MS;
 
   uint32_t now = millis();
   if (now - _lastPublishMs >= period) {

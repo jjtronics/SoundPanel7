@@ -4,12 +4,38 @@
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
 static constexpr uint16_t SETTINGS_VERSION = 5;
+static constexpr uint32_t MS_PER_SECOND = 1000UL;
+static constexpr uint32_t MS_PER_MINUTE = 60UL * MS_PER_SECOND;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
 static constexpr uint8_t CALIBRATION_POINT_MAX = 5;
+static constexpr uint8_t DEFAULT_GREEN_MAX = 55;
+static constexpr uint8_t DEFAULT_ORANGE_MAX = 70;
+static constexpr uint8_t DEFAULT_HISTORY_MINUTES = 5;
+static constexpr uint32_t MIN_HISTORY_SAMPLE_PERIOD_MS = 250;
+static constexpr uint32_t DEFAULT_WARNING_HOLD_MS = 3000UL;
+static constexpr uint32_t DEFAULT_CRITICAL_HOLD_MS = 2000UL;
+static constexpr uint32_t DEFAULT_CALIBRATION_CAPTURE_MS = 3000UL;
+static constexpr uint32_t MAX_ALERT_HOLD_MS = 60UL * MS_PER_SECOND;
+static constexpr uint32_t MAX_PEAK_HOLD_MS = 30UL * MS_PER_SECOND;
+static constexpr uint32_t MIN_CALIBRATION_CAPTURE_MS = 1UL * MS_PER_SECOND;
+static constexpr uint32_t MAX_CALIBRATION_CAPTURE_MS = 30UL * MS_PER_SECOND;
+static constexpr uint32_t MIN_NTP_SYNC_INTERVAL_MS = 1UL * MS_PER_MINUTE;
+static constexpr uint32_t MAX_NTP_SYNC_INTERVAL_MS = 24UL * 60UL * MS_PER_MINUTE;
+static constexpr uint16_t DEFAULT_OTA_PORT = 3232;
+static constexpr uint16_t DEFAULT_MQTT_PORT = 1883;
+static constexpr uint16_t DEFAULT_MQTT_PUBLISH_PERIOD_MS = 1000;
+static constexpr uint16_t MIN_MQTT_PUBLISH_PERIOD_MS = 250;
+static constexpr uint16_t MAX_MQTT_PUBLISH_PERIOD_MS = 60000;
+static constexpr float RECOMMENDED_CALIBRATION_3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
+static constexpr float RECOMMENDED_CALIBRATION_5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
+
+static inline uint8_t normalizedCalibrationPointCount(uint8_t count) {
+  return (count >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+}
 
 struct ThresholdsV1 {
-  uint8_t greenMax  = 55;
-  uint8_t orangeMax = 70;
+  uint8_t greenMax  = DEFAULT_GREEN_MAX;
+  uint8_t orangeMax = DEFAULT_ORANGE_MAX;
 };
 
 struct SettingsV1 {
@@ -19,9 +45,9 @@ struct SettingsV1 {
   // UI
   uint8_t backlight = 80;
   ThresholdsV1 th;
-  uint8_t historyMinutes = 5;
-  uint32_t orangeAlertHoldMs = 3000;
-  uint32_t redAlertHoldMs = 2000;
+  uint8_t historyMinutes = DEFAULT_HISTORY_MINUTES;
+  uint32_t orangeAlertHoldMs = DEFAULT_WARNING_HOLD_MS;
+  uint32_t redAlertHoldMs = DEFAULT_CRITICAL_HOLD_MS;
 
   // Time / locale
   char tz[64]        = "CET-1CEST,M3.5.0/2,M10.5.0/3";
@@ -50,26 +76,32 @@ struct SettingsV1 {
 
   // calibration points
   uint8_t calibrationPointCount = 3;
-  uint32_t calibrationCaptureMs = 3000;
-  float calPointRefDb[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
+  uint32_t calibrationCaptureMs = DEFAULT_CALIBRATION_CAPTURE_MS;
+  float calPointRefDb[CALIBRATION_POINT_MAX] = {
+    RECOMMENDED_CALIBRATION_3[0],
+    RECOMMENDED_CALIBRATION_3[1],
+    RECOMMENDED_CALIBRATION_3[2],
+    RECOMMENDED_CALIBRATION_3[3],
+    RECOMMENDED_CALIBRATION_3[4]
+  };
   float calPointRawLogRms[CALIBRATION_POINT_MAX] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   uint8_t calPointValid[CALIBRATION_POINT_MAX] = {0, 0, 0, 0, 0};
 
-    // OTA
+  // OTA
   uint8_t otaEnabled = 1;
-  uint16_t otaPort = 3232;
+  uint16_t otaPort = DEFAULT_OTA_PORT;
   char otaHostname[32] = "soundpanel7";
   char otaPassword[128] = "";
 
     // MQTT
   uint8_t mqttEnabled = 0;
   char mqttHost[64] = "";
-  uint16_t mqttPort = 1883;
+  uint16_t mqttPort = DEFAULT_MQTT_PORT;
   char mqttUsername[64] = "";
   char mqttPassword[128] = "";
   char mqttClientId[64] = "soundpanel7";
   char mqttBaseTopic[128] = "soundpanel7";
-  uint16_t mqttPublishPeriodMs = 1000;
+  uint16_t mqttPublishPeriodMs = DEFAULT_MQTT_PUBLISH_PERIOD_MS;
   uint8_t mqttRetain = 0;
 };
 

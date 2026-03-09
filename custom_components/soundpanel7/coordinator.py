@@ -16,7 +16,7 @@ LOGGER = logging.getLogger(__name__)
 class SoundPanel7Coordinator(DataUpdateCoordinator[dict]):
     """Coordinate SoundPanel 7 API updates."""
 
-    def __init__(self, hass, host: str, port: int = DEFAULT_PORT, api_path: str = DEFAULT_API_PATH, title: str = "SoundPanel 7") -> None:
+    def __init__(self, hass, host: str, port: int = DEFAULT_PORT, api_path: str = DEFAULT_API_PATH) -> None:
         super().__init__(
             hass,
             logger=LOGGER,
@@ -26,7 +26,6 @@ class SoundPanel7Coordinator(DataUpdateCoordinator[dict]):
         self.host = host
         self.port = port
         self.api_path = api_path or DEFAULT_API_PATH
-        self.title = title
         self.session = async_get_clientsession(hass)
 
     @property

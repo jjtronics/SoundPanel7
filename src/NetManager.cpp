@@ -9,6 +9,7 @@
 
 #include "AppConfig.h"
 
+static constexpr const char* kDefaultHostname = "soundpanel7";
 static WiFiManager g_wm;
 static wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
 static String g_lastWifiIp;
@@ -19,13 +20,9 @@ bool NetManager::begin(SettingsV1* settings) {
   _mdnsStarted = false;
 
   // Hostname (STA)
-  if (_s && _s->hostname[0] != '\0') {
-    WiFi.setHostname(_s->hostname);
-    g_wm.setHostname(_s->hostname);
-  } else {
-    WiFi.setHostname("soundpanel7");
-    g_wm.setHostname("soundpanel7");
-  }
+  const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : kDefaultHostname;
+  WiFi.setHostname(hostname);
+  g_wm.setHostname(hostname);
 
   // WiFiManager behavior
   g_wm.setDebugOutput(false);
@@ -54,7 +51,7 @@ bool NetManager::begin(SettingsV1* settings) {
 void NetManager::ensureMdns() {
   if (_mdnsStarted || !isWifiConnected()) return;
 
-  const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : "soundpanel7";
+  const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : kDefaultHostname;
   if (!MDNS.begin(hostname)) {
     Serial0.printf("[Net] mDNS start failed for %s\n", hostname);
     return;
@@ -154,14 +151,6 @@ bool NetManager::localTime(struct tm* out) const {
   if (_lastValidEpoch <= 0) return false;
   localtime_r(&_lastValidEpoch, out);
   return true;
-}
-
-String NetManager::timeStringLocal() const {
-  struct tm ti;
-  if (!localTime(&ti)) return String("NTP...");
-  char buf[32];
-  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &ti);
-  return String(buf);
 }
 
 const char* NetManager::ntpServer() const {
