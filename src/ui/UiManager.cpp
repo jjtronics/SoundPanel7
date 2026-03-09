@@ -1,5 +1,6 @@
 #include "UiManager.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <cstring>
@@ -129,6 +130,14 @@ static lv_obj_t* makeDashboardPage(lv_obj_t* parent) {
   lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
   return page;
+}
+
+bool UiManager::hasPinConfigured() const {
+  return _s && pinCodeIsConfigured(_s->dashboardPin);
+}
+
+bool UiManager::isProtectedPage(uint8_t page) const {
+  return page == DASH_PAGE_CALIBRATION || page == DASH_PAGE_SETTINGS;
 }
 
 void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, NetManager* net,
@@ -274,6 +283,8 @@ void UiManager::buildDashboard() {
     if (i != DASH_PAGE_OVERVIEW) lv_obj_add_flag(_dashPages[i], LV_OBJ_FLAG_HIDDEN);
   }
 
+  buildPinOverlay();
+
   ensureDashboardPageBuilt(DASH_PAGE_OVERVIEW);
 
   _lblTime = nullptr;
@@ -406,6 +417,31 @@ void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
   lv_slider_set_value(_slHistory, _s ? _s->historyMinutes : DEFAULT_HISTORY_MINUTES, LV_ANIM_OFF);
   lv_obj_add_event_cb(_slHistory, UiManager::onSliderHistory, LV_EVENT_VALUE_CHANGED, this);
 
+  lv_obj_t* cPin = mgmtCard(scroll, "Protection");
+  createSettingHeader(cPin, "Code PIN", &_lblPinState);
+  lv_obj_set_style_text_font(_lblPinState, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(_lblPinState, lv_color_hex(0x8EA1B3), 0);
+
+  _btnPinConfigure = lv_btn_create(cPin);
+  lv_obj_set_size(_btnPinConfigure, lv_pct(100), 44);
+  lv_obj_set_style_radius(_btnPinConfigure, 14, 0);
+  lv_obj_set_style_bg_color(_btnPinConfigure, lv_color_hex(0x7A1E2C), 0);
+  lv_obj_set_style_border_width(_btnPinConfigure, 0, 0);
+  lv_obj_add_event_cb(_btnPinConfigure, UiManager::onPinConfigure, LV_EVENT_CLICKED, this);
+  lv_obj_t* pinConfigureLbl = lv_label_create(_btnPinConfigure);
+  lv_label_set_text(pinConfigureLbl, "Configurer PIN");
+  lv_obj_center(pinConfigureLbl);
+
+  _btnPinDisable = lv_btn_create(cPin);
+  lv_obj_set_size(_btnPinDisable, lv_pct(100), 42);
+  lv_obj_set_style_radius(_btnPinDisable, 14, 0);
+  lv_obj_set_style_bg_color(_btnPinDisable, lv_color_hex(0x16202E), 0);
+  lv_obj_set_style_border_width(_btnPinDisable, 0, 0);
+  lv_obj_add_event_cb(_btnPinDisable, UiManager::onPinDisable, LV_EVENT_CLICKED, this);
+  lv_obj_t* pinDisableLbl = lv_label_create(_btnPinDisable);
+  lv_label_set_text(pinDisableLbl, "Desactiver PIN");
+  lv_obj_center(pinDisableLbl);
+
   lv_obj_t* cMaint = mgmtCard(scroll, "Maintenance");
   lv_obj_t* actions = lv_obj_create(cMaint);
   lv_obj_set_width(actions, lv_pct(100));
@@ -449,6 +485,247 @@ void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
   lv_obj_set_width(reset, lv_obj_get_width(reset) + 28);
 
   refreshSettingsControls();
+}
+
+void UiManager::buildPinOverlay() {
+  _pinOverlay = lv_obj_create(_scrDash);
+  lv_obj_remove_style_all(_pinOverlay);
+  lv_obj_set_size(_pinOverlay, lv_pct(100), lv_pct(100));
+  lv_obj_center(_pinOverlay);
+  lv_obj_set_style_bg_color(_pinOverlay, lv_color_hex(0x0B0F14), 0);
+  lv_obj_set_style_bg_opa(_pinOverlay, LV_OPA_COVER, 0);
+  lv_obj_add_flag(_pinOverlay, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(_pinOverlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(_pinOverlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* cancelBtn = lv_btn_create(_pinOverlay);
+  lv_obj_set_size(cancelBtn, 140, 48);
+  lv_obj_align(cancelBtn, LV_ALIGN_TOP_LEFT, 18, 18);
+  lv_obj_set_style_radius(cancelBtn, 18, 0);
+  lv_obj_set_style_bg_color(cancelBtn, lv_color_hex(0x16202E), 0);
+  lv_obj_set_style_border_width(cancelBtn, 0, 0);
+  lv_obj_add_event_cb(cancelBtn, UiManager::onPinCancel, LV_EVENT_CLICKED, this);
+  lv_obj_t* cancelLbl = lv_label_create(cancelBtn);
+  lv_label_set_text(cancelLbl, "Annuler");
+  lv_obj_center(cancelLbl);
+
+  _lblPinOverlayTitle = lv_label_create(_pinOverlay);
+  lv_label_set_text(_lblPinOverlayTitle, "Code PIN");
+  lv_obj_set_style_text_font(_lblPinOverlayTitle, &lv_font_montserrat_24, 0);
+  lv_obj_set_style_text_color(_lblPinOverlayTitle, lv_color_hex(0xDFE7EF), 0);
+  lv_obj_align(_lblPinOverlayTitle, LV_ALIGN_TOP_MID, 0, 18);
+
+  _lblPinOverlayHint = lv_label_create(_pinOverlay);
+  lv_label_set_text(_lblPinOverlayHint, "Saisis le code pour continuer.");
+  lv_obj_set_style_text_font(_lblPinOverlayHint, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblPinOverlayHint, lv_color_hex(0x8EA1B3), 0);
+  lv_obj_align(_lblPinOverlayHint, LV_ALIGN_TOP_MID, 0, 58);
+
+  _lblPinOverlayValue = lv_label_create(_pinOverlay);
+  lv_label_set_text(_lblPinOverlayValue, "_ _ _ _ _ _ _ _");
+  lv_obj_set_style_text_font(_lblPinOverlayValue, &lv_font_montserrat_24, 0);
+  lv_obj_set_style_text_letter_space(_lblPinOverlayValue, 2, 0);
+  lv_obj_set_style_text_color(_lblPinOverlayValue, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_align(_lblPinOverlayValue, LV_ALIGN_TOP_MID, 0, 98);
+
+  _lblPinOverlayStatus = lv_label_create(_pinOverlay);
+  lv_label_set_text(_lblPinOverlayStatus, "");
+  lv_obj_set_style_text_font(_lblPinOverlayStatus, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblPinOverlayStatus, lv_color_hex(0xF0A202), 0);
+  lv_obj_align(_lblPinOverlayStatus, LV_ALIGN_TOP_MID, 0, 136);
+
+  struct PinKeyDef {
+    const char* label;
+    int32_t code;
+    lv_color_t bg;
+  };
+
+  static const PinKeyDef keys[12] = {
+    {"1", '1', lv_color_hex(0x111824)}, {"2", '2', lv_color_hex(0x111824)}, {"3", '3', lv_color_hex(0x111824)},
+    {"4", '4', lv_color_hex(0x111824)}, {"5", '5', lv_color_hex(0x111824)}, {"6", '6', lv_color_hex(0x111824)},
+    {"7", '7', lv_color_hex(0x111824)}, {"8", '8', lv_color_hex(0x111824)}, {"9", '9', lv_color_hex(0x111824)},
+    {"Eff", -1, lv_color_hex(0x16202E)}, {"0", '0', lv_color_hex(0x111824)}, {"OK", -2, lv_color_hex(0x7A1E2C)}
+  };
+
+  const lv_coord_t keyW = 148;
+  const lv_coord_t keyH = 50;
+  const lv_coord_t gapX = 14;
+  const lv_coord_t gapY = 12;
+  const lv_coord_t keyboardW = (keyW * 3) + (gapX * 2);
+  const lv_coord_t startX = (800 - keyboardW) / 2;
+  const lv_coord_t startY = 182;
+
+  for (uint8_t i = 0; i < 12; i++) {
+    const lv_coord_t x = startX + (i % 3) * (keyW + gapX);
+    const lv_coord_t y = startY + (i / 3) * (keyH + gapY);
+    lv_obj_t* btn = lv_btn_create(_pinOverlay);
+    lv_obj_set_size(btn, keyW, keyH);
+    lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
+    lv_obj_set_style_radius(btn, 16, 0);
+    lv_obj_set_style_bg_color(btn, keys[i].bg, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_user_data(btn, (void*)(intptr_t)keys[i].code);
+    if (keys[i].code == -1) {
+      lv_obj_add_event_cb(btn, UiManager::onPinBackspace, LV_EVENT_CLICKED, this);
+    } else if (keys[i].code == -2) {
+      lv_obj_add_event_cb(btn, UiManager::onPinSubmit, LV_EVENT_CLICKED, this);
+    } else {
+      lv_obj_add_event_cb(btn, UiManager::onPinDigit, LV_EVENT_CLICKED, this);
+    }
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, keys[i].label);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
+    lv_obj_center(lbl);
+  }
+}
+
+void UiManager::setPinOverlayStatus(const char* text) {
+  if (_lblPinOverlayStatus) {
+    lv_label_set_text(_lblPinOverlayStatus, text ? text : "");
+  }
+}
+
+void UiManager::clearPinEntry(bool clearDraft) {
+  _pinEntryLen = 0;
+  _pinEntry[0] = '\0';
+  if (clearDraft) _pinDraft[0] = '\0';
+  setPinOverlayStatus("");
+  updatePinOverlay();
+}
+
+void UiManager::updatePinOverlay() {
+  char mask[(PIN_CODE_MAX_LENGTH * 2) + 1];
+  size_t pos = 0;
+  for (uint8_t i = 0; i < PIN_CODE_MAX_LENGTH; i++) {
+    mask[pos++] = (i < _pinEntryLen) ? '*' : '_';
+    if (i + 1 < PIN_CODE_MAX_LENGTH) mask[pos++] = ' ';
+  }
+  mask[pos] = '\0';
+  setLabelTextIfChanged(_lblPinOverlayValue, mask);
+
+  const char* title = "Code PIN";
+  const char* hint = "Saisis le code pour continuer.";
+  if (_pinOverlayMode == PIN_OVERLAY_UNLOCK) {
+    title = "Code PIN";
+    hint = (_pinPendingPage == DASH_PAGE_CALIBRATION)
+      ? "Saisis le code pour ouvrir Calibration."
+      : "Saisis le code pour ouvrir Parametres.";
+  } else if (_pinOverlayMode == PIN_OVERLAY_SET) {
+    title = "Nouveau PIN";
+    hint = "Entre un code de 4 a 8 chiffres.";
+  } else if (_pinOverlayMode == PIN_OVERLAY_CONFIRM) {
+    title = "Confirmation PIN";
+    hint = "Ressaisis le meme code pour confirmer.";
+  }
+
+  setLabelTextIfChanged(_lblPinOverlayTitle, title);
+  setLabelTextIfChanged(_lblPinOverlayHint, hint);
+}
+
+void UiManager::openPinOverlayForUnlock(uint8_t targetPage) {
+  if (!hasPinConfigured()) {
+    _touchPinUnlocked = true;
+    setDashboardPage(targetPage);
+    return;
+  }
+
+  _pinPendingPage = targetPage;
+  _pinOverlayMode = PIN_OVERLAY_UNLOCK;
+  clearPinEntry(true);
+  updatePinOverlay();
+  lv_obj_clear_flag(_pinOverlay, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(_pinOverlay);
+}
+
+void UiManager::openPinOverlayForSet() {
+  _pinPendingPage = 255;
+  _pinOverlayMode = PIN_OVERLAY_SET;
+  clearPinEntry(true);
+  updatePinOverlay();
+  lv_obj_clear_flag(_pinOverlay, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(_pinOverlay);
+}
+
+void UiManager::closePinOverlay() {
+  if (_pinOverlay) lv_obj_add_flag(_pinOverlay, LV_OBJ_FLAG_HIDDEN);
+  _pinOverlayMode = PIN_OVERLAY_HIDDEN;
+  _pinPendingPage = 255;
+  _pinEntryLen = 0;
+  _pinEntry[0] = '\0';
+  _pinDraft[0] = '\0';
+  setPinOverlayStatus("");
+  updatePinOverlay();
+}
+
+void UiManager::appendPinDigit(char digit) {
+  if (_pinOverlayMode == PIN_OVERLAY_HIDDEN) return;
+  if (digit < '0' || digit > '9') return;
+  if (_pinEntryLen >= PIN_CODE_MAX_LENGTH) return;
+  _pinEntry[_pinEntryLen++] = digit;
+  _pinEntry[_pinEntryLen] = '\0';
+  setPinOverlayStatus("");
+  updatePinOverlay();
+}
+
+void UiManager::backspacePinDigit() {
+  if (_pinOverlayMode == PIN_OVERLAY_HIDDEN || _pinEntryLen == 0) return;
+  _pinEntryLen--;
+  _pinEntry[_pinEntryLen] = '\0';
+  setPinOverlayStatus("");
+  updatePinOverlay();
+}
+
+void UiManager::submitPinEntry() {
+  if (!_s || !_store) return;
+
+  if (_pinOverlayMode == PIN_OVERLAY_UNLOCK) {
+    if (!pinCodeIsValid(_pinEntry)) {
+      setPinOverlayStatus("PIN invalide");
+      return;
+    }
+    if (strcmp(_pinEntry, _s->dashboardPin) != 0) {
+      clearPinEntry(false);
+      setPinOverlayStatus("PIN incorrect");
+      return;
+    }
+
+    _touchPinUnlocked = true;
+    uint8_t nextPage = _pinPendingPage;
+    closePinOverlay();
+    if (nextPage < DASH_PAGE_COUNT) setDashboardPage(nextPage);
+    return;
+  }
+
+  if (_pinOverlayMode == PIN_OVERLAY_SET) {
+    if (!pinCodeIsValid(_pinEntry)) {
+      setPinOverlayStatus("PIN: 4 a 8 chiffres");
+      return;
+    }
+    strncpy(_pinDraft, _pinEntry, sizeof(_pinDraft) - 1);
+    _pinDraft[sizeof(_pinDraft) - 1] = '\0';
+    _pinOverlayMode = PIN_OVERLAY_CONFIRM;
+    _pinEntryLen = 0;
+    _pinEntry[0] = '\0';
+    setPinOverlayStatus("");
+    updatePinOverlay();
+    return;
+  }
+
+  if (_pinOverlayMode == PIN_OVERLAY_CONFIRM) {
+    if (strcmp(_pinEntry, _pinDraft) != 0) {
+      _pinOverlayMode = PIN_OVERLAY_SET;
+      clearPinEntry(true);
+      setPinOverlayStatus("Confirmation differente");
+      return;
+    }
+
+    strncpy(_s->dashboardPin, _pinDraft, sizeof(_s->dashboardPin) - 1);
+    _s->dashboardPin[sizeof(_s->dashboardPin) - 1] = '\0';
+    _store->save(*_s);
+    _touchPinUnlocked = true;
+    refreshSettingsControls();
+    closePinOverlay();
+  }
 }
 
 void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
@@ -1063,6 +1340,10 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
 
 void UiManager::setDashboardPage(uint8_t page) {
   if (page >= DASH_PAGE_COUNT) return;
+  if (hasPinConfigured() && isProtectedPage(page) && !_touchPinUnlocked) {
+    openPinOverlayForUnlock(page);
+    return;
+  }
   bool pageChanged = (_currentDashPage != page);
   ensureDashboardPageBuilt(page);
 
@@ -1081,6 +1362,7 @@ void UiManager::setDashboardPage(uint8_t page) {
   }
 
   _currentDashPage = page;
+  if (!isProtectedPage(page)) _touchPinUnlocked = false;
   strncpy(g_runtimeStats.activePage, dashPageLabel(page), sizeof(g_runtimeStats.activePage) - 1);
   g_runtimeStats.activePage[sizeof(g_runtimeStats.activePage) - 1] = '\0';
   if (pageChanged) {
@@ -1213,6 +1495,22 @@ void UiManager::refreshSettingsControls() {
     const bool active = _s->audioResponseMode == 1;
     lv_obj_set_style_bg_color(_btnResponseSlow, active ? lv_color_hex(0x7A1E2C) : lv_color_hex(0x16202E), 0);
     lv_obj_set_style_text_color(_btnResponseSlow, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
+  }
+
+  if (_lblPinState) {
+    lv_label_set_text(_lblPinState, hasPinConfigured() ? "actif tactile" : "--");
+    lv_obj_set_style_text_color(_lblPinState,
+                                hasPinConfigured() ? lv_color_hex(0xB9C7D6) : lv_color_hex(0x6F8192),
+                                0);
+  }
+
+  if (_btnPinConfigure) {
+    lv_obj_t* lbl = lv_obj_get_child(_btnPinConfigure, 0);
+    if (lbl) lv_label_set_text((lv_obj_t*)lbl, hasPinConfigured() ? "Modifier PIN" : "Configurer PIN");
+  }
+
+  if (_btnPinDisable) {
+    setHiddenIfChanged(_btnPinDisable, !hasPinConfigured());
   }
 }
 
@@ -1862,4 +2160,45 @@ void UiManager::onConfirmResetYes(lv_event_t* e) {
 void UiManager::onPowerOff(lv_event_t* e) {
   UiManager* self = selfFromEvent(e);
   self->powerOffNow();
+}
+
+void UiManager::onPinDigit(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  lv_obj_t* btn = lv_event_get_target(e);
+  if (!self || !btn) return;
+  int32_t code = (int32_t)(intptr_t)lv_obj_get_user_data(btn);
+  self->appendPinDigit((char)code);
+}
+
+void UiManager::onPinBackspace(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self) return;
+  self->backspacePinDigit();
+}
+
+void UiManager::onPinCancel(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self) return;
+  self->closePinOverlay();
+}
+
+void UiManager::onPinSubmit(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self) return;
+  self->submitPinEntry();
+}
+
+void UiManager::onPinConfigure(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self || !self->_s || !self->_store) return;
+  self->openPinOverlayForSet();
+}
+
+void UiManager::onPinDisable(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self || !self->_s || !self->_store) return;
+  self->_s->dashboardPin[0] = '\0';
+  self->_store->save(*self->_s);
+  self->_touchPinUnlocked = false;
+  self->refreshSettingsControls();
 }

@@ -132,6 +132,29 @@ private:
   lv_obj_t* _lblWifiStatus = nullptr;
   lv_obj_t* _lblNtpStatus = nullptr;
   lv_obj_t* _lblNetInfo = nullptr;
+  lv_obj_t* _lblPinState = nullptr;
+  lv_obj_t* _btnPinConfigure = nullptr;
+  lv_obj_t* _btnPinDisable = nullptr;
+
+  lv_obj_t* _pinOverlay = nullptr;
+  lv_obj_t* _lblPinOverlayTitle = nullptr;
+  lv_obj_t* _lblPinOverlayHint = nullptr;
+  lv_obj_t* _lblPinOverlayValue = nullptr;
+  lv_obj_t* _lblPinOverlayStatus = nullptr;
+
+  enum PinOverlayMode : uint8_t {
+    PIN_OVERLAY_HIDDEN = 0,
+    PIN_OVERLAY_UNLOCK = 1,
+    PIN_OVERLAY_SET = 2,
+    PIN_OVERLAY_CONFIRM = 3,
+  };
+
+  PinOverlayMode _pinOverlayMode = PIN_OVERLAY_HIDDEN;
+  bool _touchPinUnlocked = false;
+  uint8_t _pinPendingPage = 255;
+  uint8_t _pinEntryLen = 0;
+  char _pinEntry[PIN_CODE_MAX_LENGTH + 1] = {0};
+  char _pinDraft[PIN_CODE_MAX_LENGTH + 1] = {0};
 
   SharedHistory* _history = nullptr;
   uint32_t _historyRevision = UINT32_MAX;
@@ -177,6 +200,18 @@ private:
   bool updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                           const char* dateText, const char* mainText, const char* secText);
   void layoutClockFocus();
+  bool hasPinConfigured() const;
+  bool isProtectedPage(uint8_t page) const;
+  void buildPinOverlay();
+  void openPinOverlayForUnlock(uint8_t targetPage);
+  void openPinOverlayForSet();
+  void closePinOverlay();
+  void setPinOverlayStatus(const char* text);
+  void clearPinEntry(bool clearDraft = false);
+  void appendPinDigit(char digit);
+  void backspacePinDigit();
+  void updatePinOverlay();
+  void submitPinEntry();
 
   void applyBacklight(uint8_t percent);
   lv_color_t zoneColorForDb(float db);
@@ -205,4 +240,10 @@ private:
   static void onCalibrationRefChanged(lv_event_t* e);
   static void onCalibrationMode(lv_event_t* e);
   static void onHistoryPlotDraw(lv_event_t* e);
+  static void onPinDigit(lv_event_t* e);
+  static void onPinBackspace(lv_event_t* e);
+  static void onPinCancel(lv_event_t* e);
+  static void onPinSubmit(lv_event_t* e);
+  static void onPinConfigure(lv_event_t* e);
+  static void onPinDisable(lv_event_t* e);
 };

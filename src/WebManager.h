@@ -58,10 +58,12 @@ private:
   bool requireStoreAndSettingsJson();
   String statusJson() const;
   String liveMetricsJson() const;
+  bool pinConfigured() const;
 
   void handleRoot();
   void handleStatus();
   void handleUiSave();
+  void handlePinSave();
 
   void handleTimeGet();
   void handleTimeSave();

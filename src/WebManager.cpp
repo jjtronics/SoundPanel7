@@ -65,6 +65,12 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"calibrationCaptureSec\":"; json += String(s ? (s->calibrationCaptureMs / MS_PER_SECOND) : (DEFAULT_CALIBRATION_CAPTURE_MS / MS_PER_SECOND)); json += ",";
 }
 
+static void appendPinStateJson(String& json, bool configured) {
+  json += "\"pinConfigured\":";
+  json += configured ? "true" : "false";
+  json += ",";
+}
+
 static void appendAudioMetricsJson(String& json, const AudioMetrics& am) {
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
@@ -137,6 +143,8 @@ void WebManager::routes() {
   _srv.on("/", HTTP_GET, [this]() { handleRoot(); });
 
   _srv.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
+
+  _srv.on("/api/pin", HTTP_POST, [this]() { handlePinSave(); });
 
   _srv.on("/api/ui", HTTP_POST, [this]() { handleUiSave(); });
 
@@ -245,6 +253,10 @@ bool WebManager::requireStoreAndSettingsJson() {
   return false;
 }
 
+bool WebManager::pinConfigured() const {
+  return _s && pinCodeIsConfigured(_s->dashboardPin);
+}
+
 String WebManager::statusJson() const {
   const bool wifiConnected = WiFi.isConnected();
   String ip = wifiConnected ? WiFi.localIP().toString() : String("");
@@ -270,6 +282,7 @@ String WebManager::statusJson() const {
   appendTimeJson(json, hasTime, tbuf);
   appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
   appendUiStateJson(json, _s, _history, true);
+  appendPinStateJson(json, pinConfigured());
   appendAudioMetricsJson(json, am);
   appendRuntimeStatsJson(json, g_runtimeStats);
 
@@ -307,6 +320,7 @@ String WebManager::liveMetricsJson() const {
   json += "{";
   appendAudioMetricsJson(json, am);
   appendUiStateJson(json, _s, _history, false);
+  appendPinStateJson(json, pinConfigured());
   appendWifiJson(json, wifiConnected, ip, rssi);
   appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
   appendRuntimeStatsJson(json, g_runtimeStats);
@@ -362,6 +376,31 @@ String WebManager::historyJson() const {
 
 void WebManager::handleStatus() {
   replyJson(200, statusJson());
+}
+
+void WebManager::handlePinSave() {
+  if (!requireStoreAndSettingsJson()) return;
+
+  String body = _srv.arg("plain");
+  String pin = sp7json::parseString(body, "pin", "", true);
+  pin.trim();
+
+  if (pin.length() > 0 && !pinCodeIsValid(pin.c_str())) {
+    replyErrorJson(400, "bad pin");
+    return;
+  }
+  if (!sp7json::safeCopy(_s->dashboardPin, sizeof(_s->dashboardPin), pin)) {
+    replyErrorJson(400, "pin too long");
+    return;
+  }
+
+  _store->save(*_s);
+  pushLiveMetrics(true);
+
+  String json = "{\"ok\":true,\"pinConfigured\":";
+  json += pinConfigured() ? "true" : "false";
+  json += "}";
+  replyJson(200, json);
 }
 
 void WebManager::handleUiSave() {
@@ -469,7 +508,7 @@ void WebManager::handleCalMode() {
 }
 
 void WebManager::handleTimeGet() {
-  if (!requireSettingsText()) return;
+  if (!requireSettingsJson()) return;
 
   String json;
   json.reserve(256);
@@ -1073,6 +1112,9 @@ R"HTML(
       appearance:none;border:1px solid var(--line);background:#172133;color:var(--txt);
       padding:10px 14px;border-radius:12px;font-weight:800;cursor:pointer;
     }
+    .btn[disabled], .switch[disabled], input[disabled], select[disabled], textarea[disabled]{
+      opacity:.5;cursor:not-allowed;
+    }
     .btn.accent{background:var(--accent);border-color:transparent}
     .btn.danger{background:#341419;border-color:#4A161B}
     .btn.ghost{background:transparent}
@@ -1126,6 +1168,20 @@ R"HTML(
     .pill{
       display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
       border:1px solid var(--line);background:var(--panel3);font-size:12px;color:var(--muted);
+    }
+    .pinBadge{
+      padding:5px 10px;
+      background:rgba(255,255,255,.03);
+      border-color:rgba(255,255,255,.05);
+      color:#93a4b6;
+      font-size:11px;
+      letter-spacing:.03em;
+      text-transform:uppercase;
+    }
+    .pinBadge.active{
+      background:rgba(122,30,44,.12);
+      border-color:rgba(122,30,44,.22);
+      color:#c8d3de;
     }
     @media (max-width:1024px){
       .gridOverview{grid-template-columns:1fr}
@@ -1537,6 +1593,26 @@ R"HTML(
             <article class="card settingsCardFlat">
               <div class="sectionHead">
                 <div>
+                  <div class="sectionKicker">Protection</div>
+                  <h2 class="sectionTitle">Verrou PIN</h2>
+                </div>
+              </div>
+              <div class="pill pinBadge mono" id="pinStatusAdv">PIN tactile: --</div>
+              <div class="field">
+                <label>Code PIN numerique</label>
+                <input id="accessPinAdv" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="4 a 8 chiffres"/>
+                <div class="hint">Protege Calibration et Parametres sur le tactile et sur l'interface web.</div>
+              </div>
+              <div class="btnRow">
+                <button class="btn accent" id="savePinAdv">Sauver PIN</button>
+                <button class="btn" id="clearPinAdv">Desactiver PIN</button>
+              </div>
+              <div class="toast" id="toastPinAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
                   <div class="sectionKicker">Temps Reseau</div>
                   <h2 class="sectionTitle">Heure, NTP & timezone</h2>
                 </div>
@@ -1656,6 +1732,7 @@ R"HTML(
                 <label>Reset partiel</label>
                 <select id="configResetScope">
                   <option value="ui">UI</option>
+                  <option value="security">Securite</option>
                   <option value="time">Heure / hostname</option>
                   <option value="audio">Audio</option>
                   <option value="calibration">Calibration</option>
@@ -1774,6 +1851,7 @@ R"HTML(
     redSinceMs: 0,
     uiDirty: false,
     uiResponseMode: 0,
+    pinConfigured: false,
     calibrationPointCount: 3,
     calRefs: [45, 65, 85, 95, 105],
     calRefsDirty: [false, false, false, false, false],
@@ -1815,6 +1893,10 @@ R"HTML(
 
   function pad2(v) {
     return String(v).padStart(2, "0");
+  }
+
+  function sanitizePinValue(value) {
+    return String(value || "").replace(/[^0-9]/g, "").slice(0, 8);
   }
 
   function getCalibrationPointCount(value) {
@@ -1917,6 +1999,13 @@ R"HTML(
     $("settingsTime").textContent = hhmmss;
   }
 
+  function applyPinState() {
+    const configured = Boolean(state.pinConfigured);
+    $("pinStatusAdv").textContent = configured ? "PIN tactile: actif" : "PIN tactile: --";
+    $("pinStatusAdv").classList.toggle("active", configured);
+    $("clearPinAdv").disabled = !configured;
+  }
+
   function setActivePage(page) {
     state.currentPage = page;
     document.querySelectorAll(".tab").forEach((el) => {
@@ -1925,6 +2014,7 @@ R"HTML(
     document.querySelectorAll(".page").forEach((el) => {
       el.classList.toggle("active", el.dataset.page === page);
     });
+    applyPinState();
   }
 
   function formatRedSeconds(redSeconds, historyMinutes) {
@@ -2174,6 +2264,7 @@ R"HTML(
     state.historyMinutes = Number(merged.historyMinutes ?? state.historyMinutes ?? 5);
     state.historyCapacity = Number(merged.historyCapacity ?? state.historyCapacity ?? 96);
     state.historySamplePeriodMs = Number(merged.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
+    state.pinConfigured = Boolean(merged.pinConfigured);
 
     const db = Number(merged.db ?? 0);
     const leq = Number(merged.leq ?? 0);
@@ -2189,6 +2280,7 @@ R"HTML(
 
     if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "");
     updateStatusSummary(merged);
+    applyPinState();
     updateHistoryLabels();
     if ("calibrationPointCount" in merged) {
       state.calibrationPointCount = getCalibrationPointCount(merged.calibrationPointCount);
@@ -2421,10 +2513,46 @@ R"HTML(
     }
   }
 
+  function clearProtectedSettingsFields() {
+    $("accessPinAdv").value = "";
+  }
+
+  async function savePinSettings() {
+    const pin = sanitizePinValue(getFieldValue("accessPinAdv"));
+    $("accessPinAdv").value = pin;
+    if (pin.length < 4 || pin.length > 8) {
+      setToast("toastPinAdv", "PIN: 4 a 8 chiffres.");
+      return;
+    }
+
+    await runToastRequest("toastPinAdv", "Sauvegarde...", () => apiPost("/api/pin", { pin }),
+      () => "PIN sauve.",
+      async () => {
+        $("accessPinAdv").value = "";
+        await refreshSettingsPanels();
+      });
+  }
+
+  async function clearPinSettings() {
+    if (!state.pinConfigured) {
+      setToast("toastPinAdv", "Aucun PIN actif.");
+      return;
+    }
+    if (!confirm("Desactiver le code PIN ?")) return;
+
+    await runToastRequest("toastPinAdv", "Desactivation...", () => apiPost("/api/pin", { pin: "" }),
+      () => "PIN desactive.",
+      async () => {
+        $("accessPinAdv").value = "";
+        await refreshSettingsPanels();
+      });
+  }
+
   async function refreshSettingsPanels() {
     state.uiDirty = false;
     state.calRefsDirty = [false, false, false, false, false];
     await refreshStatus();
+    clearProtectedSettingsFields();
     await loadTimeSettings();
     await loadOtaSettings();
     await loadMqttSettings();
@@ -2700,6 +2828,8 @@ R"HTML(
   window.addEventListener("resize", drawHistory);
 
   $("saveUi").addEventListener("click", saveUi);
+  $("savePinAdv").addEventListener("click", savePinSettings);
+  $("clearPinAdv").addEventListener("click", clearPinSettings);
   $("exportConfigBtn").addEventListener("click", exportConfig);
   $("importConfigBtn").addEventListener("click", importConfig);
   $("backupConfigBtn").addEventListener("click", backupConfig);
@@ -2712,6 +2842,9 @@ R"HTML(
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+  $("accessPinAdv").addEventListener("input", () => {
+    $("accessPinAdv").value = sanitizePinValue($("accessPinAdv").value);
+  });
   $("configFile").addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];
     if (!file) return;
@@ -2726,13 +2859,10 @@ R"HTML(
   async function initPage() {
     syncUiLabels();
     syncCalibrationModeButtons();
-    await refreshStatus();
+    await refreshSettingsPanels();
     connectLiveFeed();
     setInterval(refreshStatus, 2500);
     setInterval(checkSystemHeartbeat, 1000);
-    loadTimeSettings();
-    loadOtaSettings();
-    loadMqttSettings();
     setInterval(renderClock, 1000);
   }
 

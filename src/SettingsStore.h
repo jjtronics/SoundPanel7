@@ -3,7 +3,7 @@
 #include <Preferences.h>
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
-static constexpr uint16_t SETTINGS_VERSION = 5;
+static constexpr uint16_t SETTINGS_VERSION = 6;
 static constexpr uint32_t MS_PER_SECOND = 1000UL;
 static constexpr uint32_t MS_PER_MINUTE = 60UL * MS_PER_SECOND;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
@@ -26,11 +26,33 @@ static constexpr uint16_t DEFAULT_MQTT_PORT = 1883;
 static constexpr uint16_t DEFAULT_MQTT_PUBLISH_PERIOD_MS = 1000;
 static constexpr uint16_t MIN_MQTT_PUBLISH_PERIOD_MS = 250;
 static constexpr uint16_t MAX_MQTT_PUBLISH_PERIOD_MS = 60000;
+static constexpr uint8_t PIN_CODE_MIN_LENGTH = 4;
+static constexpr uint8_t PIN_CODE_MAX_LENGTH = 8;
 static constexpr float RECOMMENDED_CALIBRATION_3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
 static constexpr float RECOMMENDED_CALIBRATION_5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
 
 static inline uint8_t normalizedCalibrationPointCount(uint8_t count) {
   return (count >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+}
+
+static inline size_t pinCodeLength(const char* pin) {
+  if (!pin) return 0;
+  size_t len = 0;
+  while (pin[len]) len++;
+  return len;
+}
+
+static inline bool pinCodeIsValid(const char* pin) {
+  const size_t len = pinCodeLength(pin);
+  if (len < PIN_CODE_MIN_LENGTH || len > PIN_CODE_MAX_LENGTH) return false;
+  for (size_t i = 0; i < len; i++) {
+    if (pin[i] < '0' || pin[i] > '9') return false;
+  }
+  return true;
+}
+
+static inline bool pinCodeIsConfigured(const char* pin) {
+  return pinCodeIsValid(pin);
 }
 
 struct ThresholdsV1 {
@@ -48,6 +70,7 @@ struct SettingsV1 {
   uint8_t historyMinutes = DEFAULT_HISTORY_MINUTES;
   uint32_t orangeAlertHoldMs = DEFAULT_WARNING_HOLD_MS;
   uint32_t redAlertHoldMs = DEFAULT_CRITICAL_HOLD_MS;
+  char dashboardPin[PIN_CODE_MAX_LENGTH + 1] = "";
 
   // Time / locale
   char tz[64]        = "CET-1CEST,M3.5.0/2,M10.5.0/3";
