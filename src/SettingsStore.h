@@ -5,6 +5,7 @@
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
 static constexpr uint16_t SETTINGS_VERSION = 5;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
+static constexpr uint8_t CALIBRATION_POINT_MAX = 5;
 
 struct ThresholdsV1 {
   uint8_t greenMax  = 55;
@@ -48,10 +49,11 @@ struct SettingsV1 {
   float analogExtraOffsetDb = 15.0f;
 
   // calibration points
+  uint8_t calibrationPointCount = 3;
   uint32_t calibrationCaptureMs = 3000;
-  float calPointRefDb[3] = {45.0f, 65.0f, 85.0f};
-  float calPointRawLogRms[3] = {0.0f, 0.0f, 0.0f};
-  uint8_t calPointValid[3] = {0, 0, 0};
+  float calPointRefDb[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
+  float calPointRawLogRms[CALIBRATION_POINT_MAX] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  uint8_t calPointValid[CALIBRATION_POINT_MAX] = {0, 0, 0, 0, 0};
 
     // OTA
   uint8_t otaEnabled = 1;

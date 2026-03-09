@@ -77,6 +77,7 @@ private:
 
   void handleCalPoint();
   void handleCalClear();
+  void handleCalMode();
   void handleOtaGet();
   void handleOtaSave();
   void handleMqttGet();

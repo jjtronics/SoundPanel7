@@ -11,6 +11,7 @@
 
 #include "AudioEngine.h"
 #include "AppConfig.h"
+#include "AppRuntimeStats.h"
 
 extern AudioEngine g_audio;
 
@@ -119,47 +120,9 @@ void WebManager::routes() {
   _srv.on("/api/mqtt", HTTP_GET,  [this]() { handleMqttGet(); });
   _srv.on("/api/mqtt", HTTP_POST, [this]() { handleMqttSave(); });
 
-  _srv.on("/api/calibrate", HTTP_POST, [this]() {
-    if (!_store || !_s) {
-      replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-      return;
-    }
-
-    String body = _srv.arg("plain");
-    int index = jsonInt(body, "index", -1);
-    float refDb = jsonFloatLocal(body, "refDb", -1.0f);
-
-    if (index < 0 || index > 2) {
-      replyJson(400, "{\"ok\":false,\"error\":\"bad index\"}");
-      return;
-    }
-    if (refDb <= 0.0f || refDb > 140.0f) {
-      replyJson(400, "{\"ok\":false,\"error\":\"bad refDb\"}");
-      return;
-    }
-
-    bool ok = g_audio.captureCalibrationPoint(*_s, (uint8_t)index, refDb);
-    if (!ok) {
-      replyJson(500, "{\"ok\":false,\"error\":\"capture failed\"}");
-      return;
-    }
-
-    _store->save(*_s);
-    Serial0.printf("[WEB] CAL point %d saved @ %.1f dB\n", index + 1, refDb);
-    replyJson(200, "{\"ok\":true}");
-  });
-
-  _srv.on("/api/calibrate/clear", HTTP_POST, [this]() {
-    if (!_store || !_s) {
-      replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
-      return;
-    }
-
-    g_audio.clearCalibration(*_s);
-    _store->save(*_s);
-    Serial0.println("[WEB] CAL cleared");
-    replyJson(200, "{\"ok\":true}");
-  });
+  _srv.on("/api/calibrate", HTTP_POST, [this]() { handleCalPoint(); });
+  _srv.on("/api/calibrate/clear", HTTP_POST, [this]() { handleCalClear(); });
+  _srv.on("/api/calibrate/mode", HTTP_POST, [this]() { handleCalMode(); });
 
   _srv.on("/api/reboot", HTTP_POST, [this]() { handleReboot(); });
   _srv.on("/api/shutdown", HTTP_POST, [this]() { handleShutdown(); });
@@ -220,7 +183,7 @@ String WebManager::statusJson() const {
   const AudioMetrics& am = g_audio.metrics();
 
   String json;
-  json.reserve(832);
+  json.reserve(1500);
   json += "{";
   json += "\"wifi\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
   json += "\"ip\":\""; json += ip; json += "\",";
@@ -248,6 +211,7 @@ String WebManager::statusJson() const {
   json += "\"historySamplePeriodMs\":"; json += String(_history ? _history->samplePeriodMs() : 3000); json += ",";
   json += "\"warningHoldSec\":"; json += String(_s ? (_s->orangeAlertHoldMs / 1000UL) : 3); json += ",";
   json += "\"criticalHoldSec\":"; json += String(_s ? (_s->redAlertHoldMs / 1000UL) : 2); json += ",";
+  json += "\"calibrationPointCount\":"; json += String(_s ? _s->calibrationPointCount : 3); json += ",";
   json += "\"calibrationCaptureSec\":"; json += String(_s ? (_s->calibrationCaptureMs / 1000UL) : 3); json += ",";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
@@ -257,9 +221,21 @@ String WebManager::statusJson() const {
   json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
   json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
   json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
+  json += "\"lvglIdlePct\":"; json += String(g_runtimeStats.lvglIdlePct); json += ",";
+  json += "\"lvglLoadPct\":"; json += String(g_runtimeStats.lvglLoadPct); json += ",";
+  json += "\"lvglUiWorkUs\":"; json += String(g_runtimeStats.uiWorkLastUs); json += ",";
+  json += "\"lvglUiWorkMaxUs\":"; json += String(g_runtimeStats.uiWorkMaxUs); json += ",";
+  json += "\"lvglHandlerUs\":"; json += String(g_runtimeStats.lvHandlerLastUs); json += ",";
+  json += "\"lvglHandlerMaxUs\":"; json += String(g_runtimeStats.lvHandlerMaxUs); json += ",";
+  json += "\"lvglObjCount\":"; json += String(g_runtimeStats.lvObjCount); json += ",";
+  json += "\"heapInternalFree\":"; json += String(g_runtimeStats.heapInternalFree); json += ",";
+  json += "\"heapInternalMin\":"; json += String(g_runtimeStats.heapInternalMin); json += ",";
+  json += "\"heapPsramFree\":"; json += String(g_runtimeStats.heapPsramFree); json += ",";
+  json += "\"heapPsramMin\":"; json += String(g_runtimeStats.heapPsramMin); json += ",";
+  json += "\"activePage\":\""; json += String(g_runtimeStats.activePage); json += "\",";
 
   json += "\"cal\":[";
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
     if (i) json += ",";
     json += "{";
     json += "\"valid\":"; json += (_s && _s->calPointValid[i] ? "true" : "false"); json += ",";
@@ -287,7 +263,7 @@ String WebManager::liveMetricsJson() const {
   const AudioMetrics& am = g_audio.metrics();
 
   String json;
-  json.reserve(512);
+  json.reserve(960);
   json += "{";
   json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
   json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
@@ -320,6 +296,18 @@ String WebManager::liveMetricsJson() const {
   json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
   json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
   json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
+  json += "\"lvglIdlePct\":"; json += String(g_runtimeStats.lvglIdlePct); json += ",";
+  json += "\"lvglLoadPct\":"; json += String(g_runtimeStats.lvglLoadPct); json += ",";
+  json += "\"lvglUiWorkUs\":"; json += String(g_runtimeStats.uiWorkLastUs); json += ",";
+  json += "\"lvglUiWorkMaxUs\":"; json += String(g_runtimeStats.uiWorkMaxUs); json += ",";
+  json += "\"lvglHandlerUs\":"; json += String(g_runtimeStats.lvHandlerLastUs); json += ",";
+  json += "\"lvglHandlerMaxUs\":"; json += String(g_runtimeStats.lvHandlerMaxUs); json += ",";
+  json += "\"lvglObjCount\":"; json += String(g_runtimeStats.lvObjCount); json += ",";
+  json += "\"heapInternalFree\":"; json += String(g_runtimeStats.heapInternalFree); json += ",";
+  json += "\"heapInternalMin\":"; json += String(g_runtimeStats.heapInternalMin); json += ",";
+  json += "\"heapPsramFree\":"; json += String(g_runtimeStats.heapPsramFree); json += ",";
+  json += "\"heapPsramMin\":"; json += String(g_runtimeStats.heapPsramMin); json += ",";
+  json += "\"activePage\":\""; json += String(g_runtimeStats.activePage); json += "\",";
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
   json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\"";
   json += "}";
@@ -454,6 +442,7 @@ void WebManager::handleUiSave() {
   int arm = jsonInt(body, "audioResponseMode", (int)_s->audioResponseMode);
   int whs = jsonInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / 1000UL));
   int chs = jsonInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / 1000UL));
+  int calCount = jsonInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
   int ccs = jsonInt(body, "calibrationCaptureSec", (int)(_s->calibrationCaptureMs / 1000UL));
 
   if (bl < 0) bl = 0;
@@ -470,6 +459,7 @@ void WebManager::handleUiSave() {
   if (whs > 60) whs = 60;
   if (chs < 0) chs = 0;
   if (chs > 60) chs = 60;
+  calCount = (calCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
   if (ccs < 1) ccs = 1;
   if (ccs > 30) ccs = 30;
 
@@ -480,6 +470,7 @@ void WebManager::handleUiSave() {
   _s->audioResponseMode = (uint8_t)arm;
   _s->orangeAlertHoldMs = (uint32_t)whs * 1000UL;
   _s->redAlertHoldMs = (uint32_t)chs * 1000UL;
+  _s->calibrationPointCount = (uint8_t)calCount;
   _s->calibrationCaptureMs = (uint32_t)ccs * 1000UL;
   if (_history) _history->settingsChanged();
 
@@ -489,6 +480,67 @@ void WebManager::handleUiSave() {
   Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
                  bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyJson(200, "{\"ok\":true}\n");
+}
+
+void WebManager::handleCalPoint() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  String body = _srv.arg("plain");
+  int index = jsonInt(body, "index", -1);
+  float refDb = jsonFloatLocal(body, "refDb", -1.0f);
+
+  if (index < 0 || index >= _s->calibrationPointCount) {
+    replyJson(400, "{\"ok\":false,\"error\":\"bad index\"}");
+    return;
+  }
+  if (refDb <= 0.0f || refDb > 140.0f) {
+    replyJson(400, "{\"ok\":false,\"error\":\"bad refDb\"}");
+    return;
+  }
+
+  if (!g_audio.captureCalibrationPoint(*_s, (uint8_t)index, refDb)) {
+    replyJson(500, "{\"ok\":false,\"error\":\"capture failed\"}");
+    return;
+  }
+
+  _store->save(*_s);
+  Serial0.printf("[WEB] CAL point %d/%d saved @ %.1f dB\n", index + 1, _s->calibrationPointCount, refDb);
+  replyJson(200, "{\"ok\":true}");
+}
+
+void WebManager::handleCalClear() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  g_audio.clearCalibration(*_s);
+  _store->save(*_s);
+  Serial0.println("[WEB] CAL cleared");
+  replyJson(200, "{\"ok\":true}");
+}
+
+void WebManager::handleCalMode() {
+  if (!_store || !_s) {
+    replyJson(500, "{\"ok\":false,\"error\":\"store/settings missing\"}");
+    return;
+  }
+
+  String body = _srv.arg("plain");
+  int pointCount = jsonInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
+  pointCount = (pointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+
+  if ((uint8_t)pointCount != _s->calibrationPointCount) {
+    _s->calibrationPointCount = (uint8_t)pointCount;
+    g_audio.clearCalibration(*_s);
+    _store->save(*_s);
+  }
+
+  Serial0.printf("[WEB] CAL mode set to %d points\n", pointCount);
+  replyJson(200, "{\"ok\":true}");
 }
 
 void WebManager::handleTimeGet() {
@@ -1148,6 +1200,9 @@ R"HTML(
       font-weight:700;
       letter-spacing:-.01em;
     }
+    .statusItem .v.metricOk{color:#7ee2a0}
+    .statusItem .v.metricWarn{color:#f6c86b}
+    .statusItem .v.metricBad{color:#ff8f8a}
     .healthBadge{
       display:inline-flex;align-items:center;justify-content:center;
       min-height:32px;padding:6px 12px;border-radius:999px;
@@ -1164,11 +1219,14 @@ R"HTML(
     .calHeader{
       display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
     }
+    .calModeRow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}
+    .calModeSwitch{display:flex;gap:10px;flex-wrap:wrap}
     .calRows{display:flex;flex-direction:column;gap:10px;margin-top:16px}
     .calRow{
       display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;gap:10px;align-items:center;
       background:var(--panel3);border-radius:18px;padding:12px 14px;
     }
+    .calRow[hidden]{display:none}
     .calTitle{font-size:15px;font-weight:800}
     .badge{
       min-width:74px;height:34px;border-radius:12px;background:#16202E;
@@ -1372,6 +1430,17 @@ R"HTML(
             <div class="pill mono" id="calStatus">0 / 3 points valides</div>
           </div>
 
+          <div class="calModeRow">
+            <div>
+              <div class="calTitle">Mode de calibration</div>
+              <div class="hint">3 points pour une calibration rapide, 5 points pour une courbe plus fine.</div>
+            </div>
+            <div class="calModeSwitch">
+              <button class="btn choice active" id="calMode3" data-cal-mode="3">3 points</button>
+              <button class="btn choice" id="calMode5" data-cal-mode="5">5 points</button>
+            </div>
+          </div>
+
           <div class="calRows">
             <div class="calRow">
               <div>
@@ -1404,6 +1473,28 @@ R"HTML(
               <div class="badge mono" id="calRef3">85</div>
               <button class="btn" data-cal-adjust="2:5">+</button>
               <button class="btn accent" data-cal-capture="2">Capturer</button>
+            </div>
+
+            <div class="calRow" hidden>
+              <div>
+                <div class="calTitle">Point 4</div>
+                <div class="hint mono" id="calState4">Point 4 non capture</div>
+              </div>
+              <button class="btn" data-cal-adjust="3:-5">-</button>
+              <div class="badge mono" id="calRef4">85</div>
+              <button class="btn" data-cal-adjust="3:5">+</button>
+              <button class="btn accent" data-cal-capture="3">Capturer</button>
+            </div>
+
+            <div class="calRow" hidden>
+              <div>
+                <div class="calTitle">Point 5</div>
+                <div class="hint mono" id="calState5">Point 5 non capture</div>
+              </div>
+              <button class="btn" data-cal-adjust="4:-5">-</button>
+              <div class="badge mono" id="calRef5">100</div>
+              <button class="btn" data-cal-adjust="4:5">+</button>
+              <button class="btn accent" data-cal-capture="4">Capturer</button>
             </div>
           </div>
 
@@ -1465,6 +1556,22 @@ R"HTML(
                 <div class="statusItem">
                   <div class="k">Etat OTA / MQTT</div>
                   <div class="v mono" id="settingsOtaMqtt">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Ecran actif</div>
+                  <div class="v mono" id="settingsActivePage">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">LVGL load / idle</div>
+                  <div class="v mono" id="settingsLvglLoad">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">UI / handler</div>
+                  <div class="v mono" id="settingsLvglTiming">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Heap / objets</div>
+                  <div class="v mono" id="settingsLvglHeap">--</div>
                 </div>
               </div>
             </article>
@@ -1777,8 +1884,9 @@ R"HTML(
     redSinceMs: 0,
     uiDirty: false,
     uiResponseMode: 0,
-    calRefs: [40, 65, 85],
-    calRefsDirty: [false, false, false],
+    calibrationPointCount: 3,
+    calRefs: [45, 65, 85, 95, 105],
+    calRefsDirty: [false, false, false, false, false],
   };
 
   const gaugeViews = [
@@ -1810,8 +1918,30 @@ R"HTML(
     },
   ];
 
+  const calibrationRecommendations = {
+    3: [45, 65, 85, 95, 105],
+    5: [40, 55, 70, 85, 100],
+  };
+
   function pad2(v) {
     return String(v).padStart(2, "0");
+  }
+
+  function getCalibrationPointCount(value) {
+    return Number(value) >= 5 ? 5 : 3;
+  }
+
+  function calibrationRows() {
+    return Array.from(document.querySelectorAll(".calRow"));
+  }
+
+  function syncCalibrationModeButtons() {
+    const pointCount = getCalibrationPointCount(state.calibrationPointCount);
+    $("calMode3").classList.toggle("active", pointCount === 3);
+    $("calMode5").classList.toggle("active", pointCount === 5);
+    calibrationRows().forEach((row, index) => {
+      row.hidden = index >= pointCount;
+    });
   }
 
   function formatUptime(totalSeconds) {
@@ -2056,6 +2186,38 @@ R"HTML(
   }
 
   function updateStatusSummary(st) {
+    const setMetricTone = (id, tone) => {
+      const el = $(id);
+      el.classList.remove("metricOk", "metricWarn", "metricBad");
+      if (tone === "bad") el.classList.add("metricBad");
+      else if (tone === "warn") el.classList.add("metricWarn");
+      else el.classList.add("metricOk");
+    };
+    const worstTone = (...tones) => {
+      if (tones.includes("bad")) return "bad";
+      if (tones.includes("warn")) return "warn";
+      return "ok";
+    };
+    const loadTone = (load) => load >= 50 ? "bad" : (load >= 25 ? "warn" : "ok");
+    const timingTone = (ms) => ms >= 20 ? "bad" : (ms >= 10 ? "warn" : "ok");
+    const heapTone = (freeBytes, minBytes, objCount) => {
+      if (freeBytes < 65536 || minBytes < 49152 || objCount >= 700) return "bad";
+      if (freeBytes < 98304 || minBytes < 81920 || objCount >= 450) return "warn";
+      return "ok";
+    };
+    const kb = (value) => `${Math.round(Number(value || 0) / 1024)}k`;
+    const usToMs = (value) => `${(Number(value || 0) / 1000).toFixed(1)} ms`;
+    const lvglLoadPct = Number(st.lvglLoadPct ?? 0);
+    const lvglIdlePct = Number(st.lvglIdlePct ?? 100);
+    const lvglUiWorkUs = Number(st.lvglUiWorkUs ?? 0);
+    const lvglUiWorkMaxUs = Number(st.lvglUiWorkMaxUs ?? 0);
+    const lvglHandlerUs = Number(st.lvglHandlerUs ?? 0);
+    const lvglHandlerMaxUs = Number(st.lvglHandlerMaxUs ?? 0);
+    const lvglObjCount = Number(st.lvglObjCount ?? 0);
+    const heapInternalFree = Number(st.heapInternalFree ?? 0);
+    const heapInternalMin = Number(st.heapInternalMin ?? 0);
+    const heapPsramFree = Number(st.heapPsramFree ?? 0);
+    const heapPsramMin = Number(st.heapPsramMin ?? 0);
     $("settingsIp").textContent = st.wifi ? `${st.ip || "-"} / ${st.rssi ?? 0} dBm` : "--";
     $("settingsUptime").textContent = formatUptime(st.uptime_s);
     $("settingsHistory").textContent = `${state.historyMinutes} min / ${state.historyCapacity} points`;
@@ -2070,6 +2232,18 @@ R"HTML(
       ? (st.mqttConnected ? "connecte" : (st.mqttLastError ? `erreur (${st.mqttLastError})` : "en attente"))
       : "off";
     $("settingsOtaMqtt").textContent = `OTA ${otaState} / MQTT ${mqttState}`;
+    $("settingsActivePage").textContent = st.activePage || "--";
+    $("settingsLvglLoad").textContent = `${lvglLoadPct}% / ${lvglIdlePct}%`;
+    $("settingsLvglTiming").textContent =
+      `UI ${usToMs(lvglUiWorkUs)} max ${usToMs(lvglUiWorkMaxUs)} | H ${usToMs(lvglHandlerUs)} max ${usToMs(lvglHandlerMaxUs)}`;
+    const psramText = heapPsramFree > 0
+      ? ` / PS ${kb(heapPsramFree)} min ${kb(heapPsramMin)}`
+      : "";
+    $("settingsLvglHeap").textContent =
+      `INT ${kb(heapInternalFree)} min ${kb(heapInternalMin)} / OBJ ${lvglObjCount}${psramText}`;
+    setMetricTone("settingsLvglLoad", loadTone(lvglLoadPct));
+    setMetricTone("settingsLvglTiming", worstTone(timingTone(lvglUiWorkUs / 1000), timingTone(lvglHandlerUs / 1000)));
+    setMetricTone("settingsLvglHeap", heapTone(heapInternalFree, heapInternalMin, lvglObjCount));
     $("rawRmsAdv").textContent = Number(st.rawRms ?? 0).toFixed(2);
     $("rawPseudoDbAdv").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
     $("rawAdcMeanAdv").textContent = String(st.rawAdcMean ?? "--");
@@ -2126,6 +2300,10 @@ R"HTML(
     if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "");
     updateStatusSummary(merged);
     updateHistoryLabels();
+    if ("calibrationPointCount" in merged) {
+      state.calibrationPointCount = getCalibrationPointCount(merged.calibrationPointCount);
+      syncCalibrationModeButtons();
+    }
 
     if (Array.isArray(merged.history) && (options.useHistorySnapshot || !state.historyInitialized)) {
       setHistory(merged.history);
@@ -2134,7 +2312,7 @@ R"HTML(
     }
 
     $("calLiveMic").textContent = merged.analogOk
-      ? `Micro live: rms=${Number(merged.rawRms ?? 0).toFixed(2)}`
+      ? `Micro live: ${Number(merged.db ?? 0).toFixed(1)} dB`
       : "Micro live: indisponible";
     $("calLiveLog").textContent = merged.analogOk
       ? `Log calibration live: ${Math.log10((Number(merged.rawRms ?? 0) + 0.0001)).toFixed(4)}`
@@ -2147,15 +2325,18 @@ R"HTML(
         if (!state.calRefsDirty[index]) {
           state.calRefs[index] = Number(point.refDb ?? state.calRefs[index] ?? 0);
         }
-        $(`calRef${i}`).textContent = Number(state.calRefs[index] ?? 0).toFixed(0);
-        if (point.valid) {
+        const refEl = $(`calRef${i}`);
+        const stateEl = $(`calState${i}`);
+        if (!refEl || !stateEl) return;
+        refEl.textContent = Number(state.calRefs[index] ?? 0).toFixed(0);
+        if (index < state.calibrationPointCount && point.valid) {
           validCount++;
-          $(`calState${i}`).textContent = `Point ${i} capture ${Number(point.rawLogRms ?? 0).toFixed(3)}`;
+          stateEl.textContent = `Point ${i} capture ${Number(point.rawLogRms ?? 0).toFixed(3)}`;
         } else {
-          $(`calState${i}`).textContent = `Point ${i} non capture`;
+          stateEl.textContent = `Point ${i} non capture`;
         }
       });
-      $("calStatus").textContent = `${validCount} / 3 points valides`;
+      $("calStatus").textContent = `${validCount} / ${state.calibrationPointCount} points valides`;
     }
 
     if (!state.uiDirty) {
@@ -2279,7 +2460,7 @@ R"HTML(
 
   async function refreshSettingsPanels() {
     state.uiDirty = false;
-    state.calRefsDirty = [false, false, false];
+    state.calRefsDirty = [false, false, false, false, false];
     await refreshStatus();
     await loadTimeSettings();
     await loadOtaSettings();
@@ -2505,11 +2686,27 @@ R"HTML(
     }
   }
 
+  async function setCalibrationMode(pointCount) {
+    const nextCount = getCalibrationPointCount(pointCount);
+    if (nextCount === state.calibrationPointCount) return;
+    try {
+      await apiPost("/api/calibrate/mode", { calibrationPointCount: nextCount });
+      state.calibrationPointCount = nextCount;
+      state.calRefs = [...calibrationRecommendations[nextCount]];
+      state.calRefsDirty = [false, false, false, false, false];
+      $("calToast").textContent = `Mode calibration ${nextCount} points.`;
+      await refreshStatus();
+    } catch (err) {
+      $("calToast").textContent = `Erreur: ${err.message}`;
+      syncCalibrationModeButtons();
+    }
+  }
+
   async function clearCalibration() {
     if (!confirm("Effacer la calibration ?")) return;
     try {
       await apiPost("/api/calibrate/clear", {});
-      state.calRefsDirty = [false, false, false];
+      state.calRefsDirty = [false, false, false, false, false];
       $("calToast").textContent = "Calibration effacee.";
       await refreshStatus();
     } catch (err) {
@@ -2567,12 +2764,16 @@ R"HTML(
     });
   });
 
+  document.querySelectorAll("[data-cal-mode]").forEach((btn) => {
+    btn.addEventListener("click", () => setCalibrationMode(Number(btn.dataset.calMode)));
+  });
+
   document.querySelectorAll("[data-cal-adjust]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const [indexStr, deltaStr] = btn.dataset.calAdjust.split(":");
       const index = Number(indexStr);
       const delta = Number(deltaStr);
-      state.calRefs[index] = Math.max(35, Math.min(100, Number(state.calRefs[index] || 0) + delta));
+      state.calRefs[index] = Math.max(35, Math.min(110, Number(state.calRefs[index] || 0) + delta));
       state.calRefsDirty[index] = true;
       $(`calRef${index + 1}`).textContent = state.calRefs[index].toFixed(0);
     });
@@ -2610,6 +2811,7 @@ R"HTML(
 
   async function initPage() {
     syncUiLabels();
+    syncCalibrationModeButtons();
     await refreshStatus();
     connectLiveFeed();
     setInterval(refreshStatus, 2500);

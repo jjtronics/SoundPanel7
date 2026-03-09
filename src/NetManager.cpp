@@ -10,6 +10,8 @@
 #include "AppConfig.h"
 
 static WiFiManager g_wm;
+static wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
+static String g_lastWifiIp;
 
 bool NetManager::begin(SettingsV1* settings) {
   _s = settings;
@@ -26,7 +28,7 @@ bool NetManager::begin(SettingsV1* settings) {
   }
 
   // WiFiManager behavior
-  g_wm.setDebugOutput(true);
+  g_wm.setDebugOutput(false);
   g_wm.setConfigPortalBlocking(false); // IMPORTANT: non-bloquant, on fera g_wm.process() dans loop()
 
   // Optionnel mais pratique pour éviter des waits interminables
@@ -80,21 +82,22 @@ void NetManager::loop() {
   // fait tourner WiFiManager (important en mode non-bloquant)
   g_wm.process();
 
-  // Print de status wifi toutes ~3s max (évite spam)
-  uint32_t now = millis();
-  if (now - _lastPrint >= 3000) {
-    _lastPrint = now;
+  wl_status_t wifiStatus = WiFi.status();
+  String currentIp = isWifiConnected() ? WiFi.localIP().toString() : String("");
+  if (wifiStatus != g_lastWifiStatus || currentIp != g_lastWifiIp) {
+    g_lastWifiStatus = wifiStatus;
+    g_lastWifiIp = currentIp;
 
     if (isWifiConnected()) {
       Serial0.printf("[Net] WiFi OK IP=%s RSSI=%ld\n",
-                     ipString().c_str(),
+                     currentIp.c_str(),
                      (long)rssi());
       if (_s) {
         Serial0.printf("[Net] NTP server: %s\n", _s->ntpServer);
         Serial0.printf("[Net] TZ: %s\n", _s->tz);
       }
     } else {
-      Serial0.println("[Net] WiFi not connected (portal?)");
+      Serial0.printf("[Net] WiFi status=%d\n", (int)wifiStatus);
     }
   }
 

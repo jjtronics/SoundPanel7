@@ -5,10 +5,17 @@ static constexpr float kRmsEpsilon = 0.0001f;
 static constexpr float kFastAlpha = 0.45f;
 static constexpr float kSlowAlpha = 0.10f;
 static constexpr uint8_t kCalibrationSampleCount = 24;
+static constexpr float kRecommendedCalibration3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
+static constexpr float kRecommendedCalibration5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
+
+static uint8_t configuredCalibrationPointCount(const SettingsV1& s) {
+  return (s.calibrationPointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+}
 
 static uint8_t countValidCalibrationPoints(const SettingsV1& s) {
   uint8_t count = 0;
-  for (uint8_t i = 0; i < 3; i++) {
+  const uint8_t activeCount = configuredCalibrationPointCount(s);
+  for (uint8_t i = 0; i < activeCount; i++) {
     if (s.calPointValid[i]) count++;
   }
   return count;
@@ -47,7 +54,10 @@ void AudioEngine::begin(SettingsV1* settings) {
 
 #if defined(ARDUINO_ARCH_ESP32)
   analogReadResolution(12);
-  analogSetPinAttenuation(settings->analogPin, ADC_11db);
+  // Set the default attenuation before the first analogRead().
+  // analogSetPinAttenuation(pin, ...) logs an error if the channel has not yet
+  // been initialized by the core, even though later reads still work.
+  analogSetAttenuation(ADC_11db);
 #endif
 }
 
@@ -89,9 +99,10 @@ float AudioEngine::computeAnalogRms(uint8_t pin, uint16_t sampleCount, uint16_t&
 float AudioEngine::computeCalibratedDb(float rms, const SettingsV1& s) const {
   float x = log10f(rms + kRmsEpsilon);
 
-  uint8_t idx[3];
+  uint8_t idx[CALIBRATION_POINT_MAX];
   uint8_t n = 0;
-  for (uint8_t i = 0; i < 3; i++) {
+  const uint8_t activeCount = configuredCalibrationPointCount(s);
+  for (uint8_t i = 0; i < activeCount; i++) {
     if (s.calPointValid[i]) idx[n++] = i;
   }
 
@@ -194,7 +205,7 @@ float AudioEngine::captureCalibrationLogRms(const SettingsV1& s, bool& okOut) {
 }
 
 bool AudioEngine::captureCalibrationPoint(SettingsV1& s, uint8_t index, float refDb) {
-  if (index >= 3) return false;
+  if (index >= configuredCalibrationPointCount(s)) return false;
 
   bool ok = false;
   float capturedLogRms = captureCalibrationLogRms(s, ok);
@@ -207,10 +218,12 @@ bool AudioEngine::captureCalibrationPoint(SettingsV1& s, uint8_t index, float re
 }
 
 void AudioEngine::clearCalibration(SettingsV1& s) {
-  static const float kRecommendedRefDb[3] = {45.0f, 65.0f, 85.0f};
+  const float* recommended = (configuredCalibrationPointCount(s) == CALIBRATION_POINT_MAX)
+    ? kRecommendedCalibration5
+    : kRecommendedCalibration3;
 
-  for (uint8_t i = 0; i < 3; i++) {
-    s.calPointRefDb[i] = kRecommendedRefDb[i];
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    s.calPointRefDb[i] = recommended[i];
     s.calPointRawLogRms[i] = 0.0f;
     s.calPointValid[i] = 0;
   }

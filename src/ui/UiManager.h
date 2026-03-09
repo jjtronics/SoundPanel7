@@ -44,6 +44,7 @@ private:
   lv_obj_t* _dashContent = nullptr;
   lv_obj_t* _dashPages[DASH_PAGE_COUNT] = {nullptr};
   lv_obj_t* _dashTabs[DASH_PAGE_COUNT] = {nullptr};
+  bool _dashPageBuilt[DASH_PAGE_COUNT] = {false};
   uint8_t _currentDashPage = DASH_PAGE_OVERVIEW;
 
   // Dashboard
@@ -80,14 +81,17 @@ private:
   lv_obj_t* _lblHistTLeftFocus = nullptr;
   lv_obj_t* _lblHistTMidFocus = nullptr;
   lv_obj_t* _lblHistTRightFocus = nullptr;
-  lv_obj_t* _histBarsFocus[HISTORY_BAR_COUNT] = {nullptr};
+  lv_obj_t* _histPlotFocus = nullptr;
   lv_obj_t* _lblCalStatus = nullptr;
   lv_obj_t* _lblCalLive = nullptr;
-  lv_obj_t* _lblCalPoint[3] = {nullptr};
-  lv_obj_t* _btnCalRefMinus[3] = {nullptr};
-  lv_obj_t* _btnCalRefPlus[3] = {nullptr};
-  lv_obj_t* _lblCalRef[3] = {nullptr};
-  lv_obj_t* _btnCalCapture[3] = {nullptr};
+  lv_obj_t* _btnCalMode3 = nullptr;
+  lv_obj_t* _btnCalMode5 = nullptr;
+  lv_obj_t* _lblCalPoint[CALIBRATION_POINT_MAX] = {nullptr};
+  lv_obj_t* _btnCalRefMinus[CALIBRATION_POINT_MAX] = {nullptr};
+  lv_obj_t* _btnCalRefPlus[CALIBRATION_POINT_MAX] = {nullptr};
+  lv_obj_t* _lblCalRef[CALIBRATION_POINT_MAX] = {nullptr};
+  lv_obj_t* _btnCalCapture[CALIBRATION_POINT_MAX] = {nullptr};
+  lv_obj_t* _calRows[CALIBRATION_POINT_MAX] = {nullptr};
   lv_obj_t* _lblCalFallback = nullptr;
 
   lv_obj_t* _histWrap = nullptr;
@@ -98,7 +102,7 @@ private:
   lv_obj_t* _lblHistTLeft = nullptr;
   lv_obj_t* _lblHistTMid = nullptr;
   lv_obj_t* _lblHistTRight = nullptr;
-  lv_obj_t* _histBars[HISTORY_BAR_COUNT] = {nullptr};
+  lv_obj_t* _histPlot = nullptr;
 
   // Popup confirmation reset
   lv_obj_t* _msgboxConfirm = nullptr;
@@ -124,6 +128,10 @@ private:
   uint32_t _historyRevision = UINT32_MAX;
 
   uint32_t _lastTickMs = 0;
+  uint32_t _lastSoundUiUpdateMs = 0;
+  uint32_t _lastClockUiUpdateMs = 0;
+  uint32_t _lastSettingsUiUpdateMs = 0;
+  uint32_t _lastCalibrationUiUpdateMs = 0;
   float _lastDb = 0.0f;
   float _lastLeq = 0.0f;
   float _lastPeak = 0.0f;
@@ -134,6 +142,9 @@ private:
   uint16_t _redHistoryHead = 0;
   uint16_t _redHistoryCount = 0;
   uint16_t _redHistorySum = 0;
+  uint8_t _lastAlertVisualState = 255;
+  uint8_t _lastAlertVisualPhase = 255;
+  uint8_t _lastCalibrationActiveCount = 0;
 
   void buildDashboard();
   void buildDashboardOverviewPage(lv_obj_t* parent);
@@ -141,19 +152,20 @@ private:
   void buildDashboardSoundPage(lv_obj_t* parent);
   void buildDashboardCalibrationPage(lv_obj_t* parent);
   void buildDashboardSettingsPage(lv_obj_t* parent);
+  void ensureDashboardPageBuilt(uint8_t page);
   void buildHistoryCard(lv_obj_t* parent,
                         int width,
                         int height,
                         lv_obj_t** wrapOut,
+                        lv_obj_t** plotOut,
                         lv_obj_t** titleOut,
                         lv_obj_t** leftOut,
                         lv_obj_t** midOut,
-                        lv_obj_t** rightOut,
-                        lv_obj_t* barsOut[HISTORY_BAR_COUNT]);
+                        lv_obj_t** rightOut);
   void setDashboardPage(uint8_t page);
   void refreshCalibrationView();
   void refreshSettingsControls();
-  void updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
+  bool updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                           const char* dateText, const char* mainText, const char* secText);
   void layoutClockFocus();
 
@@ -182,4 +194,6 @@ private:
   static void onCalibrationCapture(lv_event_t* e);
   static void onCalibrationClear(lv_event_t* e);
   static void onCalibrationRefChanged(lv_event_t* e);
+  static void onCalibrationMode(lv_event_t* e);
+  static void onHistoryPlotDraw(lv_event_t* e);
 };

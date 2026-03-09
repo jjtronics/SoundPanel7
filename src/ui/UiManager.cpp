@@ -2,9 +2,11 @@
 
 #include <cstdio>
 #include <ctime>
+#include <cstring>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 #include "../AudioEngine.h"
+#include "AppRuntimeStats.h"
 
 using namespace esp_panel::board;
 
@@ -12,6 +14,33 @@ LV_FONT_DECLARE(sp7_font_clock_170);
 LV_FONT_DECLARE(sp7_font_gauge_56);
 
 extern AudioEngine g_audio;
+
+static const char* dashPageLabel(uint8_t page) {
+  switch (page) {
+    case 0: return "Principal";
+    case 1: return "Horloge";
+    case 2: return "Sonometre";
+    case 3: return "Calibration";
+    case 4: return "Parametres";
+    default: return "Inconnu";
+  }
+}
+
+static bool setLabelTextIfChanged(lv_obj_t* label, const char* text) {
+  if (!label || !text) return false;
+  const char* current = lv_label_get_text(label);
+  if (current && strcmp(current, text) == 0) return false;
+  lv_label_set_text(label, text);
+  return true;
+}
+
+static void setHiddenIfChanged(lv_obj_t* obj, bool hidden) {
+  if (!obj) return;
+  const bool isHidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  if (hidden == isHidden) return;
+  if (hidden) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  else lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
 
 static UiManager* selfFromEvent(lv_event_t* e) {
   return (UiManager*)lv_event_get_user_data(e);
@@ -119,44 +148,8 @@ void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, 
 void UiManager::redrawHistoryBars() {
   if (!_histWrap && !_histWrapFocus) return;
   _historyRevision = _history ? _history->revision() : 0;
-  uint16_t count = _history ? _history->count() : 0;
-  uint16_t visibleCount = count;
-  if (visibleCount > HISTORY_BAR_COUNT) visibleCount = HISTORY_BAR_COUNT;
-  uint16_t emptyPrefix = HISTORY_BAR_COUNT - visibleCount;
-
-  for (uint16_t i = 0; i < HISTORY_BAR_COUNT; i++) {
-    float v = 0.0f;
-    if (_history && i >= emptyPrefix) {
-      v = _history->valueAt(i - emptyPrefix);
-    }
-
-    const float histDbMin = 35.0f;   // plancher visuel
-    const float histDbMax = 100.0f;  // plafond visuel
-
-    if (v < histDbMin) v = histDbMin;
-    if (v > histDbMax) v = histDbMax;
-
-    const int barMin = 4;
-    const int barMax = 62;
-
-    float norm = (v - histDbMin) / (histDbMax - histDbMin);
-    int h = barMin + (int)(norm * (float)(barMax - barMin));
-
-    if (h < barMin) h = barMin;
-    if (h > barMax) h = barMax;
-
-    lv_obj_t* bar = _histBars[i];
-    if (bar) {
-      lv_obj_set_height(bar, h);
-      lv_obj_set_style_bg_color(bar, zoneColorForDb(v), 0);
-    }
-
-    lv_obj_t* barFocus = _histBarsFocus[i];
-    if (barFocus) {
-      lv_obj_set_height(barFocus, h);
-      lv_obj_set_style_bg_color(barFocus, zoneColorForDb(v), 0);
-    }
-  }
+  if (_histPlot) lv_obj_invalidate(_histPlot);
+  if (_histPlotFocus) lv_obj_invalidate(_histPlotFocus);
 
   if (_lblHist && _s) {
     char buf[64];
@@ -281,17 +274,39 @@ void UiManager::buildDashboard() {
     if (i != DASH_PAGE_OVERVIEW) lv_obj_add_flag(_dashPages[i], LV_OBJ_FLAG_HIDDEN);
   }
 
-  buildDashboardOverviewPage(_dashPages[DASH_PAGE_OVERVIEW]);
-  buildDashboardClockPage(_dashPages[DASH_PAGE_CLOCK]);
-  buildDashboardSoundPage(_dashPages[DASH_PAGE_SOUND]);
-  buildDashboardCalibrationPage(_dashPages[DASH_PAGE_CALIBRATION]);
-  buildDashboardSettingsPage(_dashPages[DASH_PAGE_SETTINGS]);
+  ensureDashboardPageBuilt(DASH_PAGE_OVERVIEW);
 
   _lblTime = nullptr;
 
   setDashboardPage(DASH_PAGE_OVERVIEW);
   refreshCalibrationView();
   redrawHistoryBars();
+}
+
+void UiManager::ensureDashboardPageBuilt(uint8_t page) {
+  if (page >= DASH_PAGE_COUNT || !_dashPages[page] || _dashPageBuilt[page]) return;
+
+  switch ((DashPage)page) {
+    case DASH_PAGE_OVERVIEW:
+      buildDashboardOverviewPage(_dashPages[page]);
+      break;
+    case DASH_PAGE_CLOCK:
+      buildDashboardClockPage(_dashPages[page]);
+      break;
+    case DASH_PAGE_SOUND:
+      buildDashboardSoundPage(_dashPages[page]);
+      break;
+    case DASH_PAGE_CALIBRATION:
+      buildDashboardCalibrationPage(_dashPages[page]);
+      break;
+    case DASH_PAGE_SETTINGS:
+      buildDashboardSettingsPage(_dashPages[page]);
+      break;
+    default:
+      break;
+  }
+
+  _dashPageBuilt[page] = true;
 }
 
 void UiManager::buildDashboardSettingsPage(lv_obj_t* parent) {
@@ -566,7 +581,7 @@ void UiManager::buildDashboardOverviewPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblPeak, lv_color_hex(0xDFE7EF), 0);
   lv_obj_align(_lblPeak, LV_ALIGN_CENTER, 0, 16);
 
-  buildHistoryCard(parent, 0, 108, &_histWrap, &_lblHist, &_lblHistTLeft, &_lblHistTMid, &_lblHistTRight, _histBars);
+  buildHistoryCard(parent, 0, 108, &_histWrap, &_histPlot, &_lblHist, &_lblHistTLeft, &_lblHistTMid, &_lblHistTRight);
   lv_obj_set_width(_histWrap, 780);
   lv_obj_align(_histWrap, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
@@ -740,8 +755,8 @@ void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_lblPeakFocus, lv_color_hex(0xDFE7EF), 0);
   lv_obj_align(_lblPeakFocus, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-  buildHistoryCard(parent, 780, 112, &_histWrapFocus, &_lblHistFocus, &_lblHistTLeftFocus,
-                   &_lblHistTMidFocus, &_lblHistTRightFocus, _histBarsFocus);
+  buildHistoryCard(parent, 780, 112, &_histWrapFocus, &_histPlotFocus, &_lblHistFocus, &_lblHistTLeftFocus,
+                   &_lblHistTMidFocus, &_lblHistTRightFocus);
   lv_obj_align(_histWrapFocus, LV_ALIGN_TOP_MID, 0, 260);
 }
 
@@ -749,11 +764,11 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
                                  int width,
                                  int height,
                                  lv_obj_t** wrapOut,
+                                 lv_obj_t** plotOut,
                                  lv_obj_t** titleOut,
                                  lv_obj_t** leftOut,
                                  lv_obj_t** midOut,
-                                 lv_obj_t** rightOut,
-                                 lv_obj_t* barsOut[HISTORY_BAR_COUNT]) {
+                                 lv_obj_t** rightOut) {
   lv_obj_t* wrap = lv_obj_create(parent);
   if (width > 0) lv_obj_set_size(wrap, width, height);
   else lv_obj_set_height(wrap, height);
@@ -786,12 +801,9 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
   lv_obj_set_style_pad_right(histArea, 8, 0);
   lv_obj_set_style_pad_top(histArea, 6, 0);
   lv_obj_set_style_pad_bottom(histArea, 6, 0);
-  lv_obj_set_style_pad_column(histArea, 1, 0);
-  lv_obj_set_layout(histArea, LV_LAYOUT_FLEX);
-  lv_obj_set_flex_flow(histArea, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(histArea, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
   lv_obj_clear_flag(histArea, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(histArea, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_add_event_cb(histArea, UiManager::onHistoryPlotDraw, LV_EVENT_DRAW_MAIN, this);
 
   lv_obj_t* left = lv_label_create(wrap);
   lv_label_set_text(left, "-5m");
@@ -811,18 +823,8 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
   lv_obj_set_style_text_color(right, lv_color_hex(0xFFFFFF), 0);
   lv_obj_align(right, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
 
-  for (uint16_t i = 0; i < HISTORY_BAR_COUNT; i++) {
-    barsOut[i] = lv_obj_create(histArea);
-    lv_obj_set_width(barsOut[i], 5);
-    lv_obj_set_height(barsOut[i], 4);
-    lv_obj_set_style_radius(barsOut[i], 2, 0);
-    lv_obj_set_style_bg_color(barsOut[i], lv_color_hex(0x23C552), 0);
-    lv_obj_set_style_border_width(barsOut[i], 0, 0);
-    lv_obj_clear_flag(barsOut[i], LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(barsOut[i], LV_SCROLLBAR_MODE_OFF);
-  }
-
   *wrapOut = wrap;
+  *plotOut = histArea;
   *titleOut = title;
   *leftOut = left;
   *midOut = mid;
@@ -832,6 +834,59 @@ void UiManager::buildHistoryCard(lv_obj_t* parent,
     _lblAlertTime = alertTime;
   } else if (wrapOut == &_histWrapFocus) {
     _lblAlertTimeFocus = alertTime;
+  }
+}
+
+void UiManager::onHistoryPlotDraw(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  lv_obj_t* obj = lv_event_get_target(e);
+  lv_draw_ctx_t* drawCtx = lv_event_get_draw_ctx(e);
+  if (!self || !obj || !drawCtx) return;
+
+  lv_area_t coords;
+  lv_obj_get_content_coords(obj, &coords);
+  const lv_coord_t width = lv_area_get_width(&coords);
+  const lv_coord_t height = lv_area_get_height(&coords);
+  if (width <= 0 || height <= 0) return;
+
+  const uint16_t count = self->_history ? self->_history->count() : 0;
+  const uint16_t visibleCount = count > HISTORY_BAR_COUNT ? HISTORY_BAR_COUNT : count;
+  const uint16_t emptyPrefix = HISTORY_BAR_COUNT - visibleCount;
+  const float histDbMin = 35.0f;
+  const float histDbMax = 100.0f;
+  const lv_coord_t barMin = 4;
+  const lv_coord_t radius = 2;
+
+  lv_draw_rect_dsc_t rectDsc;
+  lv_draw_rect_dsc_init(&rectDsc);
+  rectDsc.bg_opa = LV_OPA_COVER;
+  rectDsc.border_opa = LV_OPA_TRANSP;
+  rectDsc.radius = radius;
+
+  for (uint16_t i = 0; i < HISTORY_BAR_COUNT; i++) {
+    float value = histDbMin;
+    if (self->_history && i >= emptyPrefix) {
+      value = self->_history->valueAt(i - emptyPrefix);
+    }
+    if (value < histDbMin) value = histDbMin;
+    if (value > histDbMax) value = histDbMax;
+
+    const float norm = (value - histDbMin) / (histDbMax - histDbMin);
+    lv_coord_t barHeight = barMin + (lv_coord_t)(norm * (float)(height - barMin));
+    if (barHeight < barMin) barHeight = barMin;
+    if (barHeight > height) barHeight = height;
+
+    const lv_coord_t x1 = coords.x1 + (lv_coord_t)((int32_t)i * width / HISTORY_BAR_COUNT);
+    lv_coord_t x2 = coords.x1 + (lv_coord_t)(((int32_t)(i + 1) * width) / HISTORY_BAR_COUNT) - 2;
+    if (x2 < x1) x2 = x1;
+    lv_area_t barArea;
+    barArea.x1 = x1;
+    barArea.x2 = x2;
+    barArea.y2 = coords.y2;
+    barArea.y1 = coords.y2 - barHeight + 1;
+
+    rectDsc.bg_color = self->zoneColorForDb(value);
+    lv_draw_rect(drawCtx, &rectDsc, &barArea);
   }
 }
 
@@ -860,23 +915,63 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
   lv_label_set_text(_lblCalLive, "Micro live: --");
   lv_obj_set_style_text_font(_lblCalLive, &lv_font_montserrat_14, 0);
   lv_obj_set_style_text_color(_lblCalLive, lv_color_hex(0x8EA1B3), 0);
-  lv_obj_align(_lblCalLive, LV_ALIGN_TOP_LEFT, 0, 30);
+  lv_obj_align(_lblCalLive, LV_ALIGN_TOP_LEFT, 0, 28);
+
+  lv_obj_t* modeWrap = lv_obj_create(card);
+  lv_obj_set_size(modeWrap, lv_pct(100), 32);
+  lv_obj_align(modeWrap, LV_ALIGN_TOP_MID, 0, 52);
+  lv_obj_set_style_bg_opa(modeWrap, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(modeWrap, 0, 0);
+  lv_obj_set_style_pad_all(modeWrap, 0, 0);
+  lv_obj_clear_flag(modeWrap, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(modeWrap, LV_SCROLLBAR_MODE_OFF);
+
+  lv_obj_t* modeLbl = lv_label_create(modeWrap);
+  lv_label_set_text(modeLbl, "Mode calibration");
+  lv_obj_set_style_text_font(modeLbl, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(modeLbl, lv_color_hex(0x8EA1B3), 0);
+  lv_obj_align(modeLbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+  _btnCalMode3 = lv_btn_create(modeWrap);
+  lv_obj_set_size(_btnCalMode3, 80, 28);
+  lv_obj_align(_btnCalMode3, LV_ALIGN_RIGHT_MID, -96, 0);
+  lv_obj_set_style_radius(_btnCalMode3, 12, 0);
+  lv_obj_set_style_border_width(_btnCalMode3, 0, 0);
+  lv_obj_set_user_data(_btnCalMode3, (void*)(uintptr_t)3);
+  lv_obj_add_event_cb(_btnCalMode3, UiManager::onCalibrationMode, LV_EVENT_CLICKED, this);
+  lv_obj_t* mode3Lbl = lv_label_create(_btnCalMode3);
+  lv_label_set_text(mode3Lbl, "3 points");
+  lv_obj_set_style_text_font(mode3Lbl, &lv_font_montserrat_14, 0);
+  lv_obj_center(mode3Lbl);
+
+  _btnCalMode5 = lv_btn_create(modeWrap);
+  lv_obj_set_size(_btnCalMode5, 80, 28);
+  lv_obj_align(_btnCalMode5, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_radius(_btnCalMode5, 12, 0);
+  lv_obj_set_style_border_width(_btnCalMode5, 0, 0);
+  lv_obj_set_user_data(_btnCalMode5, (void*)(uintptr_t)5);
+  lv_obj_add_event_cb(_btnCalMode5, UiManager::onCalibrationMode, LV_EVENT_CLICKED, this);
+  lv_obj_t* mode5Lbl = lv_label_create(_btnCalMode5);
+  lv_label_set_text(mode5Lbl, "5 points");
+  lv_obj_set_style_text_font(mode5Lbl, &lv_font_montserrat_14, 0);
+  lv_obj_center(mode5Lbl);
 
   lv_obj_t* pointsWrap = lv_obj_create(card);
-  lv_obj_set_size(pointsWrap, lv_pct(100), 194);
-  lv_obj_align(pointsWrap, LV_ALIGN_TOP_MID, 0, 70);
+  lv_obj_set_size(pointsWrap, lv_pct(100), 182);
+  lv_obj_align(pointsWrap, LV_ALIGN_TOP_MID, 0, 86);
   lv_obj_set_style_bg_color(pointsWrap, lv_color_hex(0x0E141C), 0);
   lv_obj_set_style_border_width(pointsWrap, 0, 0);
   lv_obj_set_style_radius(pointsWrap, 22, 0);
-  lv_obj_set_style_pad_all(pointsWrap, 18, 0);
-  lv_obj_set_style_pad_row(pointsWrap, 8, 0);
+  lv_obj_set_style_pad_all(pointsWrap, 10, 0);
+  lv_obj_set_style_pad_row(pointsWrap, 4, 0);
   lv_obj_set_flex_flow(pointsWrap, LV_FLEX_FLOW_COLUMN);
   lv_obj_clear_flag(pointsWrap, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(pointsWrap, LV_SCROLLBAR_MODE_OFF);
 
-  for (uint8_t i = 0; i < 3; i++) {
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     lv_obj_t* row = lv_obj_create(pointsWrap);
-    lv_obj_set_size(row, lv_pct(100), 42);
+    _calRows[i] = row;
+    lv_obj_set_size(row, lv_pct(100), 28);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
@@ -890,9 +985,9 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
     lv_obj_align(_lblCalPoint[i], LV_ALIGN_LEFT_MID, 0, 0);
 
     _btnCalRefMinus[i] = lv_btn_create(row);
-    lv_obj_set_size(_btnCalRefMinus[i], 34, 34);
-    lv_obj_align(_btnCalRefMinus[i], LV_ALIGN_RIGHT_MID, -260, 0);
-    lv_obj_set_style_radius(_btnCalRefMinus[i], 12, 0);
+    lv_obj_set_size(_btnCalRefMinus[i], 26, 26);
+    lv_obj_align(_btnCalRefMinus[i], LV_ALIGN_RIGHT_MID, -218, 0);
+    lv_obj_set_style_radius(_btnCalRefMinus[i], 10, 0);
     lv_obj_set_style_bg_color(_btnCalRefMinus[i], lv_color_hex(0x16202E), 0);
     lv_obj_set_style_border_width(_btnCalRefMinus[i], 0, 0);
     lv_obj_set_user_data(_btnCalRefMinus[i], (void*)(uintptr_t)(i * 2));
@@ -905,9 +1000,9 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
     lv_obj_center(minusLbl);
 
     lv_obj_t* refBadge = lv_obj_create(row);
-    lv_obj_set_size(refBadge, 74, 34);
-    lv_obj_align(refBadge, LV_ALIGN_RIGHT_MID, -182, 0);
-    lv_obj_set_style_radius(refBadge, 12, 0);
+    lv_obj_set_size(refBadge, 62, 26);
+    lv_obj_align(refBadge, LV_ALIGN_RIGHT_MID, -148, 0);
+    lv_obj_set_style_radius(refBadge, 10, 0);
     lv_obj_set_style_bg_color(refBadge, lv_color_hex(0x16202E), 0);
     lv_obj_set_style_border_width(refBadge, 0, 0);
     lv_obj_set_style_pad_all(refBadge, 0, 0);
@@ -921,9 +1016,9 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
     lv_obj_center(_lblCalRef[i]);
 
     _btnCalRefPlus[i] = lv_btn_create(row);
-    lv_obj_set_size(_btnCalRefPlus[i], 34, 34);
-    lv_obj_align(_btnCalRefPlus[i], LV_ALIGN_RIGHT_MID, -144, 0);
-    lv_obj_set_style_radius(_btnCalRefPlus[i], 12, 0);
+    lv_obj_set_size(_btnCalRefPlus[i], 26, 26);
+    lv_obj_align(_btnCalRefPlus[i], LV_ALIGN_RIGHT_MID, -118, 0);
+    lv_obj_set_style_radius(_btnCalRefPlus[i], 10, 0);
     lv_obj_set_style_bg_color(_btnCalRefPlus[i], lv_color_hex(0x16202E), 0);
     lv_obj_set_style_border_width(_btnCalRefPlus[i], 0, 0);
     lv_obj_set_user_data(_btnCalRefPlus[i], (void*)(uintptr_t)(i * 2 + 1));
@@ -936,9 +1031,9 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
     lv_obj_center(plusLbl);
 
     _btnCalCapture[i] = lv_btn_create(row);
-    lv_obj_set_size(_btnCalCapture[i], 126, 36);
+    lv_obj_set_size(_btnCalCapture[i], 104, 26);
     lv_obj_align(_btnCalCapture[i], LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_set_style_radius(_btnCalCapture[i], 14, 0);
+    lv_obj_set_style_radius(_btnCalCapture[i], 10, 0);
     lv_obj_set_style_bg_color(_btnCalCapture[i], lv_color_hex(0x7A1E2C), 0);
     lv_obj_set_style_border_width(_btnCalCapture[i], 0, 0);
     lv_obj_set_user_data(_btnCalCapture[i], (void*)(uintptr_t)i);
@@ -951,7 +1046,7 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
   }
 
   lv_obj_t* clearBtn = lv_btn_create(card);
-  lv_obj_set_size(clearBtn, 190, 36);
+  lv_obj_set_size(clearBtn, 182, 32);
   lv_obj_align(clearBtn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
   lv_obj_set_style_radius(clearBtn, 16, 0);
   lv_obj_set_style_bg_color(clearBtn, lv_color_hex(0x4A1620), 0);
@@ -968,6 +1063,8 @@ void UiManager::buildDashboardCalibrationPage(lv_obj_t* parent) {
 
 void UiManager::setDashboardPage(uint8_t page) {
   if (page >= DASH_PAGE_COUNT) return;
+  bool pageChanged = (_currentDashPage != page);
+  ensureDashboardPageBuilt(page);
 
   for (uint8_t i = 0; i < DASH_PAGE_COUNT; i++) {
     if (_dashPages[i]) {
@@ -984,6 +1081,20 @@ void UiManager::setDashboardPage(uint8_t page) {
   }
 
   _currentDashPage = page;
+  strncpy(g_runtimeStats.activePage, dashPageLabel(page), sizeof(g_runtimeStats.activePage) - 1);
+  g_runtimeStats.activePage[sizeof(g_runtimeStats.activePage) - 1] = '\0';
+  if (pageChanged) {
+    g_runtimeStats.uiWorkMaxUs = 0;
+    g_runtimeStats.lvHandlerMaxUs = 0;
+    _lastSoundUiUpdateMs = 0;
+    _lastClockUiUpdateMs = 0;
+    _lastSettingsUiUpdateMs = 0;
+    _lastCalibrationUiUpdateMs = 0;
+    if (_history && _historyRevision != _history->revision() &&
+        (page == DASH_PAGE_OVERVIEW || page == DASH_PAGE_SOUND)) {
+      redrawHistoryBars();
+    }
+  }
 }
 
 void UiManager::refreshCalibrationView() {
@@ -993,42 +1104,64 @@ void UiManager::refreshCalibrationView() {
     const AudioMetrics& m = g_audio.metrics();
     char liveBuf[96];
     if (m.analogOk) {
-      snprintf(liveBuf, sizeof(liveBuf), "Micro live: rms=%0.2f | log=%0.4f",
-               m.rawRms,
+      snprintf(liveBuf, sizeof(liveBuf), "Micro live: %0.1f dB | log=%0.4f",
+               m.dbInstant,
                log10f(m.rawRms + 0.0001f));
     } else {
       snprintf(liveBuf, sizeof(liveBuf), "Micro live: indisponible");
     }
-    lv_label_set_text(_lblCalLive, liveBuf);
+    setLabelTextIfChanged(_lblCalLive, liveBuf);
   }
 
   uint8_t validCount = 0;
-  for (uint8_t i = 0; i < 3; i++) {
+  const uint8_t activeCount = (_s->calibrationPointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  for (uint8_t i = 0; i < activeCount; i++) {
     if (_s->calPointValid[i]) validCount++;
-    if (_lblCalRef[i]) {
+  }
+
+  for (uint8_t row = 0; row < CALIBRATION_POINT_MAX; row++) {
+    const bool visible = row < activeCount;
+    setHiddenIfChanged(_calRows[row], !visible);
+    setHiddenIfChanged(_btnCalCapture[row], !visible);
+    setHiddenIfChanged(_btnCalRefMinus[row], !visible);
+    setHiddenIfChanged(_btnCalRefPlus[row], !visible);
+    if (_lblCalRef[row]) {
       char refBuf[16];
-      snprintf(refBuf, sizeof(refBuf), "%0.0f", _s->calPointRefDb[i]);
-      lv_label_set_text(_lblCalRef[i], refBuf);
+      snprintf(refBuf, sizeof(refBuf), visible ? "%0.0f" : "--", visible ? _s->calPointRefDb[row] : 0.0f);
+      setLabelTextIfChanged(_lblCalRef[row], refBuf);
     }
-    if (_lblCalPoint[i]) {
+    if (_lblCalPoint[row]) {
       char buf[96];
-      if (_s->calPointValid[i]) {
+      if (!visible) {
+        snprintf(buf, sizeof(buf), "-");
+      } else if (_s->calPointValid[row]) {
         snprintf(buf, sizeof(buf), "Point %u  capture %0.3f",
-                 (unsigned)(i + 1),
-                 _s->calPointRawLogRms[i]);
+                 (unsigned)(row + 1),
+                 _s->calPointRawLogRms[row]);
       } else {
-        snprintf(buf, sizeof(buf), "Point %u  non capture", (unsigned)(i + 1));
+        snprintf(buf, sizeof(buf), "Point %u  non capture", (unsigned)(row + 1));
       }
-      lv_label_set_text(_lblCalPoint[i], buf);
+      setLabelTextIfChanged(_lblCalPoint[row], buf);
     }
   }
 
   if (_lblCalStatus) {
     char buf[48];
-    snprintf(buf, sizeof(buf), "%u / 3 points valides", (unsigned)validCount);
-    lv_label_set_text(_lblCalStatus, buf);
+    snprintf(buf, sizeof(buf), "%u / %u points valides", (unsigned)validCount, (unsigned)activeCount);
+    setLabelTextIfChanged(_lblCalStatus, buf);
   }
 
+  if (_btnCalMode3 && _lastCalibrationActiveCount != activeCount) {
+    const bool active = activeCount == 3;
+    lv_obj_set_style_bg_color(_btnCalMode3, active ? lv_color_hex(0x7A1E2C) : lv_color_hex(0x16202E), 0);
+    lv_obj_set_style_text_color(_btnCalMode3, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
+  }
+  if (_btnCalMode5 && _lastCalibrationActiveCount != activeCount) {
+    const bool active = activeCount == CALIBRATION_POINT_MAX;
+    lv_obj_set_style_bg_color(_btnCalMode5, active ? lv_color_hex(0x7A1E2C) : lv_color_hex(0x16202E), 0);
+    lv_obj_set_style_text_color(_btnCalMode5, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
+  }
+  _lastCalibrationActiveCount = activeCount;
 }
 
 void UiManager::refreshSettingsControls() {
@@ -1088,8 +1221,9 @@ void UiManager::onCalibrationCapture(lv_event_t* e) {
   if (!self || !self->_s || !self->_store) return;
 
   lv_obj_t* btn = lv_event_get_target(e);
-  uint8_t index = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
-  if (index >= 3) return;
+  uint8_t row = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
+  uint8_t index = row;
+  if (row >= CALIBRATION_POINT_MAX || index >= self->_s->calibrationPointCount) return;
 
   if (g_audio.captureCalibrationPoint(*self->_s, index, self->_s->calPointRefDb[index])) {
     self->_store->save(*self->_s);
@@ -1115,23 +1249,41 @@ void UiManager::onCalibrationRefChanged(lv_event_t* e) {
 
   lv_obj_t* btn = lv_event_get_target(e);
   uint8_t encoded = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
-  uint8_t index = encoded / 2;
+  uint8_t row = encoded / 2;
   bool increment = (encoded % 2) == 1;
-  if (index >= 3) return;
+  uint8_t index = row;
+  if (row >= CALIBRATION_POINT_MAX || index >= self->_s->calibrationPointCount) return;
 
   float next = self->_s->calPointRefDb[index] + (increment ? 5.0f : -5.0f);
   if (next < 35.0f) next = 35.0f;
-  if (next > 100.0f) next = 100.0f;
+  if (next > 110.0f) next = 110.0f;
   self->_s->calPointRefDb[index] = next;
   self->_store->save(*self->_s);
   self->refreshCalibrationView();
 }
 
-void UiManager::updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
+void UiManager::onCalibrationMode(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self || !self->_s || !self->_store) return;
+
+  lv_obj_t* btn = lv_event_get_target(e);
+  uint8_t pointCount = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
+  pointCount = (pointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
+  if (pointCount == self->_s->calibrationPointCount) return;
+
+  self->_s->calibrationPointCount = pointCount;
+  g_audio.clearCalibration(*self->_s);
+  self->_store->save(*self->_s);
+  self->refreshCalibrationView();
+}
+
+bool UiManager::updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                                    const char* dateText, const char* mainText, const char* secText) {
-  if (lblDate) lv_label_set_text(lblDate, dateText);
-  if (lblMain) lv_label_set_text(lblMain, mainText);
-  if (lblSec) lv_label_set_text(lblSec, secText);
+  bool changed = false;
+  if (lblDate) changed |= setLabelTextIfChanged(lblDate, dateText);
+  if (lblMain) changed |= setLabelTextIfChanged(lblMain, mainText);
+  if (lblSec) changed |= setLabelTextIfChanged(lblSec, secText);
+  return changed;
 }
 
 void UiManager::layoutClockFocus() {
@@ -1235,6 +1387,10 @@ void UiManager::applyAlertVisuals(uint32_t now) {
   const uint32_t redAlertHoldMs = _s ? _s->redAlertHoldMs : 2000UL;
   const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= orangeAlertHoldMs;
   const bool redAlert = _redZoneSinceMs != 0 && (now - _redZoneSinceMs) >= redAlertHoldMs;
+  const uint8_t alertState = redAlert ? 2 : (orangeAlert ? 1 : 0);
+  uint8_t alertPhase = 0;
+  if (redAlert) alertPhase = ((now / 120) % 10) < 5 ? 1 : 2;
+  else if (orangeAlert) alertPhase = ((now / 180) % 10) < 5 ? 1 : 2;
 
   lv_color_t screenBase = lv_color_hex(0x0B0F14);
   lv_color_t screenRed = lv_color_hex(0x22080B);
@@ -1254,46 +1410,46 @@ void UiManager::applyAlertVisuals(uint32_t now) {
   lv_coord_t borderWidth = 0;
   lv_coord_t shadowWidth = 0;
   if (redAlert) {
-    uint32_t phase = (now / 120) % 10;
-    dbCardColor = (phase < 5) ? redPulse : redBase;
+    dbCardColor = (alertPhase == 1) ? redPulse : redBase;
     screenColor = screenRed;
     borderColor = redBorder;
     borderOpa = LV_OPA_90;
     borderWidth = 3;
     shadowWidth = 26;
   } else if (orangeAlert) {
-    uint32_t phase = (now / 180) % 10;
-    dbCardColor = (phase < 5) ? orangePulse : orangeBase;
+    dbCardColor = (alertPhase == 1) ? orangePulse : orangeBase;
     borderColor = orangeBorder;
     borderOpa = LV_OPA_70;
     borderWidth = 2;
     shadowWidth = 14;
   }
 
-  if (_scrDash) lv_obj_set_style_bg_color(_scrDash, screenColor, 0);
-  if (_dbCard) lv_obj_set_style_bg_color(_dbCard, dbCardColor, 0);
-  if (_dbCardFocus) lv_obj_set_style_bg_color(_dbCardFocus, dbCardColor, 0);
-  if (_dbCard) {
-    lv_obj_set_style_border_color(_dbCard, borderColor, 0);
-    lv_obj_set_style_border_opa(_dbCard, borderOpa, 0);
-    lv_obj_set_style_border_width(_dbCard, borderWidth, 0);
-    lv_obj_set_style_shadow_color(_dbCard, borderColor, 0);
-    lv_obj_set_style_shadow_width(_dbCard, shadowWidth, 0);
-    lv_obj_set_style_shadow_opa(_dbCard, redAlert ? LV_OPA_50 : (orangeAlert ? LV_OPA_30 : LV_OPA_TRANSP), 0);
-  }
-  if (_dbCardFocus) {
-    lv_obj_set_style_border_color(_dbCardFocus, borderColor, 0);
-    lv_obj_set_style_border_opa(_dbCardFocus, borderOpa, 0);
-    lv_obj_set_style_border_width(_dbCardFocus, borderWidth, 0);
-    lv_obj_set_style_shadow_color(_dbCardFocus, borderColor, 0);
-    lv_obj_set_style_shadow_width(_dbCardFocus, shadowWidth, 0);
-    lv_obj_set_style_shadow_opa(_dbCardFocus, redAlert ? LV_OPA_50 : (orangeAlert ? LV_OPA_30 : LV_OPA_TRANSP), 0);
-  }
-
-  if (_alertBadgeFocus) {
-    if (redAlert) lv_obj_clear_flag(_alertBadgeFocus, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(_alertBadgeFocus, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(_alertBadgeFocus);
+  if (_lastAlertVisualState != alertState || _lastAlertVisualPhase != alertPhase) {
+    if (_scrDash) lv_obj_set_style_bg_color(_scrDash, screenColor, 0);
+    if (_dbCard) lv_obj_set_style_bg_color(_dbCard, dbCardColor, 0);
+    if (_dbCardFocus) lv_obj_set_style_bg_color(_dbCardFocus, dbCardColor, 0);
+    if (_dbCard) {
+      lv_obj_set_style_border_color(_dbCard, borderColor, 0);
+      lv_obj_set_style_border_opa(_dbCard, borderOpa, 0);
+      lv_obj_set_style_border_width(_dbCard, borderWidth, 0);
+      lv_obj_set_style_shadow_color(_dbCard, borderColor, 0);
+      lv_obj_set_style_shadow_width(_dbCard, shadowWidth, 0);
+      lv_obj_set_style_shadow_opa(_dbCard, redAlert ? LV_OPA_50 : (orangeAlert ? LV_OPA_30 : LV_OPA_TRANSP), 0);
+    }
+    if (_dbCardFocus) {
+      lv_obj_set_style_border_color(_dbCardFocus, borderColor, 0);
+      lv_obj_set_style_border_opa(_dbCardFocus, borderOpa, 0);
+      lv_obj_set_style_border_width(_dbCardFocus, borderWidth, 0);
+      lv_obj_set_style_shadow_color(_dbCardFocus, borderColor, 0);
+      lv_obj_set_style_shadow_width(_dbCardFocus, shadowWidth, 0);
+      lv_obj_set_style_shadow_opa(_dbCardFocus, redAlert ? LV_OPA_50 : (orangeAlert ? LV_OPA_30 : LV_OPA_TRANSP), 0);
+    }
+    if (_alertBadgeFocus) {
+      setHiddenIfChanged(_alertBadgeFocus, !redAlert);
+      if (redAlert) lv_obj_move_foreground(_alertBadgeFocus);
+    }
+    _lastAlertVisualState = alertState;
+    _lastAlertVisualPhase = alertPhase;
   }
 
   char buf[40];
@@ -1306,8 +1462,8 @@ void UiManager::applyAlertVisuals(uint32_t now) {
              redSeconds, (unsigned)(_s ? _s->historyMinutes : 0));
   }
 
-  if (_lblAlertTime) lv_label_set_text(_lblAlertTime, buf);
-  if (_lblAlertTimeFocus) lv_label_set_text(_lblAlertTimeFocus, buf);
+  setLabelTextIfChanged(_lblAlertTime, buf);
+  setLabelTextIfChanged(_lblAlertTimeFocus, buf);
 }
 
 void UiManager::powerOffNow() {
@@ -1348,37 +1504,63 @@ void UiManager::setDb(float dbInstant, float leq, float peak) {
   _lastLeq = leq;
   _lastPeak = peak;
 
+  const uint32_t now = millis();
+  updateAlertState(now);
+  applyAlertVisuals(now);
+  if (_history && _historyRevision != _history->revision() &&
+      (_currentDashPage == DASH_PAGE_OVERVIEW || _currentDashPage == DASH_PAGE_SOUND)) {
+    redrawHistoryBars();
+  }
+
+  if (_currentDashPage != DASH_PAGE_OVERVIEW && _currentDashPage != DASH_PAGE_SOUND) {
+    return;
+  }
+  if (_lastSoundUiUpdateMs != 0 && (now - _lastSoundUiUpdateMs) < 160) {
+    return;
+  }
+  _lastSoundUiUpdateMs = now;
+
   char buf[32];
 
   snprintf(buf, sizeof(buf), "%.1f", dbInstant);
-  if (_lblDb) lv_label_set_text(_lblDb, buf);
-  if (_lblDbFocus) lv_label_set_text(_lblDbFocus, buf);
+  if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+    setLabelTextIfChanged(_lblDb, buf);
+  } else if (_currentDashPage == DASH_PAGE_SOUND) {
+    setLabelTextIfChanged(_lblDbFocus, buf);
+  }
 
   snprintf(buf, sizeof(buf), "%.1f", leq);
-  if (_lblLeq) lv_label_set_text(_lblLeq, buf);
-  if (_lblLeqFocus) lv_label_set_text(_lblLeqFocus, buf);
+  if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+    setLabelTextIfChanged(_lblLeq, buf);
+  } else if (_currentDashPage == DASH_PAGE_SOUND) {
+    setLabelTextIfChanged(_lblLeqFocus, buf);
+  }
 
   snprintf(buf, sizeof(buf), "%.1f", peak);
-  if (_lblPeak) lv_label_set_text(_lblPeak, buf);
-  if (_lblPeakFocus) lv_label_set_text(_lblPeakFocus, buf);
+  if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+    setLabelTextIfChanged(_lblPeak, buf);
+  } else if (_currentDashPage == DASH_PAGE_SOUND) {
+    setLabelTextIfChanged(_lblPeakFocus, buf);
+  }
 
   int v = (int)dbInstant;
   if (v < 0) v = 0;
   if (v > 100) v = 100;
 
-  if (_arc) lv_arc_set_value(_arc, v);
-  if (_arcFocus) lv_arc_set_value(_arcFocus, v);
+  if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+    if (_arc) lv_arc_set_value(_arc, v);
+  } else if (_currentDashPage == DASH_PAGE_SOUND) {
+    if (_arcFocus) lv_arc_set_value(_arcFocus, v);
+  }
 
   lv_color_t c = zoneColorForDb(dbInstant);
-  if (_arc) lv_obj_set_style_arc_color(_arc, c, LV_PART_INDICATOR);
-  if (_arcFocus) lv_obj_set_style_arc_color(_arcFocus, c, LV_PART_INDICATOR);
-  if (_dot) lv_obj_set_style_bg_color(_dot, c, 0);
-  if (_dotFocus) lv_obj_set_style_bg_color(_dotFocus, c, 0);
-
-  uint32_t now = millis();
-  updateAlertState(now);
-  applyAlertVisuals(now);
-  if (!_history || _historyRevision != _history->revision()) redrawHistoryBars();
+  if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+    if (_arc) lv_obj_set_style_arc_color(_arc, c, LV_PART_INDICATOR);
+    if (_dot) lv_obj_set_style_bg_color(_dot, c, 0);
+  } else if (_currentDashPage == DASH_PAGE_SOUND) {
+    if (_arcFocus) lv_obj_set_style_arc_color(_arcFocus, c, LV_PART_INDICATOR);
+    if (_dotFocus) lv_obj_set_style_bg_color(_dotFocus, c, 0);
+  }
 }
 
 void UiManager::tick() {
@@ -1394,7 +1576,10 @@ void UiManager::tick() {
   bool hasTime = _net && _net->localTime(&ti);
   bool timeLocked = _net && _net->timeIsValid();
 
-  if (_lblClockDate && _lblClockMain && _lblClockSec) {
+  if ((_currentDashPage == DASH_PAGE_OVERVIEW || _currentDashPage == DASH_PAGE_CLOCK) &&
+      (_lastClockUiUpdateMs == 0 || (now - _lastClockUiUpdateMs) >= 1000)) {
+    _lastClockUiUpdateMs = now;
+    bool clockChanged = false;
     if (hasTime) {
       char dateBuf[32];
       char mainBuf[8];
@@ -1404,46 +1589,57 @@ void UiManager::tick() {
       strftime(mainBuf, sizeof(mainBuf), "%H:%M", &ti);
       strftime(secBuf, sizeof(secBuf), ":%S", &ti);
 
-      updateClockDisplay(_lblClockDate, _lblClockMain, _lblClockSec, dateBuf, mainBuf, secBuf);
-      updateClockDisplay(_lblClockDateFocus, _lblClockMainFocus, nullptr, dateBuf, mainBuf, secBuf);
-      if (_lblClockSecFocus) lv_label_set_text(_lblClockSecFocus, secBuf + 1);
-      layoutClockFocus();
+      if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+        clockChanged |= updateClockDisplay(_lblClockDate, _lblClockMain, _lblClockSec, dateBuf, mainBuf, secBuf);
+      } else {
+        clockChanged |= updateClockDisplay(_lblClockDateFocus, _lblClockMainFocus, nullptr, dateBuf, mainBuf, secBuf);
+        clockChanged |= setLabelTextIfChanged(_lblClockSecFocus, secBuf + 1);
+      }
     } else {
-      updateClockDisplay(_lblClockDate, _lblClockMain, _lblClockSec, "--/--/----", "--:--", ":--");
-      updateClockDisplay(_lblClockDateFocus, _lblClockMainFocus, nullptr, "--/--/----", "--:--", ":--");
-      if (_lblClockSecFocus) lv_label_set_text(_lblClockSecFocus, "--");
+      if (_currentDashPage == DASH_PAGE_OVERVIEW) {
+        clockChanged |= updateClockDisplay(_lblClockDate, _lblClockMain, _lblClockSec, "--/--/----", "--:--", ":--");
+      } else {
+        clockChanged |= updateClockDisplay(_lblClockDateFocus, _lblClockMainFocus, nullptr, "--/--/----", "--:--", ":--");
+        clockChanged |= setLabelTextIfChanged(_lblClockSecFocus, "--");
+      }
+    }
+    if (_currentDashPage == DASH_PAGE_CLOCK && clockChanged) {
       layoutClockFocus();
     }
   }
 
-  if (_lblTime) {
+  if (_lblTime && _currentDashPage == DASH_PAGE_OVERVIEW && (_lastClockUiUpdateMs == now)) {
     if (hasTime) {
       char tbuf[16];
       strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &ti);
-      lv_label_set_text(_lblTime, tbuf);
+      setLabelTextIfChanged(_lblTime, tbuf);
     } else {
-      lv_label_set_text(_lblTime, "--:--:--");
+      setLabelTextIfChanged(_lblTime, "--:--:--");
     }
   }
 
-  if (timeLocked) {
-    if (_lblNtpStatus) lv_label_set_text(_lblNtpStatus, "NTP: LOCK");
-    if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC LOCK");
-  } else {
-    if (_lblNtpStatus) lv_label_set_text(_lblNtpStatus, "NTP: WAIT");
-    if (_lblClockStatusFocus) lv_label_set_text(_lblClockStatusFocus, "SYNC WAIT");
-  }
-
-  if (_lblWifiStatus && _net) {
-    if (_net->isWifiConnected()) {
-      String s = "WiFi: OK  " + _net->ipString() + "  (RSSI " + String(_net->rssi()) + " dBm)";
-      lv_label_set_text(_lblWifiStatus, s.c_str());
+  if (_currentDashPage == DASH_PAGE_SETTINGS || _currentDashPage == DASH_PAGE_CLOCK) {
+    if (timeLocked) {
+      if (_currentDashPage == DASH_PAGE_SETTINGS) setLabelTextIfChanged(_lblNtpStatus, "NTP: LOCK");
+      if (_currentDashPage == DASH_PAGE_CLOCK) setLabelTextIfChanged(_lblClockStatusFocus, "SYNC LOCK");
     } else {
-      lv_label_set_text(_lblWifiStatus, "WiFi: OFF");
+      if (_currentDashPage == DASH_PAGE_SETTINGS) setLabelTextIfChanged(_lblNtpStatus, "NTP: WAIT");
+      if (_currentDashPage == DASH_PAGE_CLOCK) setLabelTextIfChanged(_lblClockStatusFocus, "SYNC WAIT");
     }
   }
 
-  if (_lblNetInfo && _net && _s) {
+  if (_currentDashPage == DASH_PAGE_SETTINGS &&
+      (_lastSettingsUiUpdateMs == 0 || (now - _lastSettingsUiUpdateMs) >= 1000) &&
+      _net && _s) {
+    _lastSettingsUiUpdateMs = now;
+    if (_lblWifiStatus) {
+      if (_net->isWifiConnected()) {
+        String s = "WiFi: OK  " + _net->ipString() + "  (RSSI " + String(_net->rssi()) + " dBm)";
+        setLabelTextIfChanged(_lblWifiStatus, s.c_str());
+      } else {
+        setLabelTextIfChanged(_lblWifiStatus, "WiFi: OFF");
+      }
+    }
     String s;
     s.reserve(256);
     s += "NTP: ";
@@ -1466,10 +1662,14 @@ void UiManager::tick() {
     s += String(_s->historyMinutes);
     s += " min";
 
-    lv_label_set_text(_lblNetInfo, s.c_str());
+    setLabelTextIfChanged(_lblNetInfo, s.c_str());
   }
 
-  refreshCalibrationView();
+  if (_currentDashPage == DASH_PAGE_CALIBRATION &&
+      (_lastCalibrationUiUpdateMs == 0 || (now - _lastCalibrationUiUpdateMs) >= 250)) {
+    _lastCalibrationUiUpdateMs = now;
+    refreshCalibrationView();
+  }
 }
 
 void UiManager::onDashTab(lv_event_t* e) {

@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <ctime>
+#include <math.h>
 
 static int jsonIntLocal(const String& body, const char* key, int def) {
   String k = String("\"") + key + "\":";
@@ -111,7 +112,8 @@ static bool jsonBoolLocal(const String& body, const char* key, bool def) {
   return def;
 }
 
-static bool jsonFloatArray3Local(const String& body, const char* key, float out[3]) {
+template <size_t N>
+static bool jsonFloatArrayLocal(const String& body, const char* key, float (&out)[N]) {
   String k = String("\"") + key + "\":";
   int p = body.indexOf(k);
   if (p < 0) return false;
@@ -121,8 +123,10 @@ static bool jsonFloatArray3Local(const String& body, const char* key, float out[
   if (p >= (int)body.length() || body[p] != '[') return false;
   p++;
 
-  for (int i = 0; i < 3; i++) {
+  size_t count = 0;
+  while (count < N) {
     while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
+    if (p < (int)body.length() && body[p] == ']') break;
 
     bool neg = false;
     if (p < (int)body.length() && body[p] == '-') {
@@ -149,23 +153,26 @@ static bool jsonFloatArray3Local(const String& body, const char* key, float out[
     }
 
     if (num.isEmpty()) return false;
-    out[i] = neg ? -num.toFloat() : num.toFloat();
+    out[count] = neg ? -num.toFloat() : num.toFloat();
+    count++;
 
     while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-    if (i < 2) {
-      if (p >= (int)body.length() || body[p] != ',') return false;
+    if (p < (int)body.length() && body[p] == ',') {
       p++;
+      continue;
     }
+    break;
   }
 
   while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  return p < (int)body.length() && body[p] == ']';
+  return count > 0 && p < (int)body.length() && body[p] == ']';
 }
 
-static bool jsonU8Array3Local(const String& body, const char* key, uint8_t out[3]) {
-  float vals[3] = {0.0f, 0.0f, 0.0f};
-  if (!jsonFloatArray3Local(body, key, vals)) return false;
-  for (int i = 0; i < 3; i++) out[i] = vals[i] > 0.5f ? 1 : 0;
+template <size_t N>
+static bool jsonU8ArrayLocal(const String& body, const char* key, uint8_t (&out)[N]) {
+  float vals[N] = {};
+  if (!jsonFloatArrayLocal(body, key, vals)) return false;
+  for (size_t i = 0; i < N; i++) out[i] = vals[i] > 0.5f ? 1 : 0;
   return true;
 }
 
@@ -226,6 +233,7 @@ void SettingsStore::load(SettingsV1 &out) {
   out.peakHoldMs         = _prefs.getUInt("a_peak", out.peakHoldMs);
   out.analogBaseOffsetDb = _prefs.getFloat("a_base", out.analogBaseOffsetDb);
   out.analogExtraOffsetDb= _prefs.getFloat("a_extra", out.analogExtraOffsetDb);
+  out.calibrationPointCount = (uint8_t)_prefs.getUChar("cal_cnt", out.calibrationPointCount);
   out.calibrationCaptureMs = _prefs.getUInt("cal_capms", out.calibrationCaptureMs);
 
   out.mqttEnabled = (uint8_t)_prefs.getUChar("mq_en", out.mqttEnabled);
@@ -238,7 +246,7 @@ void SettingsStore::load(SettingsV1 &out) {
   out.mqttPublishPeriodMs = (uint16_t)_prefs.getUShort("mq_pubms", out.mqttPublishPeriodMs);
   out.mqttRetain = (uint8_t)_prefs.getUChar("mq_ret", out.mqttRetain);
 
-  for (uint8_t i = 0; i < 3; i++) {
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     char keyRef[8];
     char keyRaw[8];
     char keyVal[8];
@@ -283,6 +291,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUInt("a_peak", s.peakHoldMs);
   _prefs.putFloat("a_base", s.analogBaseOffsetDb);
   _prefs.putFloat("a_extra", s.analogExtraOffsetDb);
+  _prefs.putUChar("cal_cnt", s.calibrationPointCount);
   _prefs.putUInt("cal_capms", s.calibrationCaptureMs);
 
   _prefs.putUChar("mq_en", s.mqttEnabled);
@@ -295,7 +304,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUShort("mq_pubms", s.mqttPublishPeriodMs);
   _prefs.putUChar("mq_ret", s.mqttRetain);
 
-  for (uint8_t i = 0; i < 3; i++) {
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     char keyRef[8];
     char keyRaw[8];
     char keyVal[8];
@@ -314,6 +323,9 @@ void SettingsStore::factoryReset() {
 }
 
 void SettingsStore::sanitize(SettingsV1& s) {
+  static const float kRecommended3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
+  static const float kRecommended5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
+
   if (s.backlight > 100) s.backlight = 100;
   if (s.th.greenMax > 100) s.th.greenMax = 100;
   if (s.th.orangeMax > 100) s.th.orangeMax = 100;
@@ -333,6 +345,7 @@ void SettingsStore::sanitize(SettingsV1& s) {
   if (s.emaAlpha > 0.95f) s.emaAlpha = 0.95f;
   if (s.peakHoldMs < 500) s.peakHoldMs = 500;
   if (s.peakHoldMs > 30000UL) s.peakHoldMs = 30000UL;
+  s.calibrationPointCount = (s.calibrationPointCount >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
   if (s.calibrationCaptureMs < 1000UL) s.calibrationCaptureMs = 1000UL;
   if (s.calibrationCaptureMs > 30000UL) s.calibrationCaptureMs = 30000UL;
 
@@ -347,7 +360,14 @@ void SettingsStore::sanitize(SettingsV1& s) {
   s.mqttEnabled = s.mqttEnabled ? 1 : 0;
   s.mqttRetain = s.mqttRetain ? 1 : 0;
 
-  for (int i = 0; i < 3; i++) s.calPointValid[i] = s.calPointValid[i] ? 1 : 0;
+  const float* recommended = (s.calibrationPointCount == CALIBRATION_POINT_MAX) ? kRecommended5 : kRecommended3;
+  for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    s.calPointValid[i] = s.calPointValid[i] ? 1 : 0;
+    if (!isfinite(s.calPointRefDb[i])) s.calPointRefDb[i] = recommended[i];
+    if (s.calPointRefDb[i] < 35.0f) s.calPointRefDb[i] = 35.0f;
+    if (s.calPointRefDb[i] > 110.0f) s.calPointRefDb[i] = 110.0f;
+    if (!isfinite(s.calPointRawLogRms[i])) s.calPointRawLogRms[i] = 0.0f;
+  }
 }
 
 String SettingsStore::exportJson(const SettingsV1& s) const {
@@ -372,12 +392,28 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"audioResponseMode\":"; json += String(s.audioResponseMode); json += ",";
   json += "\"emaAlpha\":"; json += String(s.emaAlpha, 4); json += ",";
   json += "\"peakHoldMs\":"; json += String(s.peakHoldMs); json += ",";
+  json += "\"calibrationPointCount\":"; json += String(s.calibrationPointCount); json += ",";
   json += "\"calibrationCaptureSec\":"; json += String(s.calibrationCaptureMs / 1000UL); json += ",";
   json += "\"analogBaseOffsetDb\":"; json += String(s.analogBaseOffsetDb, 4); json += ",";
   json += "\"analogExtraOffsetDb\":"; json += String(s.analogExtraOffsetDb, 4); json += ",";
-  json += "\"calPointRefDb\":["; json += String(s.calPointRefDb[0], 2); json += ","; json += String(s.calPointRefDb[1], 2); json += ","; json += String(s.calPointRefDb[2], 2); json += "],";
-  json += "\"calPointRawLogRms\":["; json += String(s.calPointRawLogRms[0], 4); json += ","; json += String(s.calPointRawLogRms[1], 4); json += ","; json += String(s.calPointRawLogRms[2], 4); json += "],";
-  json += "\"calPointValid\":["; json += String(s.calPointValid[0]); json += ","; json += String(s.calPointValid[1]); json += ","; json += String(s.calPointValid[2]); json += "],";
+  json += "\"calPointRefDb\":[";
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    if (i) json += ",";
+    json += String(s.calPointRefDb[i], 2);
+  }
+  json += "],";
+  json += "\"calPointRawLogRms\":[";
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    if (i) json += ",";
+    json += String(s.calPointRawLogRms[i], 4);
+  }
+  json += "],";
+  json += "\"calPointValid\":[";
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    if (i) json += ",";
+    json += String(s.calPointValid[i]);
+  }
+  json += "],";
   json += "\"otaEnabled\":"; json += (s.otaEnabled ? "true" : "false"); json += ",";
   json += "\"otaPort\":"; json += String(s.otaPort); json += ",";
   json += "\"otaHostname\":\""; json += jsonEscapeLocal(s.otaHostname); json += "\",";
@@ -428,21 +464,25 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.audioResponseMode = (uint8_t)jsonIntLocal(json, "audioResponseMode", next.audioResponseMode);
   next.emaAlpha = jsonFloatLocal(json, "emaAlpha", next.emaAlpha);
   next.peakHoldMs = (uint32_t)jsonIntLocal(json, "peakHoldMs", next.peakHoldMs);
+  next.calibrationPointCount = (uint8_t)jsonIntLocal(json, "calibrationPointCount", next.calibrationPointCount);
   next.calibrationCaptureMs = (uint32_t)jsonIntLocal(json, "calibrationCaptureSec", (int)(next.calibrationCaptureMs / 1000UL)) * 1000UL;
   next.analogBaseOffsetDb = jsonFloatLocal(json, "analogBaseOffsetDb", next.analogBaseOffsetDb);
   next.analogExtraOffsetDb = jsonFloatLocal(json, "analogExtraOffsetDb", next.analogExtraOffsetDb);
 
-  float calRef[3];
-  if (jsonFloatArray3Local(json, "calPointRefDb", calRef)) {
-    for (int i = 0; i < 3; i++) next.calPointRefDb[i] = calRef[i];
+  float calRef[CALIBRATION_POINT_MAX];
+  memcpy(calRef, next.calPointRefDb, sizeof(calRef));
+  if (jsonFloatArrayLocal(json, "calPointRefDb", calRef)) {
+    for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointRefDb[i] = calRef[i];
   }
-  float calRaw[3];
-  if (jsonFloatArray3Local(json, "calPointRawLogRms", calRaw)) {
-    for (int i = 0; i < 3; i++) next.calPointRawLogRms[i] = calRaw[i];
+  float calRaw[CALIBRATION_POINT_MAX];
+  memcpy(calRaw, next.calPointRawLogRms, sizeof(calRaw));
+  if (jsonFloatArrayLocal(json, "calPointRawLogRms", calRaw)) {
+    for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointRawLogRms[i] = calRaw[i];
   }
-  uint8_t calValid[3];
-  if (jsonU8Array3Local(json, "calPointValid", calValid)) {
-    for (int i = 0; i < 3; i++) next.calPointValid[i] = calValid[i];
+  uint8_t calValid[CALIBRATION_POINT_MAX];
+  memcpy(calValid, next.calPointValid, sizeof(calValid));
+  if (jsonU8ArrayLocal(json, "calPointValid", calValid)) {
+    for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointValid[i] = calValid[i];
   }
 
   next.otaEnabled = jsonBoolLocal(json, "otaEnabled", next.otaEnabled != 0) ? 1 : 0;
@@ -558,6 +598,7 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.analogBaseOffsetDb = def.analogBaseOffsetDb;
     s.analogExtraOffsetDb = def.analogExtraOffsetDb;
   } else if (scope == "calibration") {
+    s.calibrationPointCount = def.calibrationPointCount;
     s.calibrationCaptureMs = def.calibrationCaptureMs;
     memcpy(s.calPointRefDb, def.calPointRefDb, sizeof(s.calPointRefDb));
     memcpy(s.calPointRawLogRms, def.calPointRawLogRms, sizeof(s.calPointRawLogRms));
