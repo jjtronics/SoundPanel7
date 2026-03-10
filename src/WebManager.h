@@ -105,6 +105,8 @@ private:
   void handleUsersPassword();
   void handleUsersDelete();
   void handleUiSave();
+  void handleLiveGet();
+  void handleLiveSave();
   void handlePinSave();
 
   void handleTimeGet();

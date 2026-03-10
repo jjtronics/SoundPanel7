@@ -67,6 +67,7 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"greenMax\":"; json += String(s ? s->th.greenMax : DEFAULT_GREEN_MAX); json += ",";
   json += "\"orangeMax\":"; json += String(s ? s->th.orangeMax : DEFAULT_ORANGE_MAX); json += ",";
   json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
+  json += "\"liveEnabled\":"; json += (s && s->liveEnabled ? "true" : "false"); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -413,6 +414,8 @@ void WebManager::routes() {
   _srv.on("/api/pin", HTTP_POST, [this]() { handlePinSave(); });
 
   _srv.on("/api/ui", HTTP_POST, [this]() { handleUiSave(); });
+  _srv.on("/api/live", HTTP_GET, [this]() { handleLiveGet(); });
+  _srv.on("/api/live", HTTP_POST, [this]() { handleLiveSave(); });
 
   _srv.on("/api/time", HTTP_GET,  [this]() { handleTimeGet(); });
   _srv.on("/api/time", HTTP_POST, [this]() { handleTimeSave(); });
@@ -1013,6 +1016,37 @@ void WebManager::handleUiSave() {
   Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
                  bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyOkJson(true);
+}
+
+void WebManager::handleLiveGet() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  String json;
+  json.reserve(64);
+  json += "{";
+  json += "\"enabled\":";
+  json += (_s->liveEnabled ? "true" : "false");
+  json += "}";
+  replyJson(200, json);
+}
+
+void WebManager::handleLiveSave() {
+  if (!requireWebAuth()) return;
+  if (!requireStoreAndSettingsJson()) return;
+
+  String body = _srv.arg("plain");
+  const bool enabled = sp7json::parseBool(body, "enabled", _s->liveEnabled != 0);
+  _s->liveEnabled = enabled ? LIVE_ENABLED : LIVE_DISABLED;
+  _store->save(*_s);
+  pushLiveMetrics(true);
+
+  String json;
+  json.reserve(80);
+  json += "{\"ok\":true,\"enabled\":";
+  json += (_s->liveEnabled ? "true" : "false");
+  json += "}";
+  replyJson(200, json);
 }
 
 void WebManager::handleCalPoint() {
@@ -1731,6 +1765,23 @@ R"HTML(
     .statusList.compact .statusItem{padding:12px 13px}
     .settingsSplit{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .actionsCard .btnRow{margin-top:10px}
+    .liveActionWrap{display:grid;gap:10px}
+    .liveAction{
+      width:100%;min-height:110px;border-radius:999px;border:0;
+      background:#596270;color:#fff;font-size:42px;letter-spacing:.08em;
+      box-shadow:0 10px 26px rgba(0,0,0,.24);
+    }
+    .liveAction.active{
+      background:var(--red);
+      box-shadow:0 0 0 3px rgba(229,57,53,.2), 0 18px 36px rgba(229,57,53,.28);
+    }
+    .liveActionMeta{
+      display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+      color:var(--muted);font-size:12px;
+    }
+    .liveActionState{
+      font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#d8e0e8;
+    }
     .hint,.toast,.footerLine{font-size:12px;color:var(--muted);line-height:1.45}
     .calHeader{
       display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
@@ -2446,6 +2497,13 @@ R"HTML(
                   <h2 class="sectionTitle">Actions systeme</h2>
                 </div>
               </div>
+              <div class="liveActionWrap">
+                <button class="btn liveAction" id="liveActionBtn" aria-pressed="false">LIVE</button>
+                <div class="liveActionMeta">
+                  <div>Flag broadcast tactile, API et MQTT</div>
+                  <div class="liveActionState" id="liveActionState">OFF AIR</div>
+                </div>
+              </div>
               <div class="btnRow">
                 <button class="btn" id="rebootBtn">Reboot</button>
                 <button class="btn" id="shutdownBtn">Shutdown</button>
@@ -2546,6 +2604,7 @@ R"HTML(
     lastContactMs: 0,
     orangeSinceMs: 0,
     redSinceMs: 0,
+    liveEnabled: false,
     uiDirty: false,
     uiResponseMode: 0,
     pinConfigured: false,
@@ -2938,6 +2997,13 @@ R"HTML(
     });
   }
 
+  function applyLiveActionState() {
+    const active = Boolean(state.liveEnabled);
+    $("liveActionBtn").classList.toggle("active", active);
+    $("liveActionBtn").setAttribute("aria-pressed", active ? "true" : "false");
+    $("liveActionState").textContent = active ? "ON AIR" : "OFF AIR";
+  }
+
   function updateStatusSummary(st) {
     const setMetricTone = (id, tone) => {
       const el = $(id);
@@ -3039,6 +3105,7 @@ R"HTML(
     state.historyCapacity = Number(merged.historyCapacity ?? state.historyCapacity ?? 96);
     state.historySamplePeriodMs = Number(merged.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
     state.pinConfigured = Boolean(merged.pinConfigured);
+    state.liveEnabled = Boolean(merged.liveEnabled);
 
     const db = Number(merged.db ?? 0);
     const leq = Number(merged.leq ?? 0);
@@ -3050,6 +3117,7 @@ R"HTML(
 
     updateGauge(db, greenMax, orangeMax);
     updateMetrics(leq, peak);
+    applyLiveActionState();
     updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
 
     if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "");
@@ -3760,6 +3828,23 @@ R"HTML(
     await postAction("/api/reboot", "Reboot demande.");
   }
 
+  async function toggleLive() {
+    const nextEnabled = !state.liveEnabled;
+    $("liveActionBtn").classList.toggle("active", nextEnabled);
+    $("liveActionBtn").setAttribute("aria-pressed", nextEnabled ? "true" : "false");
+    $("liveActionState").textContent = nextEnabled ? "ON AIR" : "OFF AIR";
+
+    try {
+      const response = await apiPost("/api/live", { enabled: nextEnabled });
+      state.liveEnabled = Boolean(response.enabled);
+      applyLiveActionState();
+      setToast("actionsToast", state.liveEnabled ? "LIVE active." : "LIVE coupe.");
+    } catch (err) {
+      applyLiveActionState();
+      setToastError("actionsToast", err);
+    }
+  }
+
   async function shutdown() {
     if (!confirm("Eteindre le systeme ? Reveil via bouton BOOT.")) return;
     await postAction("/api/shutdown", "Shutdown demande.");
@@ -3825,6 +3910,7 @@ R"HTML(
   $("restoreConfigBtn").addEventListener("click", restoreConfig);
   $("partialResetBtn").addEventListener("click", partialReset);
   $("clearCalibration").addEventListener("click", clearCalibration);
+  $("liveActionBtn").addEventListener("click", toggleLive);
   $("rebootBtn").addEventListener("click", reboot);
   $("shutdownBtn").addEventListener("click", shutdown);
   $("factoryResetBtn").addEventListener("click", factoryReset);
@@ -3870,6 +3956,7 @@ R"HTML(
   async function initPage() {
     syncUiLabels();
     syncCalibrationModeButtons();
+    applyLiveActionState();
     renderAuthState();
     await loadAuthStatus();
     if (state.authenticated) {

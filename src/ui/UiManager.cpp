@@ -13,6 +13,7 @@ using namespace esp_panel::board;
 
 LV_FONT_DECLARE(sp7_font_clock_170);
 LV_FONT_DECLARE(sp7_font_gauge_56);
+LV_FONT_DECLARE(sp7_font_live_260);
 
 extern AudioEngine g_audio;
 
@@ -20,9 +21,10 @@ static const char* dashPageLabel(uint8_t page) {
   switch (page) {
     case 0: return "Principal";
     case 1: return "Horloge";
-    case 2: return "Sonometre";
-    case 3: return "Calibration";
-    case 4: return "Parametres";
+    case 2: return "LIVE";
+    case 3: return "Sonometre";
+    case 4: return "Calibration";
+    case 5: return "Parametres";
     default: return "Inconnu";
   }
 }
@@ -251,7 +253,7 @@ void UiManager::buildDashboard() {
   lv_obj_set_scrollbar_mode(tabs, LV_SCROLLBAR_MODE_OFF);
 
   static const char* kTabTitles[DASH_PAGE_COUNT] = {
-    "Principal", "Horloge", "Sonometre", "Calibration", "Parametres"
+    "Principal", "Horloge", "LIVE", "Sonometre", "Calibration", "Parametres"
   };
   for (uint8_t i = 0; i < DASH_PAGE_COUNT; i++) {
     _dashTabs[i] = lv_btn_create(tabs);
@@ -303,6 +305,9 @@ void UiManager::ensureDashboardPageBuilt(uint8_t page) {
       break;
     case DASH_PAGE_CLOCK:
       buildDashboardClockPage(_dashPages[page]);
+      break;
+    case DASH_PAGE_LIVE:
+      buildDashboardLivePage(_dashPages[page]);
       break;
     case DASH_PAGE_SOUND:
       buildDashboardSoundPage(_dashPages[page]);
@@ -923,6 +928,31 @@ void UiManager::buildDashboardClockPage(lv_obj_t* parent) {
   layoutClockFocus();
 }
 
+void UiManager::buildDashboardLivePage(lv_obj_t* parent) {
+  _liveBadge = lv_btn_create(parent);
+  lv_obj_set_size(_liveBadge, 780, 362);
+  lv_obj_align(_liveBadge, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_set_style_radius(_liveBadge, 40, 0);
+  lv_obj_set_style_pad_all(_liveBadge, 0, 0);
+  lv_obj_set_style_border_width(_liveBadge, 4, 0);
+  lv_obj_set_style_border_color(_liveBadge, lv_color_hex(0x290306), 0);
+  lv_obj_set_style_shadow_width(_liveBadge, 26, 0);
+  lv_obj_set_style_shadow_opa(_liveBadge, LV_OPA_40, 0);
+  lv_obj_add_event_cb(_liveBadge, UiManager::onLiveToggle, LV_EVENT_CLICKED, this);
+
+  _lblLiveBadge = lv_label_create(_liveBadge);
+  lv_label_set_text(_lblLiveBadge, "LIVE");
+  lv_obj_set_style_text_font(_lblLiveBadge, &sp7_font_live_260, 0);
+  lv_obj_set_style_text_color(_lblLiveBadge, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_text_letter_space(_lblLiveBadge, -3, 0);
+  lv_obj_center(_lblLiveBadge);
+
+  _lblLiveStatus = nullptr;
+  _lblLiveHint = nullptr;
+
+  refreshLiveControls();
+}
+
 void UiManager::buildDashboardSoundPage(lv_obj_t* parent) {
   lv_obj_t* mainCard = makeCard(parent, 780, 240);
   _dbCardFocus = mainCard;
@@ -1444,6 +1474,28 @@ void UiManager::refreshCalibrationView() {
     lv_obj_set_style_text_color(_btnCalMode5, active ? lv_color_hex(0xFFFFFF) : lv_color_hex(0xB9C7D6), 0);
   }
   _lastCalibrationActiveCount = activeCount;
+}
+
+void UiManager::refreshLiveControls() {
+  if (!_s || !_liveBadge) return;
+
+  const uint8_t liveEnabled = _s->liveEnabled ? LIVE_ENABLED : LIVE_DISABLED;
+  if (_lastLiveEnabled == liveEnabled) return;
+  _lastLiveEnabled = liveEnabled;
+
+  const bool active = liveEnabled == LIVE_ENABLED;
+  lv_color_t bg = active ? lv_color_hex(0xC8141E) : lv_color_hex(0x6E747D);
+  lv_color_t border = active ? lv_color_hex(0x290306) : lv_color_hex(0x24282D);
+  lv_color_t shadow = active ? lv_color_hex(0xFF3B30) : lv_color_hex(0x555A62);
+
+  lv_obj_set_style_bg_color(_liveBadge, bg, 0);
+  lv_obj_set_style_bg_opa(_liveBadge, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(_liveBadge, border, 0);
+  lv_obj_set_style_border_width(_liveBadge, active ? 5 : 4, 0);
+  lv_obj_set_style_shadow_color(_liveBadge, shadow, 0);
+  lv_obj_set_style_shadow_width(_liveBadge, active ? 44 : 18, 0);
+  lv_obj_set_style_shadow_opa(_liveBadge, active ? LV_OPA_70 : LV_OPA_20, 0);
+  lv_obj_set_style_shadow_spread(_liveBadge, active ? 2 : 0, 0);
 }
 
 void UiManager::refreshSettingsControls() {
@@ -1968,6 +2020,8 @@ void UiManager::tick() {
     _lastCalibrationUiUpdateMs = now;
     refreshCalibrationView();
   }
+
+  if (_dashPageBuilt[DASH_PAGE_LIVE]) refreshLiveControls();
 }
 
 void UiManager::onDashTab(lv_event_t* e) {
@@ -1998,6 +2052,17 @@ void UiManager::onOverviewCard(lv_event_t* e) {
 
   uintptr_t page = (uintptr_t)lv_obj_get_user_data(target);
   self->setDashboardPage((uint8_t)page);
+}
+
+void UiManager::onLiveToggle(lv_event_t* e) {
+  UiManager* self = selfFromEvent(e);
+  if (!self || !self->_s) return;
+
+  self->_s->liveEnabled = self->_s->liveEnabled ? LIVE_DISABLED : LIVE_ENABLED;
+  self->_lastLiveEnabled = 255;
+  self->refreshLiveControls();
+
+  if (self->_store) self->_store->save(*self->_s);
 }
 
 void UiManager::onToggleBacklight(lv_event_t* e) {

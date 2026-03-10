@@ -23,7 +23,7 @@ public:
 
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = SharedHistory::POINT_COUNT;
-  static constexpr uint8_t DASH_PAGE_COUNT = 5;
+  static constexpr uint8_t DASH_PAGE_COUNT = 6;
   static constexpr uint16_t RED_HISTORY_SAMPLE_COUNT = 3600;
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
   static constexpr uint32_t SOUND_UI_UPDATE_MS = 160;
@@ -39,9 +39,10 @@ private:
   enum DashPage : uint8_t {
     DASH_PAGE_OVERVIEW = 0,
     DASH_PAGE_CLOCK = 1,
-    DASH_PAGE_SOUND = 2,
-    DASH_PAGE_CALIBRATION = 3,
-    DASH_PAGE_SETTINGS = 4,
+    DASH_PAGE_LIVE = 2,
+    DASH_PAGE_SOUND = 3,
+    DASH_PAGE_CALIBRATION = 4,
+    DASH_PAGE_SETTINGS = 5,
   };
 
   esp_panel::board::Board* _board = nullptr;
@@ -76,6 +77,10 @@ private:
   lv_obj_t* _lblClockSecFocus = nullptr;
   lv_obj_t* _clockSecBadgeFocus = nullptr;
   lv_obj_t* _lblClockStatusFocus = nullptr;
+  lv_obj_t* _liveBadge = nullptr;
+  lv_obj_t* _lblLiveBadge = nullptr;
+  lv_obj_t* _lblLiveStatus = nullptr;
+  lv_obj_t* _lblLiveHint = nullptr;
   lv_obj_t* _arcFocus = nullptr;
   lv_obj_t* _dotFocus = nullptr;
   lv_obj_t* _lblDbFocus = nullptr;
@@ -177,10 +182,12 @@ private:
   uint8_t _lastAlertVisualState = 255;
   uint8_t _lastAlertVisualPhase = 255;
   uint8_t _lastCalibrationActiveCount = 0;
+  uint8_t _lastLiveEnabled = 255;
 
   void buildDashboard();
   void buildDashboardOverviewPage(lv_obj_t* parent);
   void buildDashboardClockPage(lv_obj_t* parent);
+  void buildDashboardLivePage(lv_obj_t* parent);
   void buildDashboardSoundPage(lv_obj_t* parent);
   void buildDashboardCalibrationPage(lv_obj_t* parent);
   void buildDashboardSettingsPage(lv_obj_t* parent);
@@ -196,6 +203,7 @@ private:
                         lv_obj_t** rightOut);
   void setDashboardPage(uint8_t page);
   void refreshCalibrationView();
+  void refreshLiveControls();
   void refreshSettingsControls();
   bool updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                           const char* dateText, const char* mainText, const char* secText);
@@ -226,6 +234,7 @@ private:
   static void onDashTab(lv_event_t* e);
   static void onDashGesture(lv_event_t* e);
   static void onOverviewCard(lv_event_t* e);
+  static void onLiveToggle(lv_event_t* e);
   static void onToggleBacklight(lv_event_t* e);
   static void onSliderThresholds(lv_event_t* e);
   static void onSliderHistory(lv_event_t* e);

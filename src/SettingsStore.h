@@ -34,6 +34,8 @@ static constexpr uint8_t WEB_PASSWORD_MIN_LENGTH = 10;
 static constexpr uint8_t WEB_PASSWORD_MAX_LENGTH = 64;
 static constexpr uint8_t WEB_PASSWORD_SALT_LENGTH = 32;
 static constexpr uint8_t WEB_PASSWORD_HASH_LENGTH = 64;
+static constexpr uint8_t LIVE_DISABLED = 0;
+static constexpr uint8_t LIVE_ENABLED = 1;
 static constexpr float RECOMMENDED_CALIBRATION_3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
 static constexpr float RECOMMENDED_CALIBRATION_5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
 
@@ -83,6 +85,7 @@ struct SettingsV1 {
   uint8_t historyMinutes = DEFAULT_HISTORY_MINUTES;
   uint32_t orangeAlertHoldMs = DEFAULT_WARNING_HOLD_MS;
   uint32_t redAlertHoldMs = DEFAULT_CRITICAL_HOLD_MS;
+  uint8_t liveEnabled = LIVE_DISABLED;
   char dashboardPin[PIN_CODE_MAX_LENGTH + 1] = "";
 
   // Time / locale
