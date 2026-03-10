@@ -182,6 +182,166 @@ void SettingsStore::sanitize(SettingsV1& s) {
   }
 }
 
+void SettingsStore::sanitizeWebUser(WebUserRecord& user) {
+  user.active = user.active ? 1 : 0;
+  if (!user.active) {
+    user.username[0] = '\0';
+    user.passwordSalt[0] = '\0';
+    user.passwordHash[0] = '\0';
+    return;
+  }
+
+  user.username[sizeof(user.username) - 1] = '\0';
+  user.passwordSalt[sizeof(user.passwordSalt) - 1] = '\0';
+  user.passwordHash[sizeof(user.passwordHash) - 1] = '\0';
+
+  if (!strlen(user.username) || !strlen(user.passwordSalt) || !strlen(user.passwordHash)) {
+    user.active = 0;
+    user.username[0] = '\0';
+    user.passwordSalt[0] = '\0';
+    user.passwordHash[0] = '\0';
+  }
+}
+
+void SettingsStore::loadWebUsers(WebUserRecord (&out)[WEB_USER_MAX_COUNT]) {
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    out[i] = WebUserRecord{};
+
+    char keyActive[8];
+    char keyUser[8];
+    char keySalt[8];
+    char keyHash[8];
+    snprintf(keyActive, sizeof(keyActive), "wu%da", i + 1);
+    snprintf(keyUser, sizeof(keyUser), "wu%du", i + 1);
+    snprintf(keySalt, sizeof(keySalt), "wu%ds", i + 1);
+    snprintf(keyHash, sizeof(keyHash), "wu%dh", i + 1);
+
+    out[i].active = (uint8_t)_prefs.getUChar(keyActive, 0);
+    _prefs.getString(keyUser, out[i].username, sizeof(out[i].username));
+    _prefs.getString(keySalt, out[i].passwordSalt, sizeof(out[i].passwordSalt));
+    _prefs.getString(keyHash, out[i].passwordHash, sizeof(out[i].passwordHash));
+    sanitizeWebUser(out[i]);
+  }
+}
+
+uint8_t SettingsStore::webUserCount() {
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  loadWebUsers(users);
+
+  uint8_t count = 0;
+  for (const WebUserRecord& user : users) {
+    if (user.active) count++;
+  }
+  return count;
+}
+
+bool SettingsStore::upsertWebUser(const WebUserRecord& user, String* err) {
+  WebUserRecord next = user;
+  sanitizeWebUser(next);
+  if (!next.active) {
+    if (err) *err = "invalid user";
+    return false;
+  }
+
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  loadWebUsers(users);
+
+  int existingIndex = -1;
+  int freeIndex = -1;
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    if (users[i].active && strcmp(users[i].username, next.username) == 0) {
+      existingIndex = i;
+      break;
+    }
+    if (!users[i].active && freeIndex < 0) freeIndex = i;
+  }
+
+  const int slot = existingIndex >= 0 ? existingIndex : freeIndex;
+  if (slot < 0) {
+    if (err) *err = "user limit reached";
+    return false;
+  }
+
+  users[slot] = next;
+
+  char keyActive[8];
+  char keyUser[8];
+  char keySalt[8];
+  char keyHash[8];
+  snprintf(keyActive, sizeof(keyActive), "wu%da", slot + 1);
+  snprintf(keyUser, sizeof(keyUser), "wu%du", slot + 1);
+  snprintf(keySalt, sizeof(keySalt), "wu%ds", slot + 1);
+  snprintf(keyHash, sizeof(keyHash), "wu%dh", slot + 1);
+
+  _prefs.putUChar(keyActive, users[slot].active);
+  _prefs.putString(keyUser, users[slot].username);
+  _prefs.putString(keySalt, users[slot].passwordSalt);
+  _prefs.putString(keyHash, users[slot].passwordHash);
+  return true;
+}
+
+bool SettingsStore::deleteWebUser(const char* username, String* err) {
+  if (!username || !username[0]) {
+    if (err) *err = "missing username";
+    return false;
+  }
+
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  loadWebUsers(users);
+
+  int index = -1;
+  uint8_t activeCount = 0;
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    if (!users[i].active) continue;
+    activeCount++;
+    if (strcmp(users[i].username, username) == 0) index = i;
+  }
+
+  if (index < 0) {
+    if (err) *err = "user not found";
+    return false;
+  }
+  if (activeCount <= 1) {
+    if (err) *err = "cannot delete last user";
+    return false;
+  }
+
+  users[index] = WebUserRecord{};
+
+  char keyActive[8];
+  char keyUser[8];
+  char keySalt[8];
+  char keyHash[8];
+  snprintf(keyActive, sizeof(keyActive), "wu%da", index + 1);
+  snprintf(keyUser, sizeof(keyUser), "wu%du", index + 1);
+  snprintf(keySalt, sizeof(keySalt), "wu%ds", index + 1);
+  snprintf(keyHash, sizeof(keyHash), "wu%dh", index + 1);
+
+  _prefs.putUChar(keyActive, 0);
+  _prefs.putString(keyUser, "");
+  _prefs.putString(keySalt, "");
+  _prefs.putString(keyHash, "");
+  return true;
+}
+
+void SettingsStore::clearWebUsers() {
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    char keyActive[8];
+    char keyUser[8];
+    char keySalt[8];
+    char keyHash[8];
+    snprintf(keyActive, sizeof(keyActive), "wu%da", i + 1);
+    snprintf(keyUser, sizeof(keyUser), "wu%du", i + 1);
+    snprintf(keySalt, sizeof(keySalt), "wu%ds", i + 1);
+    snprintf(keyHash, sizeof(keyHash), "wu%dh", i + 1);
+
+    _prefs.putUChar(keyActive, 0);
+    _prefs.putString(keyUser, "");
+    _prefs.putString(keySalt, "");
+    _prefs.putString(keyHash, "");
+  }
+}
+
 String SettingsStore::exportJson(const SettingsV1& s) const {
   String json;
   json.reserve(2048);

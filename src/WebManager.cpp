@@ -6,9 +6,12 @@
 #include <esp_sntp.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
+#include <esp_random.h>
+#include <mbedtls/sha256.h>
 #include <ctime>
 #include <math.h>
 #include <cstring>
+#include <ctype.h>
 
 #include "AudioEngine.h"
 #include "AppConfig.h"
@@ -20,6 +23,16 @@ static uint32_t g_bootMs = 0;
 static float g_webDbInstant = 0.0f;
 static float g_webLeq = 0.0f;
 static float g_webPeak = 0.0f;
+
+static constexpr char SP7_SESSION_COOKIE_NAME[] = "sp7_session";
+
+static void appendBoolField(String& json, const char* key, bool value, bool trailingComma = true) {
+  json += "\"";
+  json += key;
+  json += "\":";
+  json += value ? "true" : "false";
+  if (trailingComma) json += ",";
+}
 
 static void appendWifiJson(String& json, bool wifiConnected, const String& ip, int rssi) {
   json += "\"wifi\":"; json += (wifiConnected ? "true" : "false"); json += ",";
@@ -97,6 +110,248 @@ static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
   sp7json::appendEscapedField(json, "activePage", stats.activePage);
 }
 
+void WebManager::addCommonSecurityHeaders(bool noStore) {
+  _srv.sendHeader("X-Frame-Options", "DENY");
+  _srv.sendHeader("X-Content-Type-Options", "nosniff");
+  _srv.sendHeader("Referrer-Policy", "same-origin");
+  if (noStore) {
+    _srv.sendHeader("Cache-Control", "no-store, max-age=0");
+    _srv.sendHeader("Pragma", "no-cache");
+  }
+}
+
+bool WebManager::secureEquals(const char* a, const char* b) {
+  if (!a || !b) return false;
+  const size_t lenA = strlen(a);
+  const size_t lenB = strlen(b);
+  const size_t maxLen = lenA > lenB ? lenA : lenB;
+  uint8_t diff = (uint8_t)(lenA ^ lenB);
+  for (size_t i = 0; i < maxLen; i++) {
+    const uint8_t ca = i < lenA ? (uint8_t)a[i] : 0;
+    const uint8_t cb = i < lenB ? (uint8_t)b[i] : 0;
+    diff |= (uint8_t)(ca ^ cb);
+  }
+  return diff == 0;
+}
+
+bool WebManager::normalizeUsername(String& username) {
+  username.trim();
+  username.toLowerCase();
+  if (username.length() < 3 || username.length() > WEB_USERNAME_MAX_LENGTH) return false;
+  for (size_t i = 0; i < username.length(); i++) {
+    const char c = username[i];
+    const bool allowed = (c >= 'a' && c <= 'z')
+      || (c >= '0' && c <= '9')
+      || c == '.'
+      || c == '_'
+      || c == '-';
+    if (!allowed) return false;
+  }
+  return true;
+}
+
+bool WebManager::passwordIsStrongEnough(const String& password, String* reason) {
+  const size_t len = password.length();
+  if (len < WEB_PASSWORD_MIN_LENGTH || len > WEB_PASSWORD_MAX_LENGTH) {
+    if (reason) *reason = "password must be 10 to 64 chars";
+    return false;
+  }
+
+  bool hasLower = false;
+  bool hasUpper = false;
+  bool hasDigit = false;
+  bool hasSymbol = false;
+  for (size_t i = 0; i < len; i++) {
+    const char c = password[i];
+    if (c >= 'a' && c <= 'z') hasLower = true;
+    else if (c >= 'A' && c <= 'Z') hasUpper = true;
+    else if (c >= '0' && c <= '9') hasDigit = true;
+    else hasSymbol = true;
+  }
+
+  const uint8_t classCount = (hasLower ? 1 : 0) + (hasUpper ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSymbol ? 1 : 0);
+  if (classCount < 3) {
+    if (reason) *reason = "password needs 3 character classes";
+    return false;
+  }
+  return true;
+}
+
+String WebManager::randomHex(size_t hexChars) {
+  static const char kHexChars[] = "0123456789abcdef";
+  String out;
+  out.reserve(hexChars);
+  while (out.length() < hexChars) {
+    const uint32_t value = esp_random();
+    for (int shift = 28; shift >= 0 && out.length() < hexChars; shift -= 4) {
+      out += kHexChars[(value >> shift) & 0x0F];
+    }
+  }
+  return out;
+}
+
+String WebManager::hashPassword(const char* username, const char* password, const char* saltHex) {
+  uint8_t digest[32] = {0};
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+
+  auto runRound = [&](bool firstRound) {
+    mbedtls_sha256_starts(&ctx, 0);
+    if (!firstRound) {
+      mbedtls_sha256_update(&ctx, digest, sizeof(digest));
+    }
+    if (saltHex) mbedtls_sha256_update(&ctx, (const uint8_t*)saltHex, strlen(saltHex));
+    if (username) mbedtls_sha256_update(&ctx, (const uint8_t*)username, strlen(username));
+    if (password) mbedtls_sha256_update(&ctx, (const uint8_t*)password, strlen(password));
+    mbedtls_sha256_finish(&ctx, digest);
+  };
+
+  runRound(true);
+  for (uint16_t i = 1; i < WEB_PASSWORD_HASH_ROUNDS; i++) runRound(false);
+  mbedtls_sha256_free(&ctx);
+
+  static const char kHexChars[] = "0123456789abcdef";
+  char out[(32 * 2) + 1];
+  for (size_t i = 0; i < sizeof(digest); i++) {
+    out[i * 2] = kHexChars[(digest[i] >> 4) & 0x0F];
+    out[(i * 2) + 1] = kHexChars[digest[i] & 0x0F];
+  }
+  out[sizeof(out) - 1] = '\0';
+  return String(out);
+}
+
+bool WebManager::webUsersConfigured() const {
+  return _store && _store->webUserCount() > 0;
+}
+
+void WebManager::cleanupExpiredSessions() {
+  const uint32_t now = millis();
+  for (WebSession& session : _sessions) {
+    if (!session.active) continue;
+    if ((uint32_t)(now - session.lastSeenMs) > WEB_SESSION_IDLE_TIMEOUT_MS) {
+      session = WebSession{};
+    }
+  }
+}
+
+const WebManager::WebSession* WebManager::findSessionByToken(const char* token, bool touch) {
+  if (!token || !token[0]) return nullptr;
+  cleanupExpiredSessions();
+
+  const uint32_t now = millis();
+  for (WebSession& session : _sessions) {
+    if (!session.active) continue;
+    if (!secureEquals(session.sessionToken, token)) continue;
+    if (touch) session.lastSeenMs = now;
+    return &session;
+  }
+  return nullptr;
+}
+
+const WebManager::WebSession* WebManager::findSessionByLiveToken(const char* token, bool touch) {
+  if (!token || !token[0]) return nullptr;
+  cleanupExpiredSessions();
+
+  const uint32_t now = millis();
+  for (WebSession& session : _sessions) {
+    if (!session.active) continue;
+    if (!secureEquals(session.liveToken, token)) continue;
+    if (touch) session.lastSeenMs = now;
+    return &session;
+  }
+  return nullptr;
+}
+
+const WebManager::WebSession* WebManager::currentSession(bool touch) {
+  return findSessionByToken(extractCookieValue(SP7_SESSION_COOKIE_NAME).c_str(), touch);
+}
+
+WebManager::WebSession* WebManager::newSessionSlot() {
+  cleanupExpiredSessions();
+  for (WebSession& session : _sessions) {
+    if (!session.active) return &session;
+  }
+
+  WebSession* oldest = &_sessions[0];
+  for (WebSession& session : _sessions) {
+    if (session.lastSeenMs < oldest->lastSeenMs) oldest = &session;
+  }
+  return oldest;
+}
+
+void WebManager::invalidateSessionToken(const char* token) {
+  if (!token || !token[0]) return;
+  for (WebSession& session : _sessions) {
+    if (session.active && secureEquals(session.sessionToken, token)) {
+      session = WebSession{};
+      _liveEvents.close();
+      return;
+    }
+  }
+}
+
+void WebManager::invalidateSessionsForUser(const char* username) {
+  if (!username || !username[0]) return;
+  bool changed = false;
+  for (WebSession& session : _sessions) {
+    if (session.active && secureEquals(session.username, username)) {
+      session = WebSession{};
+      changed = true;
+    }
+  }
+  if (changed) _liveEvents.close();
+}
+
+void WebManager::clearAllSessions() {
+  for (WebSession& session : _sessions) session = WebSession{};
+  _liveEvents.close();
+}
+
+bool WebManager::issueSessionForUser(const char* username, String& liveTokenOut) {
+  if (!username || !username[0]) return false;
+
+  WebSession* session = newSessionSlot();
+  if (!session) return false;
+
+  *session = WebSession{};
+  session->active = true;
+  const String sessionToken = randomHex(sizeof(session->sessionToken) - 1);
+  const String liveToken = randomHex(sizeof(session->liveToken) - 1);
+  if (!sp7json::safeCopy(session->sessionToken, sizeof(session->sessionToken), sessionToken)) return false;
+  if (!sp7json::safeCopy(session->liveToken, sizeof(session->liveToken), liveToken)) return false;
+  if (!sp7json::safeCopy(session->username, sizeof(session->username), String(username))) return false;
+  session->lastSeenMs = millis();
+
+  liveTokenOut = liveToken;
+  _srv.sendHeader("Set-Cookie", String(SP7_SESSION_COOKIE_NAME) + "=" + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
+  return true;
+}
+
+String WebManager::extractCookieValue(const char* cookieName) const {
+  if (!cookieName || !_srv.hasHeader("Cookie")) return "";
+  const String cookieHeader = _srv.header("Cookie");
+  const String prefix = String(cookieName) + "=";
+
+  int start = 0;
+  while (start < (int)cookieHeader.length()) {
+    while (start < (int)cookieHeader.length() && (cookieHeader[start] == ' ' || cookieHeader[start] == ';')) start++;
+    const int end = cookieHeader.indexOf(';', start);
+    const String part = cookieHeader.substring(start, end >= 0 ? end : cookieHeader.length());
+    if (part.startsWith(prefix)) return part.substring(prefix.length());
+    if (end < 0) break;
+    start = end + 1;
+  }
+  return "";
+}
+
+bool WebManager::requireWebAuth() {
+  if (currentSession()) return true;
+  addCommonSecurityHeaders();
+  _srv.sendHeader("Set-Cookie", String(SP7_SESSION_COOKIE_NAME) + "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+  replyErrorJson(401, "auth required");
+  return false;
+}
+
 bool WebManager::begin(SettingsStore* store,
                        SettingsV1* settings,
                        NetManager* net,
@@ -115,6 +370,8 @@ bool WebManager::begin(SettingsStore* store,
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
 
+  const char* headers[] = {"Cookie"};
+  _srv.collectHeaders(headers, 1);
   routes();
   _srv.begin();
   setupLiveStream();
@@ -141,6 +398,15 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
 
 void WebManager::routes() {
   _srv.on("/", HTTP_GET, [this]() { handleRoot(); });
+
+  _srv.on("/api/auth/status", HTTP_GET, [this]() { handleAuthStatus(); });
+  _srv.on("/api/auth/login", HTTP_POST, [this]() { handleAuthLogin(); });
+  _srv.on("/api/auth/logout", HTTP_POST, [this]() { handleAuthLogout(); });
+  _srv.on("/api/auth/bootstrap", HTTP_POST, [this]() { handleAuthBootstrap(); });
+  _srv.on("/api/users", HTTP_GET, [this]() { handleUsersGet(); });
+  _srv.on("/api/users/create", HTTP_POST, [this]() { handleUsersCreate(); });
+  _srv.on("/api/users/password", HTTP_POST, [this]() { handleUsersPassword(); });
+  _srv.on("/api/users/delete", HTTP_POST, [this]() { handleUsersDelete(); });
 
   _srv.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
 
@@ -182,6 +448,13 @@ void WebManager::setupLiveStream() {
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   DefaultHeaders::Instance().addHeader("Cache-Control", "no-cache");
 
+  _liveEvents.authorizeConnect([this](AsyncWebServerRequest* request) -> bool {
+    if (!request || !request->hasParam("t")) return false;
+    const AsyncWebParameter* tokenParam = request->getParam("t");
+    if (!tokenParam) return false;
+    return findSessionByLiveToken(tokenParam->value().c_str()) != nullptr;
+  });
+
   _liveEvents.onConnect([this](AsyncEventSourceClient* client) {
     if (!client) return;
     const String payload = statusJson();
@@ -202,10 +475,12 @@ void WebManager::pushLiveMetrics(bool force) {
 }
 
 void WebManager::replyText(int code, const String& txt, const char* contentType) {
+  addCommonSecurityHeaders();
   _srv.send(code, contentType, txt);
 }
 
 void WebManager::replyJson(int code, const String& json) {
+  addCommonSecurityHeaders();
   _srv.send(code, "application/json", json);
 }
 
@@ -374,11 +649,295 @@ String WebManager::historyJson() const {
   return _history ? _history->toJson() : String("[]");
 }
 
+void WebManager::handleAuthStatus() {
+  const WebSession* session = currentSession(false);
+
+  String json;
+  json.reserve(320);
+  json += "{";
+  appendBoolField(json, "authenticated", session != nullptr);
+  appendBoolField(json, "bootstrapRequired", !webUsersConfigured());
+  json += "\"userCount\":"; json += String(_store ? _store->webUserCount() : 0); json += ",";
+  sp7json::appendEscapedField(json, "currentUser", session ? session->username : "");
+  sp7json::appendEscapedField(json, "liveToken", session ? session->liveToken : "", false);
+  json += "}";
+  replyJson(200, json);
+}
+
+void WebManager::handleAuthLogin() {
+  if (!_store) {
+    replyErrorJson(500, "store missing");
+    return;
+  }
+  if (!webUsersConfigured()) {
+    replyErrorJson(403, "bootstrap required");
+    return;
+  }
+
+  const uint32_t now = millis();
+  if (_loginLockUntilMs && (int32_t)(_loginLockUntilMs - now) > 0) {
+    replyErrorJson(429, "login temporarily locked");
+    return;
+  }
+  _loginLockUntilMs = 0;
+
+  const String body = _srv.arg("plain");
+  String username = sp7json::parseString(body, "username", "", false);
+  const String password = sp7json::parseString(body, "password", "", false);
+  if (!normalizeUsername(username)) {
+    replyErrorJson(400, "bad username");
+    return;
+  }
+
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  _store->loadWebUsers(users);
+
+  const WebUserRecord* match = nullptr;
+  for (const WebUserRecord& user : users) {
+    if (user.active && strcmp(user.username, username.c_str()) == 0) {
+      match = &user;
+      break;
+    }
+  }
+
+  const String computedHash = match ? hashPassword(match->username, password.c_str(), match->passwordSalt) : String("");
+  if (!match || !secureEquals(match->passwordHash, computedHash.c_str())) {
+    _loginFailureCount++;
+    if (_loginFailureCount >= WEB_LOGIN_MAX_FAILURES) {
+      _loginLockUntilMs = now + WEB_LOGIN_LOCK_MS;
+      _loginFailureCount = 0;
+    }
+    delay(120);
+    replyErrorJson(401, "invalid credentials");
+    return;
+  }
+
+  _loginFailureCount = 0;
+  _loginLockUntilMs = 0;
+  String liveToken;
+  if (!issueSessionForUser(match->username, liveToken)) {
+    replyErrorJson(500, "session failed");
+    return;
+  }
+
+  String json = "{\"ok\":true,\"authenticated\":true,\"currentUser\":\"";
+  json += sp7json::escape(match->username);
+  json += "\",\"liveToken\":\"";
+  json += sp7json::escape(liveToken.c_str());
+  json += "\"}";
+  replyJson(200, json);
+}
+
+void WebManager::handleAuthLogout() {
+  invalidateSessionToken(extractCookieValue(SP7_SESSION_COOKIE_NAME).c_str());
+  addCommonSecurityHeaders();
+  _srv.sendHeader("Set-Cookie", String(SP7_SESSION_COOKIE_NAME) + "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+  replyOkJson();
+}
+
+void WebManager::handleAuthBootstrap() {
+  if (!_store) {
+    replyErrorJson(500, "store missing");
+    return;
+  }
+  if (webUsersConfigured()) {
+    replyErrorJson(403, "bootstrap closed");
+    return;
+  }
+
+  const String body = _srv.arg("plain");
+  String username = sp7json::parseString(body, "username", "", false);
+  const String password = sp7json::parseString(body, "password", "", false);
+  if (!normalizeUsername(username)) {
+    replyErrorJson(400, "bad username");
+    return;
+  }
+
+  String passwordReason;
+  if (!passwordIsStrongEnough(password, &passwordReason)) {
+    replyErrorJson(400, passwordReason);
+    return;
+  }
+
+  WebUserRecord user;
+  user.active = 1;
+  const String salt = randomHex(WEB_PASSWORD_SALT_LENGTH);
+  const String hash = hashPassword(username.c_str(), password.c_str(), salt.c_str());
+  if (!sp7json::safeCopy(user.username, sizeof(user.username), username)
+      || !sp7json::safeCopy(user.passwordSalt, sizeof(user.passwordSalt), salt)
+      || !sp7json::safeCopy(user.passwordHash, sizeof(user.passwordHash), hash)) {
+    replyErrorJson(500, "bootstrap failed");
+    return;
+  }
+
+  String err;
+  if (!_store->upsertWebUser(user, &err)) {
+    replyErrorJson(400, err);
+    return;
+  }
+
+  String liveToken;
+  if (!issueSessionForUser(user.username, liveToken)) {
+    replyErrorJson(500, "session failed");
+    return;
+  }
+  String json = "{\"ok\":true,\"bootstrap\":true,\"liveToken\":\"";
+  json += sp7json::escape(liveToken.c_str());
+  json += "\"}";
+  replyJson(200, json);
+}
+
+void WebManager::handleUsersGet() {
+  if (!requireWebAuth()) return;
+
+  const WebSession* session = currentSession(false);
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  _store->loadWebUsers(users);
+
+  String json;
+  json.reserve(512);
+  json += "{";
+  sp7json::appendEscapedField(json, "currentUser", session ? session->username : "");
+  json += "\"userCount\":"; json += String(_store->webUserCount()); json += ",";
+  json += "\"maxUsers\":"; json += String(WEB_USER_MAX_COUNT); json += ",";
+  json += "\"users\":[";
+  bool first = true;
+  for (const WebUserRecord& user : users) {
+    if (!user.active) continue;
+    if (!first) json += ",";
+    first = false;
+    json += "{";
+    sp7json::appendEscapedField(json, "username", user.username, false);
+    json += "}";
+  }
+  json += "]";
+  json += "}";
+  replyJson(200, json);
+}
+
+void WebManager::handleUsersCreate() {
+  if (!requireWebAuth()) return;
+
+  const String body = _srv.arg("plain");
+  String username = sp7json::parseString(body, "username", "", false);
+  const String password = sp7json::parseString(body, "password", "", false);
+  if (!normalizeUsername(username)) {
+    replyErrorJson(400, "bad username");
+    return;
+  }
+
+  String passwordReason;
+  if (!passwordIsStrongEnough(password, &passwordReason)) {
+    replyErrorJson(400, passwordReason);
+    return;
+  }
+
+  WebUserRecord existingUsers[WEB_USER_MAX_COUNT];
+  _store->loadWebUsers(existingUsers);
+  for (const WebUserRecord& existing : existingUsers) {
+    if (existing.active && strcmp(existing.username, username.c_str()) == 0) {
+      replyErrorJson(409, "user already exists");
+      return;
+    }
+  }
+
+  WebUserRecord user;
+  user.active = 1;
+  const String salt = randomHex(WEB_PASSWORD_SALT_LENGTH);
+  const String hash = hashPassword(username.c_str(), password.c_str(), salt.c_str());
+  if (!sp7json::safeCopy(user.username, sizeof(user.username), username)
+      || !sp7json::safeCopy(user.passwordSalt, sizeof(user.passwordSalt), salt)
+      || !sp7json::safeCopy(user.passwordHash, sizeof(user.passwordHash), hash)) {
+    replyErrorJson(500, "user create failed");
+    return;
+  }
+
+  String err;
+  if (!_store->upsertWebUser(user, &err)) {
+    replyErrorJson(400, err);
+    return;
+  }
+
+  replyOkJson();
+}
+
+void WebManager::handleUsersPassword() {
+  if (!requireWebAuth()) return;
+
+  const String body = _srv.arg("plain");
+  String username = sp7json::parseString(body, "username", "", false);
+  const String password = sp7json::parseString(body, "password", "", false);
+  if (!normalizeUsername(username)) {
+    replyErrorJson(400, "bad username");
+    return;
+  }
+
+  String passwordReason;
+  if (!passwordIsStrongEnough(password, &passwordReason)) {
+    replyErrorJson(400, passwordReason);
+    return;
+  }
+
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  _store->loadWebUsers(users);
+
+  int index = -1;
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    if (users[i].active && strcmp(users[i].username, username.c_str()) == 0) {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) {
+    replyErrorJson(404, "user not found");
+    return;
+  }
+
+  const String salt = randomHex(WEB_PASSWORD_SALT_LENGTH);
+  const String hash = hashPassword(username.c_str(), password.c_str(), salt.c_str());
+  if (!sp7json::safeCopy(users[index].passwordSalt, sizeof(users[index].passwordSalt), salt)
+      || !sp7json::safeCopy(users[index].passwordHash, sizeof(users[index].passwordHash), hash)) {
+    replyErrorJson(500, "password update failed");
+    return;
+  }
+
+  String err;
+  if (!_store->upsertWebUser(users[index], &err)) {
+    replyErrorJson(400, err);
+    return;
+  }
+
+  invalidateSessionsForUser(username.c_str());
+  replyOkJson();
+}
+
+void WebManager::handleUsersDelete() {
+  if (!requireWebAuth()) return;
+
+  const String body = _srv.arg("plain");
+  String username = sp7json::parseString(body, "username", "", false);
+  if (!normalizeUsername(username)) {
+    replyErrorJson(400, "bad username");
+    return;
+  }
+
+  String err;
+  if (!_store->deleteWebUser(username.c_str(), &err)) {
+    replyErrorJson(400, err);
+    return;
+  }
+
+  invalidateSessionsForUser(username.c_str());
+  replyOkJson();
+}
+
 void WebManager::handleStatus() {
+  if (!requireWebAuth()) return;
   replyJson(200, statusJson());
 }
 
 void WebManager::handlePinSave() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
@@ -404,6 +963,7 @@ void WebManager::handlePinSave() {
 }
 
 void WebManager::handleUiSave() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsText()) return;
 
   String body = _srv.arg("plain");
@@ -456,6 +1016,7 @@ void WebManager::handleUiSave() {
 }
 
 void WebManager::handleCalPoint() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
@@ -482,6 +1043,7 @@ void WebManager::handleCalPoint() {
 }
 
 void WebManager::handleCalClear() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   g_audio.clearCalibration(*_s);
@@ -491,6 +1053,7 @@ void WebManager::handleCalClear() {
 }
 
 void WebManager::handleCalMode() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
@@ -508,6 +1071,7 @@ void WebManager::handleCalMode() {
 }
 
 void WebManager::handleTimeGet() {
+  if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
 
   String json;
@@ -524,6 +1088,7 @@ void WebManager::handleTimeGet() {
 }
 
 void WebManager::handleTimeSave() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsText()) return;
 
   String body = _srv.arg("plain");
@@ -578,12 +1143,14 @@ void WebManager::handleTimeSave() {
 }
 
 void WebManager::handleConfigExport() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   replyJson(200, _store->exportJson(*_s));
 }
 
 void WebManager::handleConfigImport() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String err;
@@ -600,6 +1167,7 @@ void WebManager::handleConfigImport() {
 }
 
 void WebManager::handleConfigBackup() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   if (!_store->saveBackup(*_s)) {
@@ -611,6 +1179,7 @@ void WebManager::handleConfigBackup() {
 }
 
 void WebManager::handleConfigRestore() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String err;
@@ -626,6 +1195,7 @@ void WebManager::handleConfigRestore() {
 }
 
 void WebManager::handleConfigResetPartial() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
@@ -639,6 +1209,11 @@ void WebManager::handleConfigResetPartial() {
     return;
   }
 
+  if (scope == "security") {
+    _store->clearWebUsers();
+    clearAllSessions();
+  }
+
   _store->save(*_s);
   applySettingsRuntimeState();
   pushLiveMetrics(true);
@@ -646,12 +1221,14 @@ void WebManager::handleConfigResetPartial() {
 }
 
 void WebManager::handleReboot() {
+  if (!requireWebAuth()) return;
   replyOkJson(true);
   delay(150);
   ESP.restart();
 }
 
 void WebManager::handleShutdown() {
+  if (!requireWebAuth()) return;
   replyOkJson(true);
   delay(150);
 
@@ -673,13 +1250,17 @@ void WebManager::handleShutdown() {
 }
 
 void WebManager::handleFactoryReset() {
+  if (!requireWebAuth()) return;
   if (_store) _store->factoryReset();
+  if (_store) _store->clearWebUsers();
+  clearAllSessions();
   replyOkJson(true);
   delay(150);
   ESP.restart();
 }
 
 void WebManager::handleOtaGet() {
+  if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
 
   String json;
@@ -695,6 +1276,7 @@ void WebManager::handleOtaGet() {
 }
 
 void WebManager::handleOtaSave() {
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
   String body = _srv.arg("plain");
@@ -737,6 +1319,7 @@ void WebManager::handleOtaSave() {
 }
 
 void WebManager::handleMqttGet() {
+  if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
 
   String json;
@@ -759,6 +1342,7 @@ void WebManager::handleMqttGet() {
 void WebManager::handleMqttSave() {
   Serial0.println("[WEB] /api/mqtt POST received");
 
+  if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) {
     Serial0.println("[WEB] MQTT save failed: store/settings missing");
     return;
@@ -1183,6 +1767,44 @@ R"HTML(
       border-color:rgba(122,30,44,.22);
       color:#c8d3de;
     }
+    body.authLocked{overflow:hidden}
+    body.authLocked .shell,
+    body.authLocked .top{
+      filter:blur(10px);
+      pointer-events:none;
+      user-select:none;
+    }
+    .hidden{display:none !important}
+    .authGate{
+      position:fixed;inset:0;z-index:50;
+      display:flex;align-items:center;justify-content:center;padding:20px;
+      background:
+        radial-gradient(circle at top, rgba(122,30,44,.22), transparent 30%),
+        rgba(4,8,13,.9);
+      backdrop-filter:blur(20px);
+    }
+    .authCard{
+      width:min(100%, 460px);
+      background:linear-gradient(180deg, #111824 0%, #0f1621 100%);
+      border:1px solid var(--line);
+      border-radius:28px;
+      padding:22px;
+      box-shadow:0 18px 48px rgba(0,0,0,.38);
+    }
+    .authTitle{font-size:28px;font-weight:800;margin:0}
+    .authLead{font-size:13px;color:var(--muted);line-height:1.55;margin-top:8px}
+    .authActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+    .authHintStrong{color:#d7e2eb;font-size:12px;line-height:1.5}
+    .usersCardHeader{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
+    }
+    .userList{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+    .userRow{
+      display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;
+      background:var(--panel3);border-radius:16px;padding:12px 14px;
+    }
+    .userRowName{font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis}
+    .userRowMeta{font-size:12px;color:var(--muted)}
     @media (max-width:1024px){
       .gridOverview{grid-template-columns:1fr}
       .rightCol{grid-template-columns:1fr 1fr;grid-template-rows:none}
@@ -1197,6 +1819,7 @@ R"HTML(
       .settingsSplit{grid-template-columns:1fr}
       .grid2{grid-template-columns:1fr}
       .calRow{grid-template-columns:1fr 34px 74px 34px 110px}
+      .userRow{grid-template-columns:1fr}
       .clockHeroDate{position:static;margin-top:6px}
       .clockHeroRow{justify-content:flex-start;flex-wrap:wrap}
       .alertBadge{left:auto;right:18px;top:18px}
@@ -1210,6 +1833,27 @@ R"HTML(
   </style>
 </head>
 <body>
+  <div class="authGate hidden" id="authGate">
+    <div class="authCard">
+      <div class="sectionKicker">Acces Web</div>
+      <h1 class="authTitle" id="authTitle">Connexion</h1>
+      <div class="authLead" id="authLead">Connecte-toi avec un compte web local pour acceder au dashboard.</div>
+
+      <div class="field">
+        <label>Login</label>
+        <input id="authUsername" type="text" autocomplete="username" placeholder="admin"/>
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input id="authPassword" type="password" autocomplete="current-password" placeholder="Mot de passe"/>
+      </div>
+      <div class="authHintStrong" id="authPasswordHint">Mot de passe conseille: 10+ caracteres avec 3 types parmi majuscule, minuscule, chiffre, symbole.</div>
+      <div class="authActions">
+        <button class="btn accent" id="authSubmitBtn">Se connecter</button>
+      </div>
+      <div class="toast" id="authToast"></div>
+    </div>
+  </div>
   <div class="top">
     <div class="topInner">
       <div class="brand">
@@ -1611,6 +2255,52 @@ R"HTML(
             </article>
 
             <article class="card settingsCardFlat">
+              <div class="usersCardHeader">
+                <div>
+                  <div class="sectionKicker">Securite Web</div>
+                  <h2 class="sectionTitle">Gestion des utilisateurs</h2>
+                  <div class="hint">Comptes locaux pour l'acces web. Tous les utilisateurs ont un acces administrateur au dashboard.</div>
+                </div>
+                <div class="pill mono" id="usersSummary">0 / 4 utilisateurs</div>
+              </div>
+
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>Nouveau login</label>
+                    <input id="newWebUsername" type="text" autocomplete="off" placeholder="admin"/>
+                  </div>
+                  <div class="field">
+                    <label>Mot de passe</label>
+                    <input id="newWebPassword" type="password" autocomplete="new-password" placeholder="Creer un mot de passe robuste"/>
+                  </div>
+                  <div class="btnRow">
+                    <button class="btn accent" id="createWebUserBtn">Creer utilisateur</button>
+                    <button class="btn" id="logoutBtn">Deconnexion</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field">
+                    <label>Utilisateur a mettre a jour</label>
+                    <select id="manageWebUserSelect"></select>
+                  </div>
+                  <div class="field">
+                    <label>Nouveau mot de passe</label>
+                    <input id="manageWebPassword" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe"/>
+                  </div>
+                  <div class="btnRow">
+                    <button class="btn" id="updateWebPasswordBtn">Changer mot de passe</button>
+                    <button class="btn danger" id="deleteWebUserBtn">Supprimer utilisateur</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="userList" id="usersList"></div>
+              <div class="toast" id="usersToast"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
               <div class="sectionHead">
                 <div>
                   <div class="sectionKicker">Temps Reseau</div>
@@ -1834,6 +2524,13 @@ R"HTML(
 
   const state = {
     status: null,
+    authenticated: false,
+    bootstrapRequired: false,
+    currentUser: "",
+    liveToken: "",
+    userCount: 0,
+    maxUsers: 4,
+    users: [],
     historyValues: [],
     historyInitialized: false,
     historyMinutes: 5,
@@ -1897,6 +2594,22 @@ R"HTML(
 
   function sanitizePinValue(value) {
     return String(value || "").replace(/[^0-9]/g, "").slice(0, 8);
+  }
+
+  function sanitizeUsernameValue(value) {
+    return String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 24);
+  }
+
+  function passwordPolicyHint(password) {
+    const value = String(password || "");
+    let classes = 0;
+    if (/[a-z]/.test(value)) classes++;
+    if (/[A-Z]/.test(value)) classes++;
+    if (/[0-9]/.test(value)) classes++;
+    if (/[^A-Za-z0-9]/.test(value)) classes++;
+    if (value.length < 10) return "10 caracteres minimum.";
+    if (classes < 3) return "Utilise 3 types: majuscule, minuscule, chiffre, symbole.";
+    return "";
   }
 
   function getCalibrationPointCount(value) {
@@ -2004,6 +2717,66 @@ R"HTML(
     $("pinStatusAdv").textContent = configured ? "PIN tactile: actif" : "PIN tactile: --";
     $("pinStatusAdv").classList.toggle("active", configured);
     $("clearPinAdv").disabled = !configured;
+  }
+
+  function setAuthLocked(locked) {
+    document.body.classList.toggle("authLocked", locked);
+    $("authGate").classList.toggle("hidden", !locked);
+  }
+
+  function renderUsersPanel() {
+    $("usersSummary").textContent = `${state.userCount} / ${state.maxUsers} utilisateurs`;
+    $("logoutBtn").textContent = state.currentUser ? `Deconnexion (${state.currentUser})` : "Deconnexion";
+
+    const options = state.users.map((user) => {
+      const selected = user.username === state.currentUser ? " selected" : "";
+      return `<option value="${user.username}"${selected}>${user.username}</option>`;
+    }).join("");
+    $("manageWebUserSelect").innerHTML = options || '<option value="">Aucun utilisateur</option>';
+
+    $("updateWebPasswordBtn").disabled = !state.users.length;
+    $("deleteWebUserBtn").disabled = state.userCount <= 1 || !state.users.length;
+    $("createWebUserBtn").disabled = state.userCount >= state.maxUsers;
+
+    if (!state.users.length) {
+      $("usersList").innerHTML = '<div class="hint">Aucun utilisateur web configure.</div>';
+      return;
+    }
+
+    $("usersList").innerHTML = state.users.map((user) => {
+      const current = user.username === state.currentUser ? "Session active" : "Compte actif";
+      return `
+        <div class="userRow">
+          <div>
+            <div class="userRowName mono">${user.username}</div>
+            <div class="userRowMeta">${current}</div>
+          </div>
+          <button class="btn" data-user-select="${user.username}">Selectionner</button>
+          <button class="btn danger" data-user-delete="${user.username}" ${state.userCount <= 1 ? "disabled" : ""}>Supprimer</button>
+        </div>
+      `;
+    }).join("");
+
+    document.querySelectorAll("[data-user-select]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $("manageWebUserSelect").value = btn.dataset.userSelect;
+      });
+    });
+    document.querySelectorAll("[data-user-delete]").forEach((btn) => {
+      btn.addEventListener("click", () => deleteWebUser(btn.dataset.userDelete));
+    });
+  }
+
+  function renderAuthState() {
+    setAuthLocked(!state.authenticated);
+    const bootstrap = Boolean(state.bootstrapRequired);
+    $("authTitle").textContent = bootstrap ? "Creer le premier compte" : "Connexion";
+    $("authLead").textContent = bootstrap
+      ? "Aucun utilisateur web n'est configure. Cree un compte administrateur local pour initialiser l'acces."
+      : "Connecte-toi avec un compte web local pour acceder au dashboard.";
+    $("authSubmitBtn").textContent = bootstrap ? "Creer le compte" : "Se connecter";
+    $("authPassword").setAttribute("autocomplete", bootstrap ? "new-password" : "current-password");
+    $("authPasswordHint").textContent = "Mot de passe conseille: 10+ caracteres avec 3 types parmi majuscule, minuscule, chiffre, symbole.";
   }
 
   function setActivePage(page) {
@@ -2252,6 +3025,7 @@ R"HTML(
   }
 
   function checkSystemHeartbeat() {
+    if (!state.authenticated) return;
     const maxSilenceMs = 4000;
     if (!state.lastContactMs || (Date.now() - state.lastContactMs) > maxSilenceMs) {
       setSystemBadgeError();
@@ -2357,9 +3131,47 @@ R"HTML(
     state.uiDirty = true;
   }
 
+  class ApiError extends Error {
+    constructor(message, status) {
+      super(message);
+      this.status = status;
+    }
+  }
+
+  async function parseApiError(res) {
+    const raw = await res.text();
+    let message = raw || `HTTP ${res.status}`;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.error) message = parsed.error;
+    } catch (err) {
+    }
+    return new ApiError(message, res.status);
+  }
+
+  async function handleUnauthorized() {
+    if (state.events) {
+      state.events.close();
+      state.events = null;
+    }
+    state.authenticated = false;
+    state.currentUser = "";
+    state.liveToken = "";
+    state.users = [];
+    renderAuthState();
+    try {
+      await loadAuthStatus();
+    } catch (err) {
+    }
+  }
+
   async function apiGet(url) {
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const err = await parseApiError(res);
+      if (err.status === 401) await handleUnauthorized();
+      throw err;
+    }
     return await res.json();
   }
 
@@ -2369,7 +3181,11 @@ R"HTML(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload || {}),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const err = await parseApiError(res);
+      if (err.status === 401) await handleUnauthorized();
+      throw err;
+    }
     return await res.json();
   }
 
@@ -2446,10 +3262,171 @@ R"HTML(
     );
   }
 
+  async function loadAuthStatus() {
+    const auth = await apiGet("/api/auth/status");
+    state.authenticated = Boolean(auth.authenticated);
+    state.bootstrapRequired = Boolean(auth.bootstrapRequired);
+    state.currentUser = auth.currentUser || "";
+    state.liveToken = auth.liveToken || "";
+    state.userCount = Number(auth.userCount || 0);
+    renderAuthState();
+    if (state.authenticated && state.liveToken) connectLiveFeed();
+    return auth;
+  }
+
+  async function submitAuth() {
+    const username = sanitizeUsernameValue(getFieldValue("authUsername"));
+    const password = getFieldValue("authPassword");
+    $("authUsername").value = username;
+
+    if (!username) {
+      setToast("authToast", "Login requis.");
+      return;
+    }
+    const passwordHint = passwordPolicyHint(password);
+    if (state.bootstrapRequired && passwordHint) {
+      setToast("authToast", passwordHint);
+      return;
+    }
+
+    await runToastRequest(
+      "authToast",
+      state.bootstrapRequired ? "Creation du compte..." : "Connexion...",
+      () => apiPost(state.bootstrapRequired ? "/api/auth/bootstrap" : "/api/auth/login", { username, password }),
+      state.bootstrapRequired ? "Compte cree." : "Connexion reussie.",
+      async () => {
+        $("authPassword").value = "";
+        if (state.events) {
+          state.events.close();
+          state.events = null;
+        }
+        await loadAuthStatus();
+        await refreshSettingsPanels();
+      }
+    );
+  }
+
+  async function logout() {
+    await runToastRequest("usersToast", "Deconnexion...", () => apiPost("/api/auth/logout", {}), "Session fermee.", async () => {
+      if (state.events) {
+        state.events.close();
+        state.events = null;
+      }
+      state.authenticated = false;
+      state.currentUser = "";
+      state.liveToken = "";
+      state.users = [];
+      state.hasLiveFeed = false;
+      state.historyInitialized = false;
+      renderAuthState();
+      await loadAuthStatus();
+    });
+  }
+
+  async function loadUsers() {
+    if (!state.authenticated) return;
+    try {
+      const data = await apiGet("/api/users");
+      state.currentUser = data.currentUser || state.currentUser || "";
+      state.userCount = Number(data.userCount || 0);
+      state.maxUsers = Number(data.maxUsers || 4);
+      state.users = Array.isArray(data.users) ? data.users : [];
+      renderUsersPanel();
+    } catch (err) {
+      setToastError("usersToast", err);
+    }
+  }
+
+  async function createWebUser() {
+    const username = sanitizeUsernameValue(getFieldValue("newWebUsername"));
+    const password = getFieldValue("newWebPassword");
+    $("newWebUsername").value = username;
+    const passwordHint = passwordPolicyHint(password);
+    if (!username) {
+      setToast("usersToast", "Login invalide.");
+      return;
+    }
+    if (passwordHint) {
+      setToast("usersToast", passwordHint);
+      return;
+    }
+
+    await runToastRequest("usersToast", "Creation utilisateur...", () => apiPost("/api/users/create", { username, password }),
+      "Utilisateur cree.",
+      async () => {
+        $("newWebUsername").value = "";
+        $("newWebPassword").value = "";
+        await loadUsers();
+      });
+  }
+
+  async function updateWebPassword() {
+    const username = sanitizeUsernameValue(getFieldValue("manageWebUserSelect"));
+    const password = getFieldValue("manageWebPassword");
+    const passwordHint = passwordPolicyHint(password);
+    if (!username) {
+      setToast("usersToast", "Choisis un utilisateur.");
+      return;
+    }
+    if (passwordHint) {
+      setToast("usersToast", passwordHint);
+      return;
+    }
+
+    await runToastRequest("usersToast", "Mise a jour mot de passe...", () => apiPost("/api/users/password", { username, password }),
+      "Mot de passe mis a jour. Les anciennes sessions de cet utilisateur sont fermees.",
+      async () => {
+        $("manageWebPassword").value = "";
+        if (username === state.currentUser) {
+          if (state.events) {
+            state.events.close();
+            state.events = null;
+          }
+          state.authenticated = false;
+          state.currentUser = "";
+          state.liveToken = "";
+          state.users = [];
+          renderAuthState();
+          await loadAuthStatus();
+          return;
+        }
+        await loadUsers();
+      });
+  }
+
+  async function deleteWebUser(usernameOverride = "") {
+    const username = sanitizeUsernameValue(usernameOverride || getFieldValue("manageWebUserSelect"));
+    if (!username) {
+      setToast("usersToast", "Choisis un utilisateur.");
+      return;
+    }
+    if (!confirm(`Supprimer l'utilisateur ${username} ?`)) return;
+
+    await runToastRequest("usersToast", "Suppression utilisateur...", () => apiPost("/api/users/delete", { username }),
+      "Utilisateur supprime.",
+      async () => {
+        if (username === state.currentUser) {
+          if (state.events) {
+            state.events.close();
+            state.events = null;
+          }
+          state.authenticated = false;
+          state.currentUser = "";
+          state.liveToken = "";
+          state.users = [];
+          renderAuthState();
+          await loadAuthStatus();
+          return;
+        }
+        await loadUsers();
+        await loadAuthStatus();
+      });
+  }
+
   async function refreshStatus() {
+    if (!state.authenticated) return;
     try {
       const st = await apiGet("/api/status");
-      state.hasLiveFeed = true;
       setSystemBadgeOnline();
       applyStatus(st, {
         skipAppendHistory: true,
@@ -2461,7 +3438,7 @@ R"HTML(
   }
 
   function scheduleReconnect() {
-    if (state.reconnectTimer) return;
+    if (!state.authenticated || !state.liveToken || state.reconnectTimer) return;
     state.reconnectTimer = setTimeout(() => {
       state.reconnectTimer = null;
       connectLiveFeed();
@@ -2469,12 +3446,15 @@ R"HTML(
   }
 
   function connectLiveFeed() {
+    if (!state.authenticated || !state.liveToken) return;
     if (state.events) {
       state.events.close();
       state.events = null;
     }
 
-    state.events = new EventSource(`${location.protocol}//${location.hostname}:81/api/events`);
+    const baseUrl = `${location.protocol}//${location.hostname}:81/api/events`;
+    const url = `${baseUrl}?t=${encodeURIComponent(state.liveToken)}`;
+    state.events = new EventSource(url);
     state.events.addEventListener("metrics", (ev) => {
       state.hasLiveFeed = true;
       setSystemBadgeOnline();
@@ -2515,6 +3495,9 @@ R"HTML(
 
   function clearProtectedSettingsFields() {
     $("accessPinAdv").value = "";
+    $("newWebUsername").value = "";
+    $("newWebPassword").value = "";
+    $("manageWebPassword").value = "";
   }
 
   async function savePinSettings() {
@@ -2549,10 +3532,12 @@ R"HTML(
   }
 
   async function refreshSettingsPanels() {
+    if (!state.authenticated) return;
     state.uiDirty = false;
     state.calRefsDirty = [false, false, false, false, false];
     await refreshStatus();
     clearProtectedSettingsFields();
+    await loadUsers();
     await loadTimeSettings();
     await loadOtaSettings();
     await loadMqttSettings();
@@ -2830,6 +3815,10 @@ R"HTML(
   $("saveUi").addEventListener("click", saveUi);
   $("savePinAdv").addEventListener("click", savePinSettings);
   $("clearPinAdv").addEventListener("click", clearPinSettings);
+  $("createWebUserBtn").addEventListener("click", createWebUser);
+  $("updateWebPasswordBtn").addEventListener("click", updateWebPassword);
+  $("deleteWebUserBtn").addEventListener("click", () => deleteWebUser());
+  $("logoutBtn").addEventListener("click", logout);
   $("exportConfigBtn").addEventListener("click", exportConfig);
   $("importConfigBtn").addEventListener("click", importConfig);
   $("backupConfigBtn").addEventListener("click", backupConfig);
@@ -2842,6 +3831,28 @@ R"HTML(
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+  $("authSubmitBtn").addEventListener("click", submitAuth);
+  $("authUsername").addEventListener("input", () => {
+    $("authUsername").value = sanitizeUsernameValue($("authUsername").value);
+  });
+  $("newWebUsername").addEventListener("input", () => {
+    $("newWebUsername").value = sanitizeUsernameValue($("newWebUsername").value);
+  });
+  ["authPassword", "newWebPassword", "manageWebPassword"].forEach((id) => {
+    $(id).addEventListener("input", () => {
+      const password = getFieldValue(id);
+      const hint = passwordPolicyHint(password);
+      if (id === "authPassword") {
+        $("authPasswordHint").textContent = hint || "Mot de passe robuste detecte.";
+      }
+    });
+  });
+  $("authPassword").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") submitAuth();
+  });
+  $("authUsername").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") submitAuth();
+  });
   $("accessPinAdv").addEventListener("input", () => {
     $("accessPinAdv").value = sanitizePinValue($("accessPinAdv").value);
   });
@@ -2859,8 +3870,11 @@ R"HTML(
   async function initPage() {
     syncUiLabels();
     syncCalibrationModeButtons();
-    await refreshSettingsPanels();
-    connectLiveFeed();
+    renderAuthState();
+    await loadAuthStatus();
+    if (state.authenticated) {
+      await refreshSettingsPanels();
+    }
     setInterval(refreshStatus, 2500);
     setInterval(checkSystemHeartbeat, 1000);
     setInterval(renderClock, 1000);
@@ -2872,5 +3886,6 @@ R"HTML(
 </html>
 )HTML";
 
+  addCommonSecurityHeaders();
   _srv.send(200, "text/html; charset=utf-8", html);
 }

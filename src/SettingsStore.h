@@ -28,6 +28,12 @@ static constexpr uint16_t MIN_MQTT_PUBLISH_PERIOD_MS = 250;
 static constexpr uint16_t MAX_MQTT_PUBLISH_PERIOD_MS = 60000;
 static constexpr uint8_t PIN_CODE_MIN_LENGTH = 4;
 static constexpr uint8_t PIN_CODE_MAX_LENGTH = 8;
+static constexpr uint8_t WEB_USER_MAX_COUNT = 4;
+static constexpr uint8_t WEB_USERNAME_MAX_LENGTH = 24;
+static constexpr uint8_t WEB_PASSWORD_MIN_LENGTH = 10;
+static constexpr uint8_t WEB_PASSWORD_MAX_LENGTH = 64;
+static constexpr uint8_t WEB_PASSWORD_SALT_LENGTH = 32;
+static constexpr uint8_t WEB_PASSWORD_HASH_LENGTH = 64;
 static constexpr float RECOMMENDED_CALIBRATION_3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
 static constexpr float RECOMMENDED_CALIBRATION_5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
 
@@ -54,6 +60,13 @@ static inline bool pinCodeIsValid(const char* pin) {
 static inline bool pinCodeIsConfigured(const char* pin) {
   return pinCodeIsValid(pin);
 }
+
+struct WebUserRecord {
+  uint8_t active = 0;
+  char username[WEB_USERNAME_MAX_LENGTH + 1] = "";
+  char passwordSalt[WEB_PASSWORD_SALT_LENGTH + 1] = "";
+  char passwordHash[WEB_PASSWORD_HASH_LENGTH + 1] = "";
+};
 
 struct ThresholdsV1 {
   uint8_t greenMax  = DEFAULT_GREEN_MAX;
@@ -140,9 +153,15 @@ public:
   uint32_t backupTimestamp() const;
   bool restoreBackup(SettingsV1& out, String* err = nullptr);
   bool resetSection(SettingsV1& s, const String& scope, String* err = nullptr);
+  void loadWebUsers(WebUserRecord (&out)[WEB_USER_MAX_COUNT]);
+  uint8_t webUserCount();
+  bool upsertWebUser(const WebUserRecord& user, String* err = nullptr);
+  bool deleteWebUser(const char* username, String* err = nullptr);
+  void clearWebUsers();
 
 private:
   Preferences _prefs;
   String _ns;
   static void sanitize(SettingsV1& s);
+  static void sanitizeWebUser(WebUserRecord& user);
 };

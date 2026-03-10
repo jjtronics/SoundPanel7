@@ -26,6 +26,19 @@ public:
 
 private:
   static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 100;
+  static constexpr uint8_t WEB_SESSION_MAX_COUNT = 6;
+  static constexpr uint32_t WEB_SESSION_IDLE_TIMEOUT_MS = 12UL * 60UL * 60UL * 1000UL;
+  static constexpr uint8_t WEB_LOGIN_MAX_FAILURES = 5;
+  static constexpr uint32_t WEB_LOGIN_LOCK_MS = 15UL * 60UL * 1000UL;
+  static constexpr uint16_t WEB_PASSWORD_HASH_ROUNDS = 12000;
+
+  struct WebSession {
+    bool active = false;
+    char sessionToken[49] = "";
+    char liveToken[49] = "";
+    char username[WEB_USERNAME_MAX_LENGTH + 1] = "";
+    uint32_t lastSeenMs = 0;
+  };
 
   SettingsStore* _store = nullptr;
   SettingsV1* _s = nullptr;
@@ -41,10 +54,14 @@ private:
 
   uint32_t _lastLivePushMs = 0;
   SharedHistory* _history = nullptr;
+  WebSession _sessions[WEB_SESSION_MAX_COUNT];
+  uint8_t _loginFailureCount = 0;
+  uint32_t _loginLockUntilMs = 0;
 
   void routes();
   void setupLiveStream();
   void pushLiveMetrics(bool force = false);
+  void addCommonSecurityHeaders(bool noStore = true);
 
   void replyText(int code, const String& txt, const char* contentType = "text/plain");
   void replyJson(int code, const String& json);
@@ -56,12 +73,37 @@ private:
   bool requireSettingsJson();
   bool requireStoreAndSettingsText();
   bool requireStoreAndSettingsJson();
+  bool requireWebAuth();
   String statusJson() const;
   String liveMetricsJson() const;
   bool pinConfigured() const;
+  bool webUsersConfigured() const;
+  void cleanupExpiredSessions();
+  const WebSession* currentSession(bool touch = true);
+  const WebSession* findSessionByToken(const char* token, bool touch = true);
+  const WebSession* findSessionByLiveToken(const char* token, bool touch = true);
+  WebSession* newSessionSlot();
+  void invalidateSessionToken(const char* token);
+  void invalidateSessionsForUser(const char* username);
+  void clearAllSessions();
+  bool issueSessionForUser(const char* username, String& liveTokenOut);
+  String extractCookieValue(const char* cookieName) const;
+  static bool secureEquals(const char* a, const char* b);
+  static bool normalizeUsername(String& username);
+  static bool passwordIsStrongEnough(const String& password, String* reason = nullptr);
+  static String randomHex(size_t hexChars);
+  static String hashPassword(const char* username, const char* password, const char* saltHex);
 
   void handleRoot();
   void handleStatus();
+  void handleAuthStatus();
+  void handleAuthLogin();
+  void handleAuthLogout();
+  void handleAuthBootstrap();
+  void handleUsersGet();
+  void handleUsersCreate();
+  void handleUsersPassword();
+  void handleUsersDelete();
   void handleUiSave();
   void handlePinSave();
 
