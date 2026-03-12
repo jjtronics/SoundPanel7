@@ -599,7 +599,15 @@ Le firmware stocke ensuite les points et corrige la lecture.
 Une video de demonstration montre le SoundPanel 7 a cote d'un vrai sonometre professionnel,
 pendant une montee progressive de bruit blanc, afin de verifier que les mesures restent coherentes.
 
-[Voir la video de validation](MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4)
+<p align="center">
+  <a href="MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4">
+    <img src="MEDIAS/HARDWARE/SoundPanel7-APPART_1.jpg" alt="Apercu de la video de validation comparative SoundPanel 7 vs sonometre de reference" width="88%">
+  </a>
+</p>
+
+<p align="center">
+  <em>Cliquer sur l'image pour ouvrir la video comparative MP4.</em>
+</p>
 
 <a id="fr-architecture"></a>
 
@@ -1209,7 +1217,15 @@ The firmware stores those points and applies the correction curve accordingly.
 A short demo video shows SoundPanel 7 next to a professional sound level meter
 while white noise is increased progressively, to confirm the readings stay aligned.
 
-[Watch the measurement comparison video](MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4)
+<p align="center">
+  <a href="MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4">
+    <img src="MEDIAS/HARDWARE/SoundPanel7-APPART_1.jpg" alt="Preview of the SoundPanel 7 versus reference sound meter validation video" width="88%">
+  </a>
+</p>
+
+<p align="center">
+  <em>Click the image to open the comparative MP4 video.</em>
+</p>
 
 <a id="en-firmware-architecture"></a>
 
