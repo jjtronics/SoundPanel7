@@ -1,8 +1,17 @@
 #pragma once
 
 #include <Arduino.h>
-#include <WebServer.h>
+#include <http_parser.h>
+
+// Force ESPAsyncWebServer to reuse the core http_method enum instead of
+// redeclaring HTTP_GET/POST/... symbols that conflict with WebServer.h.
+#define WEBSERVER_H
+#define HTTP_ANY 0b0111111111111111
 #include <ESPAsyncWebServer.h>
+#undef HTTP_ANY
+#undef WEBSERVER_H
+
+#include <WebServer.h>
 #include <esp_display_panel.hpp>
 
 #include "SettingsStore.h"
