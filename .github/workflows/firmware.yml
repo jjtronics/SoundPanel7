@@ -1,0 +1,56 @@
+name: Firmware CI
+
+on:
+  push:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "platformio.ini"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "include/**"
+      - "src/**"
+      - "platformio.ini"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO data
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            ~/.platformio/penv
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO Core
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -e soundpanel7_usb
+
+      - name: Upload firmware binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: soundpanel7_usb-firmware
+          path: |
+            .pio/build/soundpanel7_usb/firmware.bin
+            .pio/build/soundpanel7_usb/bootloader.bin
+            .pio/build/soundpanel7_usb/partitions.bin

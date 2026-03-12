@@ -530,7 +530,28 @@ Capteurs exposes par l'integration native :
 - `WiFi IP`
 - `Uptime`
 
-##### Installation
+##### Installation via HACS
+
+Le depot peut maintenant etre ajoute dans **HACS** comme **custom repository**.
+
+Pre-requis :
+
+- une release GitHub publiee (ex. `v0.1.0`)
+- HACS installe dans Home Assistant
+
+Etapes :
+
+1. ouvrir `HACS > Integrations`
+2. ouvrir le menu en haut a droite puis `Custom repositories`
+3. ajouter `https://github.com/jjtronics/SoundPanel7`
+4. choisir la categorie `Integration`
+5. rechercher `SoundPanel 7` dans HACS puis l'installer
+6. redemarrer Home Assistant
+7. redemarrer le SoundPanel 7
+8. ouvrir `Parametres > Appareils et services`
+9. attendre la decouverte automatique
+
+##### Installation manuelle
 
 Copier `custom_components/soundpanel7` dans le dossier de configuration Home Assistant :
 
@@ -1164,6 +1185,29 @@ Sensors exposed by the native integration:
 - `WiFi RSSI`
 - `WiFi IP`
 - `Uptime`
+
+##### Installation via HACS
+
+The repository can now be added to **HACS** as a **custom repository**.
+
+Requirements:
+
+- a published GitHub release (for example `v0.1.0`)
+- HACS already installed in Home Assistant
+
+Steps:
+
+1. open `HACS > Integrations`
+2. open the top-right menu and choose `Custom repositories`
+3. add `https://github.com/jjtronics/SoundPanel7`
+4. select the `Integration` category
+5. search for `SoundPanel 7` in HACS and install it
+6. restart Home Assistant
+7. restart SoundPanel 7
+8. open `Settings > Devices & Services`
+9. wait for auto-discovery
+
+##### Manual installation
 
 Installation example:
 

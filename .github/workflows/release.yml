@@ -1,0 +1,61 @@
+name: Release Firmware
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out tagged release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO data
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            ~/.platformio/penv
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO Core
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -e soundpanel7_usb
+
+      - name: Upload release workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: soundpanel7_${{ github.event.release.tag_name }}
+          path: |
+            .pio/build/soundpanel7_usb/firmware.bin
+            .pio/build/soundpanel7_usb/bootloader.bin
+            .pio/build/soundpanel7_usb/partitions.bin
+
+      - name: Attach binaries to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            .pio/build/soundpanel7_usb/firmware.bin#soundpanel7_usb-firmware.bin \
+            .pio/build/soundpanel7_usb/bootloader.bin#soundpanel7_usb-bootloader.bin \
+            .pio/build/soundpanel7_usb/partitions.bin#soundpanel7_usb-partitions.bin \
+            --clobber
