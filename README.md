@@ -15,6 +15,7 @@
   <img alt="MQTT" src="https://img.shields.io/badge/MQTT-Ready-0f766e?style=flat-square">
   <img alt="OTA" src="https://img.shields.io/badge/OTA-Enabled-2563eb?style=flat-square">
   <img alt="Home Assistant" src="https://img.shields.io/badge/Home_Assistant-Integrated-0ea5e9?style=flat-square">
+  <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-111827?style=flat-square">
 </p>
 
 <p align="center">
@@ -85,21 +86,14 @@ SoundPanel 7 est un panneau mural connecte qui rend plusieurs informations visib
 - l'heure reseau synchronisee a la seconde
 - l'etat local du panneau, du Wi-Fi et des services
 
-L'idee de depart etait tres simple.
-Je travaille dans un open space trop bruyant, et je voulais un outil de **pedagogie douce** :
-quelque chose de visible, factuel, elegant, et suffisamment clair
-pour faire baisser naturellement le volume sans transformer l'espace
-en salle de classe.
+L'idee de depart etait simple :
+creer un outil de **pedagogie douce** pour rendre le bruit visible sans agressivite.
 
-De la est nee une idee plus large :
-un panneau autonome, lisible de loin, utile au bureau comme en regie,
-en studio, en podcast, en atelier ou sur un plateau.
+Le projet a ensuite evolue vers un panneau autonome, lisible de loin,
+utile en open space, en studio, en regie, en podcast, en atelier ou sur un plateau.
 
 SoundPanel 7 n'est donc pas seulement un sonometre.
-C'est un vrai **panneau d'ambiance et de supervision locale**,
-capable d'afficher le son, le temps, l'etat reseau,
-des diagnostics systeme, et de s'integrer proprement
-dans un environnement connecte.
+C'est un **panneau local de supervision** pour le son, le temps, le reseau et les integrations connectees.
 
 <a id="fr-apercu-visuel"></a>
 
@@ -131,6 +125,7 @@ en labo, en studio, et en usage quotidien.
 - **Grande horloge NTP** avec secondes visibles
 - Interface locale LVGL en **5 pages** : overview, clock, sound, calibration, settings
 - Interface web embarquee avec supervision live et administration
+- Acces web securise : bootstrap du premier compte, sessions, gestion d'utilisateurs
 - Publication **MQTT** avec auto-reconnexion et MQTT Discovery
 - **Home Assistant** via MQTT Discovery ou integration native
 - Mises a jour **OTA**
@@ -144,8 +139,8 @@ en labo, en studio, et en usage quotidien.
 - Studio d'enregistrement : garder les niveaux et l'heure sous les yeux
 - Regie ou diffusion : afficher une heure reseau fiable avec secondes
 - Podcast ou voix off : suivre un top horaire ou un timing de prise
-- Atelier ou lieu public : afficher un indicateur simple, comprehensible par tous
-- Domotique personnelle : ajouter un panneau mural utile, pas juste decoratif
+- Atelier ou lieu public : afficher un indicateur simple, comprehensible par tous dans le genre des panneaux LIVE devant les studios d'enregistrement.
+- Domotique personnelle : Remonter les niveaux sonores pour traitement/execution d'actions
 
 <a id="fr-fonctionnalites"></a>
 
@@ -177,6 +172,7 @@ en labo, en studio, et en usage quotidien.
 - lecture immediate des niveaux et de l'heure
 - consultation d'informations systeme
 - extinction de l'ecran et **shutdown** depuis l'interface
+- protection par **PIN local** des pages sensibles (Calibration et Paramètres)
 - usage autonome sans navigateur
 
 #### 🌐 Interface web
@@ -185,6 +181,8 @@ en labo, en studio, et en usage quotidien.
 - page d'administration
 - configuration UI, NTP, OTA, MQTT et reseau
 - calibration depuis le navigateur
+- authentification web avec bootstrap du premier compte
+- gestion d'utilisateurs web et sessions
 - flux live **SSE** sur le port `81`
 - export / import de configuration
 - backup / restore de configuration
@@ -197,6 +195,7 @@ en labo, en studio, et en usage quotidien.
 - mDNS / Zeroconf : `_soundpanel7._tcp.local.`
 - MQTT
 - MQTT Discovery pour Home Assistant
+- controle du mode **LIVE** via Web UI, API et **MQTT**
 - integration Home Assistant native via Zeroconf/mDNS
 - OTA via `espota`
 
@@ -221,9 +220,9 @@ en labo, en studio, et en usage quotidien.
 - ecran tactile 7"
 - ESP32-S3
 - Wi-Fi
-- PSRAM
-- USB
-- retroeclairage pilotable
+- Bluetooth
+- retroeclairage pilotable (On/Off)
+- ...
 
 #### 🎤 Entree audio
 
@@ -232,8 +231,7 @@ Le firmware est pense pour un **micro analogique** branche sur l'entree capteur.
 Exemples compatibles cites dans le projet :
 
 - `MAX4466`
-- `MAX9814`
-- equivalent analogique
+- equivalent analogique (Attention à avoir un gain fixe contrairement au MAX9814 par ex)
 
 Par defaut, le projet compile avec un **mode audio mock** pour faciliter le developpement.
 
@@ -287,7 +285,7 @@ pio device monitor -b 115200
 
 #### 6. Mettre a jour en OTA
 
-Quand l'OTA est configuree sur l'appareil :
+Quand l'OTA est configuree sur l'appareil (attention au port série à déclarer dans platformio.ini):
 
 ```bash
 pio run -e soundpanel7_ota -t upload
@@ -295,7 +293,7 @@ pio run -e soundpanel7_ota -t upload
 
 Pense a ajuster dans [`platformio.ini`](platformio.ini) :
 
-- `upload_port`
+- `upload_port` (Son IP)
 - `monitor_port`
 - le mot de passe OTA si utilise
 
@@ -361,10 +359,13 @@ L'interface permet notamment de regler :
 - duree d'historique
 - mode de reponse audio
 - duree des alertes orange / rouge
+- mode LIVE et page d'ouverture par defaut
 - NTP, timezone, intervalle de synchro et hostname
 - parametres OTA
 - parametres MQTT
 - calibration micro
+- PIN local d'acces
+- comptes utilisateurs web
 - backup / restore / import / export des reglages
 
 #### Zone Parametres
@@ -378,8 +379,19 @@ Animation complete des reglages :
 Endpoints principaux exposes par le firmware :
 
 ```text
+GET   /api/auth/status
+POST  /api/auth/login
+POST  /api/auth/logout
+POST  /api/auth/bootstrap
+GET   /api/users
+POST  /api/users/create
+POST  /api/users/password
+POST  /api/users/delete
 GET   /api/status
+POST  /api/pin
 POST  /api/ui
+GET   /api/live
+POST  /api/live
 GET   /api/time
 POST  /api/time
 GET   /api/config/export
@@ -409,6 +421,7 @@ Le `GET /api/status` renvoie notamment :
 - temperature MCU
 - version firmware et environnement de build
 - etat OTA / MQTT
+- etat LIVE, PIN et calibration
 - stats runtime LVGL / heap
 
 <a id="fr-horloge-ntp"></a>
@@ -456,6 +469,8 @@ soundpanel7/state
 soundpanel7/db
 soundpanel7/leq
 soundpanel7/peak
+soundpanel7/live/state
+soundpanel7/live/set
 soundpanel7/wifi/rssi
 soundpanel7/wifi/ip
 ```
@@ -465,6 +480,7 @@ Avec **MQTT Discovery**, le firmware publie automatiquement les entites Home Ass
 - `dB Instant`
 - `Leq`
 - `Peak`
+- `LIVE`
 - `WiFi RSSI`
 - `WiFi IP`
 
@@ -692,18 +708,14 @@ SoundPanel 7 is a connected wall panel that makes several things instantly visib
 The original idea came from a very practical problem:
 the open space where I work was simply too noisy.
 
-Instead of policing people or constantly asking coworkers to lower their voices,
-the goal was to build a **gentle awareness tool**:
-something visible, factual, calm, and elegant enough to blend into a real workspace.
+The goal was to build a **gentle awareness tool**:
+something visible, factual, calm, and readable enough to reduce noise without policing people.
 
-From there, the concept naturally expanded into a broader device:
-a standalone panel that stays on, remains readable from a distance,
-and works just as well in an office as it does in a control room,
-recording studio, podcast setup, workshop, or public-facing space.
+From there, the device evolved into a standalone panel for offices, studios, control rooms,
+podcast setups, workshops, and other real workspaces.
 
 SoundPanel 7 is not just a sound meter.
-It is a **local monitoring panel** for sound, time, network visibility,
-runtime diagnostics, and connected integration.
+It is a **local monitoring panel** for sound, time, network visibility, diagnostics, and connected integrations.
 
 <a id="en-visual-tour"></a>
 
@@ -735,6 +747,7 @@ lab space, recording studio, and day-to-day use.
 - **Large NTP clock** with visible seconds
 - Local LVGL UI with **5 pages**: overview, clock, sound, calibration, settings
 - Embedded web interface with live monitoring and administration
+- Secure web access with first-user bootstrap, sessions, and user management
 - **MQTT** publishing with auto reconnect and Discovery
 - **Home Assistant** through MQTT Discovery or native custom integration
 - **OTA** firmware updates
@@ -781,6 +794,7 @@ lab space, recording studio, and day-to-day use.
 - immediate reading of sound levels and time
 - access to local system information
 - screen off and **shutdown** from the interface
+- local **PIN** protection for sensitive pages
 - fully usable without a browser
 
 #### 🌐 Web interface
@@ -789,6 +803,8 @@ lab space, recording studio, and day-to-day use.
 - administration page
 - UI, NTP, OTA, MQTT, and network configuration
 - browser-based calibration
+- web authentication with first-account bootstrap
+- web user management and session handling
 - live **SSE** stream on port `81`
 - config export / import
 - config backup / restore
@@ -801,6 +817,7 @@ lab space, recording studio, and day-to-day use.
 - mDNS / Zeroconf: `_soundpanel7._tcp.local.`
 - MQTT
 - MQTT Discovery for Home Assistant
+- **LIVE** control through both Web UI and MQTT
 - native Home Assistant integration through Zeroconf/mDNS
 - OTA through `espota`
 
@@ -965,10 +982,13 @@ The interface lets you configure:
 - history duration
 - audio response mode
 - orange / red alert hold time
+- LIVE mode and default dashboard page
 - NTP, timezone, sync interval, and hostname
 - OTA settings
 - MQTT settings
 - microphone calibration
+- local access PIN
+- web user accounts
 - backup / restore / import / export of settings
 
 #### Settings flow
@@ -982,8 +1002,19 @@ Animated walkthrough of the settings area:
 Main endpoints exposed by the firmware:
 
 ```text
+GET   /api/auth/status
+POST  /api/auth/login
+POST  /api/auth/logout
+POST  /api/auth/bootstrap
+GET   /api/users
+POST  /api/users/create
+POST  /api/users/password
+POST  /api/users/delete
 GET   /api/status
+POST  /api/pin
 POST  /api/ui
+GET   /api/live
+POST  /api/live
 GET   /api/time
 POST  /api/time
 GET   /api/config/export
@@ -1013,6 +1044,7 @@ POST  /api/factory_reset
 - MCU temperature
 - firmware version and build environment
 - OTA / MQTT state
+- LIVE, PIN, and calibration state
 - LVGL / heap runtime statistics
 
 <a id="en-ntp-clock"></a>
@@ -1060,6 +1092,8 @@ soundpanel7/state
 soundpanel7/db
 soundpanel7/leq
 soundpanel7/peak
+soundpanel7/live/state
+soundpanel7/live/set
 soundpanel7/wifi/rssi
 soundpanel7/wifi/ip
 ```
@@ -1069,6 +1103,7 @@ With **MQTT Discovery**, the firmware publishes these Home Assistant entities au
 - `dB Instant`
 - `Leq`
 - `Peak`
+- `LIVE`
 - `WiFi RSSI`
 - `WiFi IP`
 
@@ -1228,5 +1263,6 @@ In short: this is a serious project, a living one, and already a very practical 
 
 ## 📜 License
 
-Open-source project.  
-Add the final repository license here if you want the README to state it explicitly.
+This project is released under the **MIT License**.
+
+See [LICENSE](LICENSE).
