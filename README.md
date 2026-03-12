@@ -345,11 +345,13 @@ L'interface permet notamment de regler :
 
 #### Zone Parametres
 
-Le README est deja pret pour l'animation complete des reglages :
+Animation complete des reglages :
 
-[Voir le futur GIF des parametres](MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif)
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des parametres web de SoundPanel 7" width="82%">
+</p>
 
-En attendant sa generation, voici les 5 captures qui serviront a cette animation :
+Les 5 captures sources restent visibles juste en dessous :
 
 <p align="center">
   <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_1.jpg" alt="Parametres web SoundPanel 7 - ecran 1" width="49%">
@@ -963,11 +965,13 @@ The interface lets you configure:
 
 #### Settings flow
 
-The README is already wired for the future animated walkthrough:
+Animated walkthrough of the settings area:
 
-[Open the future settings GIF](MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif)
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animated SoundPanel 7 settings walkthrough" width="82%">
+</p>
 
-While that GIF is being generated, these five still frames document the full settings area:
+The five source screenshots remain available right below:
 
 <p align="center">
   <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_1.jpg" alt="SoundPanel 7 settings screen 1" width="49%">
