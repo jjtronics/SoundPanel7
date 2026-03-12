@@ -641,12 +641,17 @@ static lv_disp_t *display_init(LCD *lcd)
 }
 
 static SemaphoreHandle_t touch_detected;
+static bool g_touch_enabled = true;
 
 static void touchpad_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data)
 {
     Touch *tp = (Touch *)indev_drv->user_data;
     TouchPoint point;
     data->state = LV_INDEV_STATE_RELEASED;
+
+    if (!g_touch_enabled) {
+        return;
+    }
 
     /* if we are interrupt driven wait for the ISR to fire */
     if ( tp->isInterruptEnabled() && (xSemaphoreTake( touch_detected, 0 ) == pdFALSE) ) {
@@ -876,4 +881,14 @@ bool lvgl_port_deinit(void)
     }
 
     return true;
+}
+
+void lvgl_port_set_touch_enabled(bool enabled)
+{
+    g_touch_enabled = enabled;
+}
+
+bool lvgl_port_touch_enabled(void)
+{
+    return g_touch_enabled;
 }

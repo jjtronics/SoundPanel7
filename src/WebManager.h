@@ -126,6 +126,7 @@ private:
   void handleFactoryReset();
 
   void applyBacklightNow(uint8_t percent);
+  void applyTouchNow(bool enabled);
   void applySettingsRuntimeState();
   String historyJson() const;
 

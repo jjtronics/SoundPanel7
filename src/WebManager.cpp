@@ -1,5 +1,6 @@
 #include "WebManager.h"
 #include "JsonHelpers.h"
+#include "lvgl_v8_port.h"
 #include "ui/UiManager.h"
 
 #include <WiFi.h>
@@ -69,6 +70,7 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"orangeMax\":"; json += String(s ? s->th.orangeMax : DEFAULT_ORANGE_MAX); json += ",";
   json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
   json += "\"liveEnabled\":"; json += (s && s->liveEnabled ? "true" : "false"); json += ",";
+  json += "\"touchEnabled\":"; json += (s && s->touchEnabled ? "true" : "false"); json += ",";
   json += "\"dashboardPage\":"; json += String(s ? s->dashboardPage : DEFAULT_DASHBOARD_PAGE); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s ? s->dashboardFullscreenMask : DEFAULT_DASHBOARD_FULLSCREEN_MASK); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
@@ -638,10 +640,16 @@ void WebManager::applyBacklightNow(uint8_t percent) {
   Serial0.printf("[WEB] Backlight ON (%u%%)\n", percent);
 }
 
+void WebManager::applyTouchNow(bool enabled) {
+  lvgl_port_set_touch_enabled(enabled);
+  Serial0.printf("[WEB] Touch %s\n", enabled ? "ENABLED" : "DISABLED");
+}
+
 void WebManager::applySettingsRuntimeState() {
   if (!_s) return;
 
   applyBacklightNow(_s->backlight);
+  applyTouchNow(_s->touchEnabled != 0);
 
   if (_history) _history->settingsChanged();
 
@@ -983,6 +991,7 @@ void WebManager::handleUiSave() {
   int o  = sp7json::parseInt(body, "orangeMax", (int)_s->th.orangeMax);
   int hm = sp7json::parseInt(body, "historyMinutes", (int)_s->historyMinutes);
   int arm = sp7json::parseInt(body, "audioResponseMode", (int)_s->audioResponseMode);
+  const bool touchEnabled = sp7json::parseBool(body, "touchEnabled", _s->touchEnabled != 0);
   int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
   int dashboardFullscreenMask = sp7json::parseInt(body, "dashboardFullscreenMask", (int)_s->dashboardFullscreenMask);
   int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
@@ -1015,6 +1024,7 @@ void WebManager::handleUiSave() {
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
   _s->audioResponseMode = (uint8_t)arm;
+  _s->touchEnabled = touchEnabled ? 1 : 0;
   _s->dashboardPage = (uint8_t)dashboardPage;
   _s->dashboardFullscreenMask = (uint8_t)dashboardFullscreenMask;
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
@@ -1027,9 +1037,10 @@ void WebManager::handleUiSave() {
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
+  applyTouchNow(_s->touchEnabled != 0);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d page=%d fsm=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
-                 bl, g, o, hm, dashboardPage, dashboardFullscreenMask,
+  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d green=%d orange=%d hist=%d page=%d fsm=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
+                 bl, touchEnabled ? 1 : 0, g, o, hm, dashboardPage, dashboardFullscreenMask,
                  AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyOkJson(true);
 }
@@ -2319,6 +2330,19 @@ R"HTML(
                 <div class="hint">Change immediatement l'ecran affiche sur le panneau tactile.</div>
               </div>
               <div class="field">
+                <div class="switchRow">
+                  <div class="switchText">
+                    <label>Tactile actif</label>
+                    <div class="switchState mono" id="touchEnabledAdvVal">--</div>
+                  </div>
+                  <button class="switch" id="touchEnabledAdv" type="button" aria-label="Activer ou desactiver l'ecran tactile" aria-pressed="true">
+                    <span class="switchTrack"></span>
+                    <span class="switchThumb"></span>
+                  </button>
+                </div>
+                <div class="hint">Coupe toutes les interactions tactiles du panneau 7 pouces jusqu'a reactivation depuis l'interface web.</div>
+              </div>
+              <div class="field">
                 <label>Mode plein ecran tactile</label>
                 <div class="choiceRow">
                   <button class="btn choice" id="dashboardFsOverview" data-dashboard-fullscreen="0" type="button" aria-pressed="false">Principal</button>
@@ -2654,6 +2678,7 @@ R"HTML(
     orangeSinceMs: 0,
     redSinceMs: 0,
     liveEnabled: false,
+    touchEnabled: true,
     dashboardPage: 0,
     dashboardFullscreenMask: 0,
     dashboardDisplayDirty: false,
@@ -2744,6 +2769,17 @@ R"HTML(
       if (id && $(id).classList.contains("active")) mask |= (1 << page);
     });
     return getDashboardFullscreenMaskValue(mask);
+  }
+
+  function setDashboardTouchEnabled(enabled) {
+    const active = Boolean(enabled);
+    $("touchEnabledAdv").classList.toggle("active", active);
+    $("touchEnabledAdv").setAttribute("aria-pressed", active ? "true" : "false");
+    $("touchEnabledAdvVal").textContent = active ? "ACTIF" : "OFF";
+  }
+
+  function readDashboardTouchEnabled() {
+    return $("touchEnabledAdv").classList.contains("active");
   }
 
   function sanitizeUsernameValue(value) {
@@ -3200,6 +3236,10 @@ R"HTML(
     if ("dashboardPage" in merged && !state.dashboardDisplayDirty) {
       state.dashboardPage = getDashboardPageValue(merged.dashboardPage);
       $("dashboardPageAdv").value = String(state.dashboardPage);
+    }
+    if ("touchEnabled" in merged && !state.dashboardDisplayDirty) {
+      state.touchEnabled = Boolean(merged.touchEnabled);
+      setDashboardTouchEnabled(state.touchEnabled);
     }
     if ("dashboardFullscreenMask" in merged && !state.dashboardDisplayDirty) {
       state.dashboardFullscreenMask = getDashboardFullscreenMaskValue(merged.dashboardFullscreenMask);
@@ -3662,12 +3702,14 @@ R"HTML(
 
   async function saveDashboardPage() {
     const dashboardPage = getDashboardPageValue(getFieldValue("dashboardPageAdv"));
+    const touchEnabled = readDashboardTouchEnabled();
     const dashboardFullscreenMask = readDashboardFullscreenMask();
     $("dashboardPageAdv").value = String(dashboardPage);
 
     try {
-      await apiPost("/api/ui", { dashboardPage, dashboardFullscreenMask });
+      await apiPost("/api/ui", { dashboardPage, dashboardFullscreenMask, touchEnabled });
       state.dashboardPage = dashboardPage;
+      state.touchEnabled = touchEnabled;
       state.dashboardFullscreenMask = dashboardFullscreenMask;
       state.dashboardDisplayDirty = false;
       setToast("dashboardPageToast", "Affichage tactile mis a jour.");
@@ -3989,6 +4031,13 @@ R"HTML(
     state.dashboardPage = getDashboardPageValue(getFieldValue("dashboardPageAdv"));
     state.dashboardDisplayDirty = true;
     $("dashboardPageAdv").value = String(state.dashboardPage);
+  });
+
+  $("touchEnabledAdv").addEventListener("click", () => {
+    const next = !readDashboardTouchEnabled();
+    setDashboardTouchEnabled(next);
+    state.touchEnabled = next;
+    state.dashboardDisplayDirty = true;
   });
 
   document.querySelectorAll("[data-dashboard-fullscreen]").forEach((btn) => {

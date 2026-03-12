@@ -7,6 +7,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 #include "../AudioEngine.h"
+#include "../lvgl_v8_port.h"
 #include "AppRuntimeStats.h"
 
 using namespace esp_panel::board;
@@ -159,6 +160,7 @@ void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, 
 
   buildDashboard();
 
+  lvgl_port_set_touch_enabled(_s && _s->touchEnabled);
   if (_s) applyBacklight(_s->backlight);
   showDashboard();
 }

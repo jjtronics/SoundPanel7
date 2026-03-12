@@ -169,6 +169,18 @@ bool lvgl_port_lock(int timeout_ms);
  */
 bool lvgl_port_unlock(void);
 
+/**
+ * @brief Enable or disable touch forwarding to LVGL.
+ *
+ * @param enabled `true` to enable touch input, `false` to force released state.
+ */
+void lvgl_port_set_touch_enabled(bool enabled);
+
+/**
+ * @brief Return the current touch forwarding state.
+ */
+bool lvgl_port_touch_enabled(void);
+
 #ifdef __cplusplus
 }
 #endif

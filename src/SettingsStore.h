@@ -128,6 +128,7 @@ struct SettingsV1 {
   uint32_t orangeAlertHoldMs = DEFAULT_WARNING_HOLD_MS;
   uint32_t redAlertHoldMs = DEFAULT_CRITICAL_HOLD_MS;
   uint8_t liveEnabled = LIVE_DISABLED;
+  uint8_t touchEnabled = 1;
   uint8_t dashboardPage = DEFAULT_DASHBOARD_PAGE;
   uint8_t dashboardFullscreenMask = DEFAULT_DASHBOARD_FULLSCREEN_MASK;
   char dashboardPin[PIN_CODE_MAX_LENGTH + 1] = "";
