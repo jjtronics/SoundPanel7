@@ -21,6 +21,7 @@ public:
   void tick();
   void setDb(float dbInstant, float leq, float peak);
   void requestDashboardPage(uint8_t page, bool persistSelection = false);
+  void refreshDashboardLayout();
 
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = SharedHistory::POINT_COUNT;
@@ -52,6 +53,7 @@ private:
   NetManager* _net = nullptr;
 
   lv_obj_t* _scrDash = nullptr;
+  lv_obj_t* _dashTop = nullptr;
   lv_obj_t* _dashContent = nullptr;
   lv_obj_t* _dashPages[DASH_PAGE_COUNT] = {nullptr};
   lv_obj_t* _dashTabs[DASH_PAGE_COUNT] = {nullptr};
@@ -73,11 +75,18 @@ private:
   lv_obj_t* _lblClockDate = nullptr;
   lv_obj_t* _lblClockMain = nullptr;
   lv_obj_t* _lblClockSec = nullptr;
+  lv_obj_t* _overviewUpper = nullptr;
+  lv_obj_t* _overviewClockCard = nullptr;
+  lv_obj_t* _overviewMetricsCol = nullptr;
+  lv_obj_t* _overviewLeqCard = nullptr;
+  lv_obj_t* _overviewPeakCard = nullptr;
   lv_obj_t* _lblClockDateFocus = nullptr;
   lv_obj_t* _lblClockMainFocus = nullptr;
   lv_obj_t* _lblClockSecFocus = nullptr;
   lv_obj_t* _clockSecBadgeFocus = nullptr;
   lv_obj_t* _lblClockStatusFocus = nullptr;
+  lv_obj_t* _clockCardFocus = nullptr;
+  lv_obj_t* _clockWrapFocus = nullptr;
   lv_obj_t* _liveBadge = nullptr;
   lv_obj_t* _lblLiveBadge = nullptr;
   lv_obj_t* _lblLiveStatus = nullptr;
@@ -97,6 +106,9 @@ private:
   lv_obj_t* _lblHistTMidFocus = nullptr;
   lv_obj_t* _lblHistTRightFocus = nullptr;
   lv_obj_t* _histPlotFocus = nullptr;
+  lv_obj_t* _soundMetricsWrap = nullptr;
+  lv_obj_t* _soundLeqCard = nullptr;
+  lv_obj_t* _soundPeakCard = nullptr;
   lv_obj_t* _lblCalStatus = nullptr;
   lv_obj_t* _lblCalLive = nullptr;
   lv_obj_t* _btnCalMode3 = nullptr;
@@ -194,6 +206,9 @@ private:
   void buildDashboardCalibrationPage(lv_obj_t* parent);
   void buildDashboardSettingsPage(lv_obj_t* parent);
   void ensureDashboardPageBuilt(uint8_t page);
+  bool pageUsesFullscreen(uint8_t page) const;
+  void applyDashboardChrome(uint8_t page);
+  void layoutDashboardPage(uint8_t page);
   void buildHistoryCard(lv_obj_t* parent,
                         int width,
                         int height,

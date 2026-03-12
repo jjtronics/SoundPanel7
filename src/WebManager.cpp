@@ -70,6 +70,7 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
   json += "\"liveEnabled\":"; json += (s && s->liveEnabled ? "true" : "false"); json += ",";
   json += "\"dashboardPage\":"; json += String(s ? s->dashboardPage : DEFAULT_DASHBOARD_PAGE); json += ",";
+  json += "\"dashboardFullscreenMask\":"; json += String(s ? s->dashboardFullscreenMask : DEFAULT_DASHBOARD_FULLSCREEN_MASK); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -975,6 +976,7 @@ void WebManager::handleUiSave() {
 
   String body = _srv.arg("plain");
   const bool dashboardPageRequested = sp7json::findValueStart(body, "dashboardPage") >= 0;
+  const bool dashboardFullscreenMaskRequested = sp7json::findValueStart(body, "dashboardFullscreenMask") >= 0;
 
   int bl = sp7json::parseInt(body, "backlight", (int)_s->backlight);
   int g  = sp7json::parseInt(body, "greenMax",  (int)_s->th.greenMax);
@@ -982,6 +984,7 @@ void WebManager::handleUiSave() {
   int hm = sp7json::parseInt(body, "historyMinutes", (int)_s->historyMinutes);
   int arm = sp7json::parseInt(body, "audioResponseMode", (int)_s->audioResponseMode);
   int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
+  int dashboardFullscreenMask = sp7json::parseInt(body, "dashboardFullscreenMask", (int)_s->dashboardFullscreenMask);
   int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
   int chs = sp7json::parseInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / MS_PER_SECOND));
   int calCount = sp7json::parseInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
@@ -998,6 +1001,7 @@ void WebManager::handleUiSave() {
   if (arm < 0) arm = 0;
   if (arm > 1) arm = 1;
   dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
+  dashboardFullscreenMask = (int)normalizedDashboardFullscreenMask((uint8_t)dashboardFullscreenMask);
   if (whs < 0) whs = 0;
   if (whs > 60) whs = 60;
   if (chs < 0) chs = 0;
@@ -1012,18 +1016,21 @@ void WebManager::handleUiSave() {
   _s->historyMinutes = (uint8_t)hm;
   _s->audioResponseMode = (uint8_t)arm;
   _s->dashboardPage = (uint8_t)dashboardPage;
+  _s->dashboardFullscreenMask = (uint8_t)dashboardFullscreenMask;
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
   _s->calibrationPointCount = (uint8_t)calCount;
   _s->calibrationCaptureMs = (uint32_t)ccs * MS_PER_SECOND;
   if (_history) _history->settingsChanged();
   if (dashboardPageRequested && _ui) _ui->requestDashboardPage(_s->dashboardPage);
+  else if (dashboardFullscreenMaskRequested && _ui) _ui->refreshDashboardLayout();
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d page=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
-                 bl, g, o, hm, dashboardPage, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
+  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d page=%d fsm=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
+                 bl, g, o, hm, dashboardPage, dashboardFullscreenMask,
+                 AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyOkJson(true);
 }
 
@@ -2311,8 +2318,18 @@ R"HTML(
                 </select>
                 <div class="hint">Change immediatement l'ecran affiche sur le panneau tactile.</div>
               </div>
+              <div class="field">
+                <label>Mode plein ecran tactile</label>
+                <div class="choiceRow">
+                  <button class="btn choice" id="dashboardFsOverview" data-dashboard-fullscreen="0" type="button" aria-pressed="false">Principal</button>
+                  <button class="btn choice" id="dashboardFsClock" data-dashboard-fullscreen="1" type="button" aria-pressed="false">Horloge</button>
+                  <button class="btn choice" id="dashboardFsLive" data-dashboard-fullscreen="2" type="button" aria-pressed="false">LIVE</button>
+                  <button class="btn choice" id="dashboardFsSound" data-dashboard-fullscreen="3" type="button" aria-pressed="false">Sonometre</button>
+                </div>
+                <div class="hint">Masque la barre du haut uniquement sur l'ecran tactile 7 pouces pour les vues selectionnees.</div>
+              </div>
               <div class="btnRow">
-                <button class="btn accent" id="saveDashboardPageAdv">Afficher sur l'ecran</button>
+                <button class="btn accent" id="saveDashboardPageAdv">Appliquer sur l'ecran</button>
               </div>
               <div class="toast" id="dashboardPageToast"></div>
             </article>
@@ -2638,7 +2655,8 @@ R"HTML(
     redSinceMs: 0,
     liveEnabled: false,
     dashboardPage: 0,
-    dashboardPageDirty: false,
+    dashboardFullscreenMask: 0,
+    dashboardDisplayDirty: false,
     uiDirty: false,
     uiResponseMode: 0,
     pinConfigured: false,
@@ -2692,6 +2710,40 @@ R"HTML(
   function getDashboardPageValue(value) {
     const page = Number(value);
     return page >= 1 && page <= 3 ? page : 0;
+  }
+
+  function getDashboardFullscreenMaskValue(value) {
+    return Number(value) & 0x0F;
+  }
+
+  function dashboardFullscreenButtonId(page) {
+    switch (Number(page)) {
+      case 0: return "dashboardFsOverview";
+      case 1: return "dashboardFsClock";
+      case 2: return "dashboardFsLive";
+      case 3: return "dashboardFsSound";
+      default: return "";
+    }
+  }
+
+  function applyDashboardFullscreenMask(mask) {
+    const normalizedMask = getDashboardFullscreenMaskValue(mask);
+    [0, 1, 2, 3].forEach((page) => {
+      const id = dashboardFullscreenButtonId(page);
+      if (!id) return;
+      const enabled = (normalizedMask & (1 << page)) !== 0;
+      $(id).classList.toggle("active", enabled);
+      $(id).setAttribute("aria-pressed", enabled ? "true" : "false");
+    });
+  }
+
+  function readDashboardFullscreenMask() {
+    let mask = 0;
+    [0, 1, 2, 3].forEach((page) => {
+      const id = dashboardFullscreenButtonId(page);
+      if (id && $(id).classList.contains("active")) mask |= (1 << page);
+    });
+    return getDashboardFullscreenMaskValue(mask);
   }
 
   function sanitizeUsernameValue(value) {
@@ -3145,9 +3197,13 @@ R"HTML(
     state.historySamplePeriodMs = Number(merged.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
     state.pinConfigured = Boolean(merged.pinConfigured);
     state.liveEnabled = Boolean(merged.liveEnabled);
-    if ("dashboardPage" in merged && !state.dashboardPageDirty) {
+    if ("dashboardPage" in merged && !state.dashboardDisplayDirty) {
       state.dashboardPage = getDashboardPageValue(merged.dashboardPage);
       $("dashboardPageAdv").value = String(state.dashboardPage);
+    }
+    if ("dashboardFullscreenMask" in merged && !state.dashboardDisplayDirty) {
+      state.dashboardFullscreenMask = getDashboardFullscreenMaskValue(merged.dashboardFullscreenMask);
+      applyDashboardFullscreenMask(state.dashboardFullscreenMask);
     }
 
     const db = Number(merged.db ?? 0);
@@ -3606,13 +3662,15 @@ R"HTML(
 
   async function saveDashboardPage() {
     const dashboardPage = getDashboardPageValue(getFieldValue("dashboardPageAdv"));
+    const dashboardFullscreenMask = readDashboardFullscreenMask();
     $("dashboardPageAdv").value = String(dashboardPage);
 
     try {
-      await apiPost("/api/ui", { dashboardPage });
+      await apiPost("/api/ui", { dashboardPage, dashboardFullscreenMask });
       state.dashboardPage = dashboardPage;
-      state.dashboardPageDirty = false;
-      setToast("dashboardPageToast", "Dashboard tactile mis a jour.");
+      state.dashboardFullscreenMask = dashboardFullscreenMask;
+      state.dashboardDisplayDirty = false;
+      setToast("dashboardPageToast", "Affichage tactile mis a jour.");
       await refreshStatus();
     } catch (err) {
       setToastError("dashboardPageToast", err);
@@ -3660,7 +3718,7 @@ R"HTML(
   async function refreshSettingsPanels() {
     if (!state.authenticated) return;
     state.uiDirty = false;
-    state.dashboardPageDirty = false;
+    state.dashboardDisplayDirty = false;
     state.calRefsDirty = [false, false, false, false, false];
     await refreshStatus();
     clearProtectedSettingsFields();
@@ -3929,8 +3987,18 @@ R"HTML(
 
   $("dashboardPageAdv").addEventListener("change", () => {
     state.dashboardPage = getDashboardPageValue(getFieldValue("dashboardPageAdv"));
-    state.dashboardPageDirty = true;
+    state.dashboardDisplayDirty = true;
     $("dashboardPageAdv").value = String(state.dashboardPage);
+  });
+
+  document.querySelectorAll("[data-dashboard-fullscreen]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      btn.classList.toggle("active");
+      const active = btn.classList.contains("active");
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+      state.dashboardFullscreenMask = readDashboardFullscreenMask();
+      state.dashboardDisplayDirty = true;
+    });
   });
 
   document.querySelectorAll("[data-mode]").forEach((btn) => {
