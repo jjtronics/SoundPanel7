@@ -348,23 +348,7 @@ L'interface permet notamment de regler :
 Animation complete des reglages :
 
 <p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des parametres web de SoundPanel 7" width="82%">
-</p>
-
-Les 5 captures sources restent visibles juste en dessous :
-
-<p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_1.jpg" alt="Parametres web SoundPanel 7 - ecran 1" width="49%">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_2.jpg" alt="Parametres web SoundPanel 7 - ecran 2" width="49%">
-</p>
-
-<p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_3.jpg" alt="Parametres web SoundPanel 7 - ecran 3" width="49%">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_4.jpg" alt="Parametres web SoundPanel 7 - ecran 4" width="49%">
-</p>
-
-<p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_5.jpg" alt="Parametres web SoundPanel 7 - ecran 5" width="70%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des parametres web de SoundPanel 7" width="96%">
 </p>
 
 Endpoints principaux exposes par le firmware :
@@ -968,23 +952,7 @@ The interface lets you configure:
 Animated walkthrough of the settings area:
 
 <p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animated SoundPanel 7 settings walkthrough" width="82%">
-</p>
-
-The five source screenshots remain available right below:
-
-<p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_1.jpg" alt="SoundPanel 7 settings screen 1" width="49%">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_2.jpg" alt="SoundPanel 7 settings screen 2" width="49%">
-</p>
-
-<p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_3.jpg" alt="SoundPanel 7 settings screen 3" width="49%">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_4.jpg" alt="SoundPanel 7 settings screen 4" width="49%">
-</p>
-
-<p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_5.jpg" alt="SoundPanel 7 settings screen 5" width="70%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animated SoundPanel 7 settings walkthrough" width="96%">
 </p>
 
 Main endpoints exposed by the firmware:
