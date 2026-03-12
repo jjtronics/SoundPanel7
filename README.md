@@ -19,6 +19,14 @@
 </p>
 
 <p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-Dashboards-README.gif" alt="Animated tour of the SoundPanel 7 dashboards on the device" width="900">
+</p>
+
+<p align="center">
+  <em>Animated preview of the on-device dashboards: principal view, clock, LIVE mode, sound meter, PIN screen, calibration, and settings.</em>
+</p>
+
+<p align="center">
   <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_3.jpg" alt="SoundPanel 7 installed in a recording studio" width="900">
 </p>
 
