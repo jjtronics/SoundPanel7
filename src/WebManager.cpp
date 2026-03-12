@@ -36,9 +36,10 @@ static void appendBoolField(String& json, const char* key, bool value, bool trai
   if (trailingComma) json += ",";
 }
 
-static void appendWifiJson(String& json, bool wifiConnected, const String& ip, int rssi) {
+static void appendWifiJson(String& json, bool wifiConnected, const String& ip, int rssi, const String& ssid) {
   json += "\"wifi\":"; json += (wifiConnected ? "true" : "false"); json += ",";
   sp7json::appendEscapedField(json, "ip", ip.c_str());
+  sp7json::appendEscapedField(json, "ssid", ssid.c_str());
   json += "\"rssi\":"; json += String(rssi); json += ",";
 }
 
@@ -423,6 +424,8 @@ void WebManager::routes() {
   _srv.on("/api/ui", HTTP_POST, [this]() { handleUiSave(); });
   _srv.on("/api/live", HTTP_GET, [this]() { handleLiveGet(); });
   _srv.on("/api/live", HTTP_POST, [this]() { handleLiveSave(); });
+  _srv.on("/api/wifi", HTTP_GET, [this]() { handleWifiGet(); });
+  _srv.on("/api/wifi", HTTP_POST, [this]() { handleWifiSave(); });
 
   _srv.on("/api/time", HTTP_GET,  [this]() { handleTimeGet(); });
   _srv.on("/api/time", HTTP_POST, [this]() { handleTimeSave(); });
@@ -545,6 +548,7 @@ bool WebManager::pinConfigured() const {
 String WebManager::statusJson() const {
   const bool wifiConnected = WiFi.isConnected();
   String ip = wifiConnected ? WiFi.localIP().toString() : String("");
+  String ssid = wifiConnected ? WiFi.SSID() : String("");
   int rssi = wifiConnected ? WiFi.RSSI() : 0;
   uint32_t up = (millis() - g_bootMs) / 1000;
   uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
@@ -561,7 +565,7 @@ String WebManager::statusJson() const {
   String json;
   json.reserve(1500);
   json += "{";
-  appendWifiJson(json, wifiConnected, ip, rssi);
+  appendWifiJson(json, wifiConnected, ip, rssi, ssid);
   json += "\"uptime_s\":"; json += String(up); json += ",";
   json += "\"backupTs\":"; json += String(backupTs); json += ",";
   appendTimeJson(json, hasTime, tbuf);
@@ -591,6 +595,7 @@ String WebManager::statusJson() const {
 String WebManager::liveMetricsJson() const {
   const bool wifiConnected = WiFi.isConnected();
   String ip = wifiConnected ? WiFi.localIP().toString() : String("");
+  String ssid = wifiConnected ? WiFi.SSID() : String("");
   int rssi = wifiConnected ? WiFi.RSSI() : 0;
   const float mcuTempC = temperatureRead();
   const bool mcuTempOk = !isnan(mcuTempC);
@@ -606,7 +611,7 @@ String WebManager::liveMetricsJson() const {
   appendAudioMetricsJson(json, am);
   appendUiStateJson(json, _s, _history, false);
   appendPinStateJson(json, pinConfigured());
-  appendWifiJson(json, wifiConnected, ip, rssi);
+  appendWifiJson(json, wifiConnected, ip, rssi, ssid);
   appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
   appendRuntimeStatsJson(json, g_runtimeStats);
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
@@ -1148,6 +1153,80 @@ void WebManager::handleTimeGet() {
   replyJson(200, json);
 }
 
+void WebManager::handleWifiGet() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  const String currentSsid = _net ? _net->currentSsid() : String("");
+  String json;
+  json.reserve(640);
+  json += "{";
+  json += "\"connected\":"; json += (_net && _net->isWifiConnected() ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "currentSsid", currentSsid.c_str());
+  json += "\"networks\":[";
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    if (i) json += ",";
+    json += "{";
+    json += "\"slot\":"; json += String(i + 1); json += ",";
+    sp7json::appendEscapedField(json, "ssid", _s->wifiCredentials[i].ssid);
+    json += "\"passwordConfigured\":";
+    json += strlen(_s->wifiCredentials[i].password) ? "true" : "false";
+    json += "}";
+  }
+  json += "]";
+  json += "}";
+
+  replyJson(200, json);
+}
+
+void WebManager::handleWifiSave() {
+  if (!requireWebAuth()) return;
+  if (!requireStoreAndSettingsJson()) return;
+
+  String body = _srv.arg("plain");
+  SettingsV1 next = *_s;
+
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    const String slot = String(i + 1);
+    const String ssidKey = String("wifi") + slot + "Ssid";
+    const String passwordKey = String("wifi") + slot + "Password";
+    const String keepPasswordKey = String("wifi") + slot + "KeepPassword";
+
+    String ssid = sp7json::parseString(body, ssidKey.c_str(), String(next.wifiCredentials[i].ssid), false);
+    String password = sp7json::parseString(body, passwordKey.c_str(), "", true);
+    const bool keepPassword = sp7json::parseBool(body, keepPasswordKey.c_str(), false);
+
+    ssid.trim();
+    password.trim();
+
+    if (!ssid.length()) {
+      next.wifiCredentials[i].ssid[0] = '\0';
+      next.wifiCredentials[i].password[0] = '\0';
+      continue;
+    }
+
+    if (keepPassword && strcmp(ssid.c_str(), _s->wifiCredentials[i].ssid) == 0) {
+      password = String(_s->wifiCredentials[i].password);
+    }
+
+    if (!sp7json::safeCopy(next.wifiCredentials[i].ssid, sizeof(next.wifiCredentials[i].ssid), ssid)) {
+      replyErrorJson(400, String("wifi") + slot + " ssid too long");
+      return;
+    }
+    if (!sp7json::safeCopy(next.wifiCredentials[i].password, sizeof(next.wifiCredentials[i].password), password)) {
+      replyErrorJson(400, String("wifi") + slot + " password too long");
+      return;
+    }
+  }
+
+  *_s = next;
+  _store->save(*_s);
+  if (_net) _net->reloadWifiConfig();
+
+  Serial0.printf("[WEB] WiFi saved: %u slot(s)\n", (unsigned)(_net ? _net->wifiCredentialCount() : 0));
+  replyOkJson(true);
+}
+
 void WebManager::handleTimeSave() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsText()) return;
@@ -1223,6 +1302,7 @@ void WebManager::handleConfigImport() {
 
   _store->save(*_s);
   applySettingsRuntimeState();
+  if (_net) _net->reloadWifiConfig();
   pushLiveMetrics(true);
   replyOkJsonRebootRecommended();
 }
@@ -1251,6 +1331,7 @@ void WebManager::handleConfigRestore() {
 
   _store->save(*_s);
   applySettingsRuntimeState();
+  if (_net) _net->reloadWifiConfig();
   pushLiveMetrics(true);
   replyOkJsonRebootRecommended();
 }
@@ -1277,6 +1358,7 @@ void WebManager::handleConfigResetPartial() {
 
   _store->save(*_s);
   applySettingsRuntimeState();
+  if (_net) _net->reloadWifiConfig();
   pushLiveMetrics(true);
   replyOkJsonRebootRecommended();
 }
@@ -2462,6 +2544,59 @@ R"HTML(
             <article class="card settingsCardFlat">
               <div class="sectionHead">
                 <div>
+                  <div class="sectionKicker">Reseau</div>
+                  <h2 class="sectionTitle">Wi-Fi multi-AP</h2>
+                </div>
+              </div>
+              <div class="hint mono" id="wifiSummaryAdv">Connexion: --</div>
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>Reseau 1 SSID</label>
+                    <input id="wifiSsid1" type="text" maxlength="32" placeholder="Maison"/>
+                  </div>
+                  <div class="field">
+                    <label>Reseau 1 mot de passe</label>
+                    <input id="wifiPassword1" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                  </div>
+                  <div class="field">
+                    <label>Reseau 2 SSID</label>
+                    <input id="wifiSsid2" type="text" maxlength="32" placeholder="Maison-5G"/>
+                  </div>
+                  <div class="field">
+                    <label>Reseau 2 mot de passe</label>
+                    <input id="wifiPassword2" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                  </div>
+                </div>
+                <div>
+                  <div class="field">
+                    <label>Reseau 3 SSID</label>
+                    <input id="wifiSsid3" type="text" maxlength="32" placeholder="Partage smartphone"/>
+                  </div>
+                  <div class="field">
+                    <label>Reseau 3 mot de passe</label>
+                    <input id="wifiPassword3" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                  </div>
+                  <div class="field">
+                    <label>Reseau 4 SSID</label>
+                    <input id="wifiSsid4" type="text" maxlength="32" placeholder="Bureau"/>
+                  </div>
+                  <div class="field">
+                    <label>Reseau 4 mot de passe</label>
+                    <input id="wifiPassword4" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                  </div>
+                </div>
+              </div>
+              <div class="hint">Laisse le mot de passe vide pour un reseau ouvert. Si tu ne modifies pas un champ mot de passe deja configure, il est conserve.</div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveWifiAdv">Sauver Wi-Fi</button>
+              </div>
+              <div class="toast" id="toastWifiAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
                   <div class="sectionKicker">Publication</div>
                   <h2 class="sectionTitle">MQTT</h2>
                 </div>
@@ -2548,6 +2683,7 @@ R"HTML(
                   <option value="ui">UI</option>
                   <option value="security">Securite</option>
                   <option value="time">Heure / hostname</option>
+                  <option value="wifi">Wi-Fi</option>
                   <option value="audio">Audio</option>
                   <option value="calibration">Calibration</option>
                   <option value="ota">OTA</option>
@@ -3766,6 +3902,7 @@ R"HTML(
     clearProtectedSettingsFields();
     await loadUsers();
     await loadTimeSettings();
+    await loadWifiSettings();
     await loadOtaSettings();
     await loadMqttSettings();
   }
@@ -3890,6 +4027,47 @@ R"HTML(
         ntpSyncMinutes: getIntValue("ntpSyncMinAdv"),
         hostname: getTrimmedValue("hostnameAdv")
       }), "Heure sauvee.", () => refreshStatus());
+  }
+
+  function setWifiPasswordField(slot, configured, ssid) {
+    const id = `wifiPassword${slot}`;
+    resetPasswordField(id, "********", "laisser vide = reseau ouvert", configured);
+    $(id).dataset.keepPassword = configured ? "1" : "0";
+    $(id).dataset.initialSsid = ssid || "";
+  }
+
+  async function loadWifiSettings() {
+    try {
+      const w = await apiGet("/api/wifi");
+      const networks = Array.isArray(w.networks) ? w.networks : [];
+      for (let slot = 1; slot <= 4; slot++) {
+        const network = networks[slot - 1] || {};
+        const ssid = String(network.ssid || "");
+        setFieldValue(`wifiSsid${slot}`, ssid);
+        setWifiPasswordField(slot, Boolean(network.passwordConfigured), ssid);
+      }
+      const current = w.connected ? (w.currentSsid || "(SSID inconnu)") : "hors ligne";
+      $("wifiSummaryAdv").textContent = `Connexion: ${current}`;
+    } catch (err) {
+      setToastError("toastWifiAdv", err);
+    }
+  }
+
+  async function saveWifiSettings() {
+    const payload = {};
+    for (let slot = 1; slot <= 4; slot++) {
+      const ssid = getTrimmedValue(`wifiSsid${slot}`);
+      const passwordEl = $(`wifiPassword${slot}`);
+      payload[`wifi${slot}Ssid`] = ssid;
+      payload[`wifi${slot}Password`] = getFieldValue(`wifiPassword${slot}`);
+      payload[`wifi${slot}KeepPassword`] =
+        !payload[`wifi${slot}Password`]
+        && passwordEl.dataset.keepPassword === "1"
+        && ssid === (passwordEl.dataset.initialSsid || "");
+    }
+
+    await runToastRequest("toastWifiAdv", "Sauvegarde...", () => apiPost("/api/wifi", payload),
+      "Wi-Fi sauve. Reconnexion en cours.");
   }
 
   async function loadOtaSettings() {
@@ -4098,6 +4276,7 @@ R"HTML(
   $("shutdownBtn").addEventListener("click", shutdown);
   $("factoryResetBtn").addEventListener("click", factoryReset);
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
+  $("saveWifiAdv").addEventListener("click", saveWifiSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
   $("authSubmitBtn").addEventListener("click", submitAuth);
@@ -4124,6 +4303,11 @@ R"HTML(
   });
   $("accessPinAdv").addEventListener("input", () => {
     $("accessPinAdv").value = sanitizePinValue($("accessPinAdv").value);
+  });
+  [1, 2, 3, 4].forEach((slot) => {
+    $(`wifiPassword${slot}`).addEventListener("input", () => {
+      $(`wifiPassword${slot}`).dataset.keepPassword = "0";
+    });
   });
   $("configFile").addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];

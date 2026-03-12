@@ -112,6 +112,8 @@ private:
   void handleLiveGet();
   void handleLiveSave();
   void handlePinSave();
+  void handleWifiGet();
+  void handleWifiSave();
 
   void handleTimeGet();
   void handleTimeSave();

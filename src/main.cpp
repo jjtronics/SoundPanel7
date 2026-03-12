@@ -89,7 +89,7 @@ void setup() {
   g_ui.begin(g_board, &g_settings, &g_store, &g_net, &g_history);
   lvgl_port_unlock();
 
-  g_net.begin(&g_settings);
+  g_net.begin(&g_settings, &g_store);
   g_ota.begin(&g_settings);
   g_mqtt.begin(&g_store, &g_settings);
   g_web.begin(&g_store, &g_settings, &g_net, g_board, &g_history, &g_ota, &g_mqtt, &g_ui);

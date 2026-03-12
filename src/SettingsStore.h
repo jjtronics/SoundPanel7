@@ -34,6 +34,9 @@ static constexpr uint8_t WEB_PASSWORD_MIN_LENGTH = 10;
 static constexpr uint8_t WEB_PASSWORD_MAX_LENGTH = 64;
 static constexpr uint8_t WEB_PASSWORD_SALT_LENGTH = 32;
 static constexpr uint8_t WEB_PASSWORD_HASH_LENGTH = 64;
+static constexpr uint8_t WIFI_CREDENTIAL_MAX_COUNT = 4;
+static constexpr uint8_t WIFI_SSID_MAX_LENGTH = 32;
+static constexpr uint8_t WIFI_PASSWORD_MAX_LENGTH = 64;
 static constexpr uint8_t LIVE_DISABLED = 0;
 static constexpr uint8_t LIVE_ENABLED = 1;
 static constexpr uint8_t DASHBOARD_PAGE_OVERVIEW = 0;
@@ -112,6 +115,11 @@ struct WebUserRecord {
   char passwordHash[WEB_PASSWORD_HASH_LENGTH + 1] = "";
 };
 
+struct WifiCredentialRecord {
+  char ssid[WIFI_SSID_MAX_LENGTH + 1] = "";
+  char password[WIFI_PASSWORD_MAX_LENGTH + 1] = "";
+};
+
 struct ThresholdsV1 {
   uint8_t greenMax  = DEFAULT_GREEN_MAX;
   uint8_t orangeMax = DEFAULT_ORANGE_MAX;
@@ -140,6 +148,7 @@ struct SettingsV1 {
 
   // WiFi portal
   char hostname[32]  = "soundpanel7";
+  WifiCredentialRecord wifiCredentials[WIFI_CREDENTIAL_MAX_COUNT];
 
   // Audio source
   // 0 = Demo
@@ -212,4 +221,5 @@ private:
   String _ns;
   static void sanitize(SettingsV1& s);
   static void sanitizeWebUser(WebUserRecord& user);
+  static void sanitizeWifiCredential(WifiCredentialRecord& credential);
 };

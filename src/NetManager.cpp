@@ -2,6 +2,7 @@
 #include "NetManager.h"
 
 #include <WiFiManager.h>   // tzapu WiFiManager (AutoConnect portal)
+#include <WiFiMulti.h>
 #include <ESPmDNS.h>
 #include <esp_sntp.h>
 #include <time.h>
@@ -10,42 +11,214 @@
 #include "AppConfig.h"
 
 static constexpr const char* kDefaultHostname = "soundpanel7";
+static constexpr const char* kSetupApName = "SoundPanel7-Setup";
+static constexpr uint32_t kWifiRetryPeriodMs = 15000UL;
+static constexpr uint32_t kWifiConnectTimeoutMs = 8000UL;
+static constexpr uint8_t kWifiFailuresBeforePortal = 3;
 static WiFiManager g_wm;
+static WiFiMulti g_wifiMulti;
 static wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
 static String g_lastWifiIp;
 
-bool NetManager::begin(SettingsV1* settings) {
+bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   _s = settings;
+  _store = store;
   _started = true;
   _mdnsStarted = false;
+  _lastWifiAttemptMs = 0;
+  _wifiAttemptFailures = 0;
+  _legacyCredentialTried = false;
 
-  // Hostname (STA)
-  const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : kDefaultHostname;
-  WiFi.setHostname(hostname);
-  g_wm.setHostname(hostname);
+  configureHostname();
 
   // WiFiManager behavior
   g_wm.setDebugOutput(false);
   g_wm.setConfigPortalBlocking(false); // IMPORTANT: non-bloquant, on fera g_wm.process() dans loop()
+  g_wm.setEnableConfigPortal(false);   // on ouvre le portail explicitement apres les tentatives multi-AP
+  g_wm.setSaveConfigCallback([this]() { onPortalWifiSaved(); });
 
   // Optionnel mais pratique pour éviter des waits interminables
   g_wm.setConnectTimeout(20);          // sec
   g_wm.setConfigPortalTimeout(0);      // 0 = jamais timeout du portal
 
-  // Démarrage connexion
-  // autoConnect() -> tente SSID sauvegardé, sinon ouvre portal
-  // Le SSID du portal, on le met clair
-  const char* apName = "SoundPanel7-Setup";
-  bool ok = g_wm.autoConnect(apName);
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
 
-  // Si ok == false ici, ça veut dire "portal démarré" (ou échec immédiat),
-  // mais comme on est en non-bloquant, on continue quand même.
-  (void)ok;
-
-  // On configure NTP dès qu'on a le WiFi (ou on le fera dans loop())
   _ntpConfigured = false;
+  migrateLegacyCredentialIfNeeded();
+  rebuildWifiMulti();
+  ensureWifiConnection(true);
 
   return true;
+}
+
+void NetManager::configureHostname() {
+  const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : kDefaultHostname;
+  WiFi.setHostname(hostname);
+  g_wm.setHostname(hostname);
+}
+
+uint8_t NetManager::wifiCredentialCount() const {
+  uint8_t count = 0;
+  if (!_s) return count;
+  for (const WifiCredentialRecord& credential : _s->wifiCredentials) {
+    if (credential.ssid[0]) count++;
+  }
+  return count;
+}
+
+void NetManager::rebuildWifiMulti() {
+  g_wifiMulti.APlistClean();
+  if (!_s) return;
+
+  for (const WifiCredentialRecord& credential : _s->wifiCredentials) {
+    if (!credential.ssid[0]) continue;
+    g_wifiMulti.addAP(credential.ssid, credential.password[0] ? credential.password : nullptr);
+  }
+}
+
+void NetManager::startConfigPortal() {
+  if (g_wm.getConfigPortalActive()) return;
+  Serial0.printf("[Net] Starting WiFi portal '%s'\n", kSetupApName);
+  g_wm.startConfigPortal(kSetupApName);
+}
+
+void NetManager::reloadWifiConfig() {
+  configureHostname();
+  migrateLegacyCredentialIfNeeded();
+  rebuildWifiMulti();
+  _ntpConfigured = false;
+  _mdnsStarted = false;
+  _legacyCredentialTried = false;
+  _wifiAttemptFailures = 0;
+  _lastWifiAttemptMs = 0;
+  g_lastWifiStatus = WL_IDLE_STATUS;
+  g_lastWifiIp = "";
+
+  if (g_wm.getConfigPortalActive()) {
+    g_wm.stopConfigPortal();
+  }
+
+  if (WiFi.getMode() != WIFI_STA) {
+    WiFi.mode(WIFI_STA);
+  }
+
+  bool currentConnectionManaged = false;
+  if (isWifiConnected() && _s) {
+    const String ssid = WiFi.SSID();
+    for (const WifiCredentialRecord& credential : _s->wifiCredentials) {
+      if (credential.ssid[0] && ssid == credential.ssid) {
+        currentConnectionManaged = true;
+        break;
+      }
+    }
+  }
+  if (isWifiConnected() && wifiCredentialCount() > 0 && !currentConnectionManaged) {
+    WiFi.disconnect(false, false);
+  }
+
+  ensureWifiConnection(true);
+}
+
+void NetManager::migrateLegacyCredentialIfNeeded() {
+  if (!_s || !_store) return;
+  if (wifiCredentialCount() > 0) return;
+
+  const String ssid = g_wm.getWiFiSSID(true);
+  if (!ssid.length()) return;
+
+  const String password = g_wm.getWiFiPass(true);
+  Serial0.printf("[Net] Migrating legacy WiFi credential for SSID=%s\n", ssid.c_str());
+  rememberWifiCredential(ssid, password);
+}
+
+void NetManager::rememberWifiCredential(const String& ssid, const String& password) {
+  if (!_s || !_store || !ssid.length()) return;
+  if (ssid.length() >= sizeof(_s->wifiCredentials[0].ssid) || password.length() >= sizeof(_s->wifiCredentials[0].password)) {
+    Serial0.println("[Net] WiFi credential skipped: too long");
+    return;
+  }
+
+  int existingIndex = -1;
+  int freeIndex = -1;
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    if (_s->wifiCredentials[i].ssid[0] == '\0') {
+      if (freeIndex < 0) freeIndex = i;
+      continue;
+    }
+    if (ssid == _s->wifiCredentials[i].ssid) {
+      existingIndex = i;
+      break;
+    }
+  }
+
+  WifiCredentialRecord credential{};
+  memcpy(credential.ssid, ssid.c_str(), ssid.length() + 1);
+  memcpy(credential.password, password.c_str(), password.length() + 1);
+
+  if (existingIndex >= 0) {
+    _s->wifiCredentials[existingIndex] = credential;
+  } else if (freeIndex >= 0) {
+    _s->wifiCredentials[freeIndex] = credential;
+  } else {
+    for (uint8_t i = 1; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+      _s->wifiCredentials[i - 1] = _s->wifiCredentials[i];
+    }
+    _s->wifiCredentials[WIFI_CREDENTIAL_MAX_COUNT - 1] = credential;
+  }
+
+  _store->save(*_s);
+  rebuildWifiMulti();
+  Serial0.printf("[Net] WiFi credential stored for SSID=%s\n", ssid.c_str());
+}
+
+void NetManager::onPortalWifiSaved() {
+  const String ssid = g_wm.getWiFiSSID(true);
+  const String password = g_wm.getWiFiPass(true);
+  rememberWifiCredential(ssid, password);
+  _legacyCredentialTried = true;
+  _wifiAttemptFailures = 0;
+}
+
+void NetManager::ensureWifiConnection(bool force) {
+  if (!_started || isWifiConnected() || g_wm.getConfigPortalActive()) return;
+
+  const uint32_t now = millis();
+  if (!force && (uint32_t)(now - _lastWifiAttemptMs) < kWifiRetryPeriodMs) return;
+  _lastWifiAttemptMs = now;
+
+  const uint8_t credentialCount = wifiCredentialCount();
+  if (credentialCount > 0) {
+    Serial0.printf("[Net] Trying %u saved WiFi AP(s)\n", (unsigned)credentialCount);
+    const uint8_t status = g_wifiMulti.run(kWifiConnectTimeoutMs);
+    if (status == WL_CONNECTED || isWifiConnected()) {
+      _wifiAttemptFailures = 0;
+      _legacyCredentialTried = true;
+      return;
+    }
+
+    _wifiAttemptFailures++;
+    Serial0.printf("[Net] WiFiMulti status=%d (attempt %u/%u)\n",
+                   (int)status,
+                   (unsigned)_wifiAttemptFailures,
+                   (unsigned)kWifiFailuresBeforePortal);
+    if (_wifiAttemptFailures >= kWifiFailuresBeforePortal) {
+      startConfigPortal();
+    }
+    return;
+  }
+
+  if (!_legacyCredentialTried) {
+    Serial0.println("[Net] Trying legacy WiFiManager credential");
+    _legacyCredentialTried = true;
+    if (g_wm.autoConnect(kSetupApName) || isWifiConnected()) {
+      _wifiAttemptFailures = 0;
+      return;
+    }
+    Serial0.println("[Net] No legacy WiFi credential available");
+  }
+
+  startConfigPortal();
 }
 
 void NetManager::ensureMdns() {
@@ -78,6 +251,7 @@ void NetManager::loop() {
 
   // fait tourner WiFiManager (important en mode non-bloquant)
   g_wm.process();
+  ensureWifiConnection();
 
   wl_status_t wifiStatus = WiFi.status();
   String currentIp = isWifiConnected() ? WiFi.localIP().toString() : String("");
@@ -86,9 +260,11 @@ void NetManager::loop() {
     g_lastWifiIp = currentIp;
 
     if (isWifiConnected()) {
+      _wifiAttemptFailures = 0;
       Serial0.printf("[Net] WiFi OK IP=%s RSSI=%ld\n",
                      currentIp.c_str(),
                      (long)rssi());
+      Serial0.printf("[Net] WiFi SSID=%s\n", currentSsid().c_str());
       if (_s) {
         Serial0.printf("[Net] NTP server: %s\n", _s->ntpServer);
         Serial0.printf("[Net] TZ: %s\n", _s->tz);
@@ -130,6 +306,11 @@ String NetManager::ipString() const {
 int32_t NetManager::rssi() const {
   if (!isWifiConnected()) return -127;
   return WiFi.RSSI();
+}
+
+String NetManager::currentSsid() const {
+  if (!isWifiConnected()) return String("");
+  return WiFi.SSID();
 }
 
 bool NetManager::timeIsValid() const {

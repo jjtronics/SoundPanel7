@@ -34,6 +34,14 @@ void SettingsStore::load(SettingsV1 &out) {
   _prefs.getString("ntp", out.ntpServer, sizeof(out.ntpServer));
   out.ntpSyncIntervalMs = _prefs.getUInt("ntp_ms", out.ntpSyncIntervalMs);
   _prefs.getString("hn", out.hostname, sizeof(out.hostname));
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    char keySsid[8];
+    char keyPass[8];
+    snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(i + 1));
+    snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
+    _prefs.getString(keySsid, out.wifiCredentials[i].ssid, sizeof(out.wifiCredentials[i].ssid));
+    _prefs.getString(keyPass, out.wifiCredentials[i].password, sizeof(out.wifiCredentials[i].password));
+  }
 
   out.otaEnabled = (uint8_t)_prefs.getUChar("ota_en", out.otaEnabled);
   out.otaPort = (uint16_t)_prefs.getUShort("ota_pt", out.otaPort);
@@ -97,6 +105,14 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putString("ntp", s.ntpServer);
   _prefs.putUInt("ntp_ms", s.ntpSyncIntervalMs);
   _prefs.putString("hn", s.hostname);
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    char keySsid[8];
+    char keyPass[8];
+    snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(i + 1));
+    snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
+    _prefs.putString(keySsid, s.wifiCredentials[i].ssid);
+    _prefs.putString(keyPass, s.wifiCredentials[i].password);
+  }
 
   _prefs.putUChar("ota_en", s.otaEnabled);
   _prefs.putUShort("ota_pt", s.otaPort);
@@ -175,6 +191,9 @@ void SettingsStore::sanitize(SettingsV1& s) {
 
   if (s.ntpSyncIntervalMs < MIN_NTP_SYNC_INTERVAL_MS) s.ntpSyncIntervalMs = MIN_NTP_SYNC_INTERVAL_MS;
   if (s.ntpSyncIntervalMs > MAX_NTP_SYNC_INTERVAL_MS) s.ntpSyncIntervalMs = MAX_NTP_SYNC_INTERVAL_MS;
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    sanitizeWifiCredential(s.wifiCredentials[i]);
+  }
 
   if (s.otaPort == 0) s.otaPort = 3232;
   if (s.mqttPort == 0) s.mqttPort = 1883;
@@ -212,6 +231,15 @@ void SettingsStore::sanitizeWebUser(WebUserRecord& user) {
     user.username[0] = '\0';
     user.passwordSalt[0] = '\0';
     user.passwordHash[0] = '\0';
+  }
+}
+
+void SettingsStore::sanitizeWifiCredential(WifiCredentialRecord& credential) {
+  credential.ssid[sizeof(credential.ssid) - 1] = '\0';
+  credential.password[sizeof(credential.password) - 1] = '\0';
+
+  if (!strlen(credential.ssid)) {
+    credential.password[0] = '\0';
   }
 }
 
@@ -375,6 +403,18 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"ntpServer\":\""; json += sp7json::escape(s.ntpServer); json += "\",";
   json += "\"ntpSyncMinutes\":"; json += String(s.ntpSyncIntervalMs / MS_PER_MINUTE); json += ",";
   json += "\"hostname\":\""; json += sp7json::escape(s.hostname); json += "\",";
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    json += "\"wifi";
+    json += String(i + 1);
+    json += "Ssid\":\"";
+    json += sp7json::escape(s.wifiCredentials[i].ssid);
+    json += "\",";
+    json += "\"wifi";
+    json += String(i + 1);
+    json += "Password\":\"";
+    json += sp7json::escape(s.wifiCredentials[i].password);
+    json += "\",";
+  }
   json += "\"audioSource\":"; json += String(s.audioSource); json += ",";
   json += "\"analogPin\":"; json += String(s.analogPin); json += ",";
   json += "\"analogRmsSamples\":"; json += String(s.analogRmsSamples); json += ",";
@@ -440,6 +480,14 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   String tz = sp7json::parseString(json, "tz", String(next.tz));
   String ntp = sp7json::parseString(json, "ntpServer", String(next.ntpServer));
   String hostname = sp7json::parseString(json, "hostname", String(next.hostname));
+  String wifiSsids[WIFI_CREDENTIAL_MAX_COUNT];
+  String wifiPasswords[WIFI_CREDENTIAL_MAX_COUNT];
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    const String ssidKey = String("wifi") + String(i + 1) + "Ssid";
+    const String passwordKey = String("wifi") + String(i + 1) + "Password";
+    wifiSsids[i] = sp7json::parseString(json, ssidKey.c_str(), String(next.wifiCredentials[i].ssid));
+    wifiPasswords[i] = sp7json::parseString(json, passwordKey.c_str(), String(next.wifiCredentials[i].password));
+  }
   if (!sp7json::safeCopy(next.dashboardPin, sizeof(next.dashboardPin), dashboardPin)) {
     if (err) *err = "dashboardPin too long";
     return false;
@@ -455,6 +503,16 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   if (!sp7json::safeCopy(next.hostname, sizeof(next.hostname), hostname)) {
     if (err) *err = "hostname too long";
     return false;
+  }
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    if (!sp7json::safeCopy(next.wifiCredentials[i].ssid, sizeof(next.wifiCredentials[i].ssid), wifiSsids[i])) {
+      if (err) *err = String("wifi") + String(i + 1) + "Ssid too long";
+      return false;
+    }
+    if (!sp7json::safeCopy(next.wifiCredentials[i].password, sizeof(next.wifiCredentials[i].password), wifiPasswords[i])) {
+      if (err) *err = String("wifi") + String(i + 1) + "Password too long";
+      return false;
+    }
   }
   next.ntpSyncIntervalMs = (uint32_t)sp7json::parseInt(json, "ntpSyncMinutes", (int)(next.ntpSyncIntervalMs / MS_PER_MINUTE)) * MS_PER_MINUTE;
 
@@ -594,6 +652,8 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     memcpy(s.ntpServer, def.ntpServer, sizeof(s.ntpServer));
     s.ntpSyncIntervalMs = def.ntpSyncIntervalMs;
     memcpy(s.hostname, def.hostname, sizeof(s.hostname));
+  } else if (scope == "wifi") {
+    memcpy(s.wifiCredentials, def.wifiCredentials, sizeof(s.wifiCredentials));
   } else if (scope == "audio") {
     s.audioSource = def.audioSource;
     s.analogPin = def.analogPin;
