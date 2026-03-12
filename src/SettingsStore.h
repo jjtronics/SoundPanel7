@@ -36,6 +36,12 @@ static constexpr uint8_t WEB_PASSWORD_SALT_LENGTH = 32;
 static constexpr uint8_t WEB_PASSWORD_HASH_LENGTH = 64;
 static constexpr uint8_t LIVE_DISABLED = 0;
 static constexpr uint8_t LIVE_ENABLED = 1;
+static constexpr uint8_t DASHBOARD_PAGE_OVERVIEW = 0;
+static constexpr uint8_t DASHBOARD_PAGE_CLOCK = 1;
+static constexpr uint8_t DASHBOARD_PAGE_LIVE = 2;
+static constexpr uint8_t DASHBOARD_PAGE_SOUND = 3;
+static constexpr uint8_t DEFAULT_DASHBOARD_PAGE = DASHBOARD_PAGE_OVERVIEW;
+static constexpr uint8_t MAX_WEB_DASHBOARD_PAGE = DASHBOARD_PAGE_SOUND;
 static constexpr float RECOMMENDED_CALIBRATION_3[CALIBRATION_POINT_MAX] = {45.0f, 65.0f, 85.0f, 95.0f, 105.0f};
 static constexpr float RECOMMENDED_CALIBRATION_5[CALIBRATION_POINT_MAX] = {40.0f, 55.0f, 70.0f, 85.0f, 100.0f};
 
@@ -63,6 +69,10 @@ static inline bool pinCodeIsConfigured(const char* pin) {
   return pinCodeIsValid(pin);
 }
 
+static inline uint8_t normalizedDashboardPage(uint8_t page) {
+  return page <= MAX_WEB_DASHBOARD_PAGE ? page : DEFAULT_DASHBOARD_PAGE;
+}
+
 struct WebUserRecord {
   uint8_t active = 0;
   char username[WEB_USERNAME_MAX_LENGTH + 1] = "";
@@ -86,6 +96,7 @@ struct SettingsV1 {
   uint32_t orangeAlertHoldMs = DEFAULT_WARNING_HOLD_MS;
   uint32_t redAlertHoldMs = DEFAULT_CRITICAL_HOLD_MS;
   uint8_t liveEnabled = LIVE_DISABLED;
+  uint8_t dashboardPage = DEFAULT_DASHBOARD_PAGE;
   char dashboardPin[PIN_CODE_MAX_LENGTH + 1] = "";
 
   // Time / locale

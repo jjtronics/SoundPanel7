@@ -156,6 +156,12 @@ void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, 
   showDashboard();
 }
 
+void UiManager::requestDashboardPage(uint8_t page, bool persistSelection) {
+  const uint8_t normalizedPage = normalizedDashboardPage(page);
+  if (_s && persistSelection) _s->dashboardPage = normalizedPage;
+  _requestedDashPage = normalizedPage;
+}
+
 void UiManager::redrawHistoryBars() {
   if (!_histWrap && !_histWrapFocus) return;
   _historyRevision = _history ? _history->revision() : 0;
@@ -291,7 +297,8 @@ void UiManager::buildDashboard() {
 
   _lblTime = nullptr;
 
-  setDashboardPage(DASH_PAGE_OVERVIEW);
+  const uint8_t initialPage = normalizedDashboardPage(_s ? _s->dashboardPage : DEFAULT_DASHBOARD_PAGE);
+  setDashboardPage(initialPage);
   refreshCalibrationView();
   redrawHistoryBars();
 }
@@ -1914,6 +1921,12 @@ void UiManager::setDb(float dbInstant, float leq, float peak) {
 }
 
 void UiManager::tick() {
+  if (_requestedDashPage != UINT8_MAX) {
+    const uint8_t requestedPage = _requestedDashPage;
+    _requestedDashPage = UINT8_MAX;
+    setDashboardPage(requestedPage);
+  }
+
   uint32_t now = millis();
   if (now - _lastTickMs < UI_TICK_PERIOD_MS) return;
   _lastTickMs = now;

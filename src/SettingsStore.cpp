@@ -25,6 +25,7 @@ void SettingsStore::load(SettingsV1 &out) {
   out.orangeAlertHoldMs = _prefs.getUInt("ui_ow_ms", out.orangeAlertHoldMs);
   out.redAlertHoldMs = _prefs.getUInt("ui_rw_ms", out.redAlertHoldMs);
   out.liveEnabled = (uint8_t)_prefs.getUChar("ui_live", out.liveEnabled);
+  out.dashboardPage = (uint8_t)_prefs.getUChar("ui_page", out.dashboardPage);
   _prefs.getString("ui_pin", out.dashboardPin, sizeof(out.dashboardPin));
 
   _prefs.getString("tz", out.tz, sizeof(out.tz));
@@ -85,6 +86,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUInt("ui_ow_ms", s.orangeAlertHoldMs);
   _prefs.putUInt("ui_rw_ms", s.redAlertHoldMs);
   _prefs.putUChar("ui_live", s.liveEnabled);
+  _prefs.putUChar("ui_page", s.dashboardPage);
   _prefs.putString("ui_pin", s.dashboardPin);
 
   _prefs.putString("tz", s.tz);
@@ -145,6 +147,7 @@ void SettingsStore::sanitize(SettingsV1& s) {
   if (s.historyMinutes < 1) s.historyMinutes = 1;
   if (s.historyMinutes > 60) s.historyMinutes = 60;
   s.liveEnabled = s.liveEnabled ? LIVE_ENABLED : LIVE_DISABLED;
+  s.dashboardPage = normalizedDashboardPage(s.dashboardPage);
 
   if (s.orangeAlertHoldMs > MAX_ALERT_HOLD_MS) s.orangeAlertHoldMs = MAX_ALERT_HOLD_MS;
   if (s.redAlertHoldMs > MAX_ALERT_HOLD_MS) s.redAlertHoldMs = MAX_ALERT_HOLD_MS;
@@ -358,6 +361,7 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"warningHoldSec\":"; json += String(s.orangeAlertHoldMs / MS_PER_SECOND); json += ",";
   json += "\"criticalHoldSec\":"; json += String(s.redAlertHoldMs / MS_PER_SECOND); json += ",";
   json += "\"liveEnabled\":"; json += (s.liveEnabled ? "true" : "false"); json += ",";
+  json += "\"dashboardPage\":"; json += String(s.dashboardPage); json += ",";
   json += "\"dashboardPin\":\""; json += sp7json::escape(s.dashboardPin); json += "\",";
   json += "\"tz\":\""; json += sp7json::escape(s.tz); json += "\",";
   json += "\"ntpServer\":\""; json += sp7json::escape(s.ntpServer); json += "\",";
@@ -418,6 +422,7 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.orangeAlertHoldMs = (uint32_t)sp7json::parseInt(json, "warningHoldSec", (int)(next.orangeAlertHoldMs / MS_PER_SECOND)) * MS_PER_SECOND;
   next.redAlertHoldMs = (uint32_t)sp7json::parseInt(json, "criticalHoldSec", (int)(next.redAlertHoldMs / MS_PER_SECOND)) * MS_PER_SECOND;
   next.liveEnabled = sp7json::parseBool(json, "liveEnabled", next.liveEnabled != 0) ? LIVE_ENABLED : LIVE_DISABLED;
+  next.dashboardPage = normalizedDashboardPage((uint8_t)sp7json::parseInt(json, "dashboardPage", next.dashboardPage));
   String dashboardPin = sp7json::parseString(json, "dashboardPin", String(next.dashboardPin));
 
   String tz = sp7json::parseString(json, "tz", String(next.tz));
@@ -566,6 +571,7 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.orangeAlertHoldMs = def.orangeAlertHoldMs;
     s.redAlertHoldMs = def.redAlertHoldMs;
     s.liveEnabled = def.liveEnabled;
+    s.dashboardPage = def.dashboardPage;
     s.audioResponseMode = def.audioResponseMode;
   } else if (scope == "security") {
     memcpy(s.dashboardPin, def.dashboardPin, sizeof(s.dashboardPin));

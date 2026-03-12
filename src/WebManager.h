@@ -11,6 +11,8 @@
 #include "OtaManager.h"
 #include "MqttManager.h"
 
+class UiManager;
+
 class WebManager {
 public:
   bool begin(SettingsStore* store,
@@ -19,7 +21,8 @@ public:
              esp_panel::board::Board* board,
              SharedHistory* history,
              OtaManager* ota,
-             MqttManager* mqtt);
+             MqttManager* mqtt,
+             UiManager* ui);
   void loop();
 
   void updateMetrics(float db, float leq, float peak);
@@ -46,6 +49,7 @@ private:
   esp_panel::board::Board* _board = nullptr;
   OtaManager* _ota = nullptr;
   MqttManager* _mqtt = nullptr;
+  UiManager* _ui = nullptr;
 
   bool _started = false;
   WebServer _srv = WebServer(80);

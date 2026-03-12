@@ -1,5 +1,6 @@
 #include "WebManager.h"
 #include "JsonHelpers.h"
+#include "ui/UiManager.h"
 
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -68,6 +69,7 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"orangeMax\":"; json += String(s ? s->th.orangeMax : DEFAULT_ORANGE_MAX); json += ",";
   json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
   json += "\"liveEnabled\":"; json += (s && s->liveEnabled ? "true" : "false"); json += ",";
+  json += "\"dashboardPage\":"; json += String(s ? s->dashboardPage : DEFAULT_DASHBOARD_PAGE); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -359,7 +361,8 @@ bool WebManager::begin(SettingsStore* store,
                        esp_panel::board::Board* board,
                        SharedHistory* history,
                        OtaManager* ota,
-                       MqttManager* mqtt) {
+                       MqttManager* mqtt,
+                       UiManager* ui) {
   _store = store;
   _s = settings;
   _net = net;
@@ -367,6 +370,7 @@ bool WebManager::begin(SettingsStore* store,
   _history = history;
   _ota = ota;
   _mqtt = mqtt;
+  _ui = ui;
 
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
@@ -970,12 +974,14 @@ void WebManager::handleUiSave() {
   if (!requireStoreAndSettingsText()) return;
 
   String body = _srv.arg("plain");
+  const bool dashboardPageRequested = sp7json::findValueStart(body, "dashboardPage") >= 0;
 
   int bl = sp7json::parseInt(body, "backlight", (int)_s->backlight);
   int g  = sp7json::parseInt(body, "greenMax",  (int)_s->th.greenMax);
   int o  = sp7json::parseInt(body, "orangeMax", (int)_s->th.orangeMax);
   int hm = sp7json::parseInt(body, "historyMinutes", (int)_s->historyMinutes);
   int arm = sp7json::parseInt(body, "audioResponseMode", (int)_s->audioResponseMode);
+  int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
   int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
   int chs = sp7json::parseInt(body, "criticalHoldSec", (int)(_s->redAlertHoldMs / MS_PER_SECOND));
   int calCount = sp7json::parseInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
@@ -991,6 +997,7 @@ void WebManager::handleUiSave() {
   if (hm > 60) hm = 60;
   if (arm < 0) arm = 0;
   if (arm > 1) arm = 1;
+  dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
   if (whs < 0) whs = 0;
   if (whs > 60) whs = 60;
   if (chs < 0) chs = 0;
@@ -1004,17 +1011,19 @@ void WebManager::handleUiSave() {
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
   _s->audioResponseMode = (uint8_t)arm;
+  _s->dashboardPage = (uint8_t)dashboardPage;
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
   _s->calibrationPointCount = (uint8_t)calCount;
   _s->calibrationCaptureMs = (uint32_t)ccs * MS_PER_SECOND;
   if (_history) _history->settingsChanged();
+  if (dashboardPageRequested && _ui) _ui->requestDashboardPage(_s->dashboardPage);
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
-                 bl, g, o, hm, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
+  Serial0.printf("[WEB] UI saved: backlight=%d green=%d orange=%d hist=%d page=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
+                 bl, g, o, hm, dashboardPage, AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyOkJson(true);
 }
 
@@ -2288,6 +2297,29 @@ R"HTML(
             <article class="card settingsCardFlat">
               <div class="sectionHead">
                 <div>
+                  <div class="sectionKicker">Ecran Tactile</div>
+                  <h2 class="sectionTitle">Dashboard affiche</h2>
+                </div>
+              </div>
+              <div class="field">
+                <label>Vue a afficher</label>
+                <select id="dashboardPageAdv">
+                  <option value="0">Principal</option>
+                  <option value="1">Horloge</option>
+                  <option value="2">LIVE</option>
+                  <option value="3">Sonometre</option>
+                </select>
+                <div class="hint">Change immediatement l'ecran affiche sur le panneau tactile.</div>
+              </div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveDashboardPageAdv">Afficher sur l'ecran</button>
+              </div>
+              <div class="toast" id="dashboardPageToast"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
                   <div class="sectionKicker">Protection</div>
                   <h2 class="sectionTitle">Verrou PIN</h2>
                 </div>
@@ -2605,6 +2637,8 @@ R"HTML(
     orangeSinceMs: 0,
     redSinceMs: 0,
     liveEnabled: false,
+    dashboardPage: 0,
+    dashboardPageDirty: false,
     uiDirty: false,
     uiResponseMode: 0,
     pinConfigured: false,
@@ -2653,6 +2687,11 @@ R"HTML(
 
   function sanitizePinValue(value) {
     return String(value || "").replace(/[^0-9]/g, "").slice(0, 8);
+  }
+
+  function getDashboardPageValue(value) {
+    const page = Number(value);
+    return page >= 1 && page <= 3 ? page : 0;
   }
 
   function sanitizeUsernameValue(value) {
@@ -3106,6 +3145,10 @@ R"HTML(
     state.historySamplePeriodMs = Number(merged.historySamplePeriodMs ?? state.historySamplePeriodMs ?? 3000);
     state.pinConfigured = Boolean(merged.pinConfigured);
     state.liveEnabled = Boolean(merged.liveEnabled);
+    if ("dashboardPage" in merged && !state.dashboardPageDirty) {
+      state.dashboardPage = getDashboardPageValue(merged.dashboardPage);
+      $("dashboardPageAdv").value = String(state.dashboardPage);
+    }
 
     const db = Number(merged.db ?? 0);
     const leq = Number(merged.leq ?? 0);
@@ -3561,6 +3604,21 @@ R"HTML(
     }
   }
 
+  async function saveDashboardPage() {
+    const dashboardPage = getDashboardPageValue(getFieldValue("dashboardPageAdv"));
+    $("dashboardPageAdv").value = String(dashboardPage);
+
+    try {
+      await apiPost("/api/ui", { dashboardPage });
+      state.dashboardPage = dashboardPage;
+      state.dashboardPageDirty = false;
+      setToast("dashboardPageToast", "Dashboard tactile mis a jour.");
+      await refreshStatus();
+    } catch (err) {
+      setToastError("dashboardPageToast", err);
+    }
+  }
+
   function clearProtectedSettingsFields() {
     $("accessPinAdv").value = "";
     $("newWebUsername").value = "";
@@ -3602,6 +3660,7 @@ R"HTML(
   async function refreshSettingsPanels() {
     if (!state.authenticated) return;
     state.uiDirty = false;
+    state.dashboardPageDirty = false;
     state.calRefsDirty = [false, false, false, false, false];
     await refreshStatus();
     clearProtectedSettingsFields();
@@ -3868,6 +3927,12 @@ R"HTML(
     });
   });
 
+  $("dashboardPageAdv").addEventListener("change", () => {
+    state.dashboardPage = getDashboardPageValue(getFieldValue("dashboardPageAdv"));
+    state.dashboardPageDirty = true;
+    $("dashboardPageAdv").value = String(state.dashboardPage);
+  });
+
   document.querySelectorAll("[data-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.uiResponseMode = Number(btn.dataset.mode);
@@ -3898,6 +3963,7 @@ R"HTML(
   window.addEventListener("resize", drawHistory);
 
   $("saveUi").addEventListener("click", saveUi);
+  $("saveDashboardPageAdv").addEventListener("click", saveDashboardPage);
   $("savePinAdv").addEventListener("click", savePinSettings);
   $("clearPinAdv").addEventListener("click", clearPinSettings);
   $("createWebUserBtn").addEventListener("click", createWebUser);

@@ -20,6 +20,7 @@ public:
 
   void tick();
   void setDb(float dbInstant, float leq, float peak);
+  void requestDashboardPage(uint8_t page, bool persistSelection = false);
 
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = SharedHistory::POINT_COUNT;
@@ -183,6 +184,7 @@ private:
   uint8_t _lastAlertVisualPhase = 255;
   uint8_t _lastCalibrationActiveCount = 0;
   uint8_t _lastLiveEnabled = 255;
+  uint8_t _requestedDashPage = UINT8_MAX;
 
   void buildDashboard();
   void buildDashboardOverviewPage(lv_obj_t* parent);
