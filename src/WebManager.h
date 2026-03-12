@@ -78,10 +78,13 @@ private:
   bool requireStoreAndSettingsText();
   bool requireStoreAndSettingsJson();
   bool requireWebAuth();
+  bool requireHomeAssistantToken();
   String statusJson() const;
+  String homeAssistantStatusJson() const;
   String liveMetricsJson() const;
   bool pinConfigured() const;
   bool webUsersConfigured() const;
+  bool homeAssistantTokenConfigured() const;
   void cleanupExpiredSessions();
   const WebSession* currentSession(bool touch = true);
   const WebSession* findSessionByToken(const char* token, bool touch = true);
@@ -92,8 +95,10 @@ private:
   void clearAllSessions();
   bool issueSessionForUser(const char* username, String& liveTokenOut);
   String extractCookieValue(const char* cookieName) const;
+  String extractAuthorizationBearer() const;
   static bool secureEquals(const char* a, const char* b);
   static bool normalizeUsername(String& username);
+  static bool homeAssistantTokenIsValid(const String& token);
   static bool passwordIsStrongEnough(const String& password, String* reason = nullptr);
   static String randomHex(size_t hexChars);
   static String hashPassword(const char* username, const char* password, const char* saltHex);
@@ -126,6 +131,9 @@ private:
   void handleReboot();
   void handleShutdown();
   void handleFactoryReset();
+  void handleHomeAssistantGet();
+  void handleHomeAssistantSave();
+  void handleHomeAssistantStatus();
 
   void applyBacklightNow(uint8_t percent);
   void applyTouchNow(bool enabled);

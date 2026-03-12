@@ -234,7 +234,8 @@ void NetManager::ensureMdns() {
   MDNS.setInstanceName(String("SoundPanel 7 ") + mac);
   MDNS.addService("soundpanel7", "tcp", 80);
   MDNS.addServiceTxt("soundpanel7", "tcp", "path", "/");
-  MDNS.addServiceTxt("soundpanel7", "tcp", "api_path", "/api/status");
+  MDNS.addServiceTxt("soundpanel7", "tcp", "api_path", "/api/ha/status");
+  MDNS.addServiceTxt("soundpanel7", "tcp", "auth", "bearer");
   MDNS.addServiceTxt("soundpanel7", "tcp", "name", hostname);
   MDNS.addServiceTxt("soundpanel7", "tcp", "model", "SoundPanel 7");
   MDNS.addServiceTxt("soundpanel7", "tcp", "manufacturer", "JJ");

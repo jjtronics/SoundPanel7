@@ -29,6 +29,7 @@ void SettingsStore::load(SettingsV1 &out) {
   out.dashboardPage = (uint8_t)_prefs.getUChar("ui_page", out.dashboardPage);
   out.dashboardFullscreenMask = (uint8_t)_prefs.getUChar("ui_fsm", out.dashboardFullscreenMask);
   _prefs.getString("ui_pin", out.dashboardPin, sizeof(out.dashboardPin));
+  _prefs.getString("ha_tok", out.homeAssistantToken, sizeof(out.homeAssistantToken));
 
   _prefs.getString("tz", out.tz, sizeof(out.tz));
   _prefs.getString("ntp", out.ntpServer, sizeof(out.ntpServer));
@@ -100,6 +101,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("ui_page", s.dashboardPage);
   _prefs.putUChar("ui_fsm", s.dashboardFullscreenMask);
   _prefs.putString("ui_pin", s.dashboardPin);
+  _prefs.putString("ha_tok", s.homeAssistantToken);
 
   _prefs.putString("tz", s.tz);
   _prefs.putString("ntp", s.ntpServer);
@@ -176,6 +178,7 @@ void SettingsStore::sanitize(SettingsV1& s) {
   if (s.dashboardPin[0] && !pinCodeIsValid(s.dashboardPin)) {
     s.dashboardPin[0] = '\0';
   }
+  s.homeAssistantToken[sizeof(s.homeAssistantToken) - 1] = '\0';
 
   if (s.audioSource > 1) s.audioSource = 1;
   if (s.analogRmsSamples < 32) s.analogRmsSamples = 32;
@@ -399,6 +402,7 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"dashboardPage\":"; json += String(s.dashboardPage); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s.dashboardFullscreenMask); json += ",";
   json += "\"dashboardPin\":\""; json += sp7json::escape(s.dashboardPin); json += "\",";
+  json += "\"homeAssistantToken\":\""; json += sp7json::escape(s.homeAssistantToken); json += "\",";
   json += "\"tz\":\""; json += sp7json::escape(s.tz); json += "\",";
   json += "\"ntpServer\":\""; json += sp7json::escape(s.ntpServer); json += "\",";
   json += "\"ntpSyncMinutes\":"; json += String(s.ntpSyncIntervalMs / MS_PER_MINUTE); json += ",";
@@ -476,6 +480,7 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
     (uint8_t)sp7json::parseInt(json, "dashboardFullscreenMask", next.dashboardFullscreenMask)
   );
   String dashboardPin = sp7json::parseString(json, "dashboardPin", String(next.dashboardPin));
+  String homeAssistantToken = sp7json::parseString(json, "homeAssistantToken", String(next.homeAssistantToken));
 
   String tz = sp7json::parseString(json, "tz", String(next.tz));
   String ntp = sp7json::parseString(json, "ntpServer", String(next.ntpServer));
@@ -490,6 +495,10 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   }
   if (!sp7json::safeCopy(next.dashboardPin, sizeof(next.dashboardPin), dashboardPin)) {
     if (err) *err = "dashboardPin too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.homeAssistantToken, sizeof(next.homeAssistantToken), homeAssistantToken)) {
+    if (err) *err = "homeAssistantToken too long";
     return false;
   }
   if (!sp7json::safeCopy(next.tz, sizeof(next.tz), tz)) {
@@ -647,6 +656,7 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.audioResponseMode = def.audioResponseMode;
   } else if (scope == "security") {
     memcpy(s.dashboardPin, def.dashboardPin, sizeof(s.dashboardPin));
+    memcpy(s.homeAssistantToken, def.homeAssistantToken, sizeof(s.homeAssistantToken));
   } else if (scope == "time") {
     memcpy(s.tz, def.tz, sizeof(s.tz));
     memcpy(s.ntpServer, def.ntpServer, sizeof(s.ntpServer));

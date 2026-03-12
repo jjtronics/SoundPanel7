@@ -7,16 +7,22 @@
         "data": {
           "host": "Host or IP address",
           "port": "Port",
-          "api_path": "Status API path"
+          "api_path": "Status API path",
+          "ha_token": "Home Assistant token"
         }
       },
       "zeroconf_confirm": {
         "title": "Discovered SoundPanel 7",
-        "description": "Add {name} at {host}?"
+        "description": "Add {name} at {host}?",
+        "data": {
+          "ha_token": "Home Assistant token"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to the device."
+      "cannot_connect": "Cannot connect to the device.",
+      "invalid_auth": "Invalid Home Assistant token.",
+      "token_not_configured": "The panel does not have a Home Assistant token configured."
     },
     "abort": {
       "already_configured": "This SoundPanel 7 is already configured."

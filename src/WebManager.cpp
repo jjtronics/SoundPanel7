@@ -157,6 +157,21 @@ bool WebManager::normalizeUsername(String& username) {
   return true;
 }
 
+bool WebManager::homeAssistantTokenIsValid(const String& token) {
+  const size_t len = token.length();
+  if (len < 16 || len > HOME_ASSISTANT_TOKEN_MAX_LENGTH) return false;
+  for (size_t i = 0; i < len; i++) {
+    const char c = token[i];
+    const bool allowed = (c >= 'a' && c <= 'z')
+      || (c >= 'A' && c <= 'Z')
+      || (c >= '0' && c <= '9')
+      || c == '-'
+      || c == '_';
+    if (!allowed) return false;
+  }
+  return true;
+}
+
 bool WebManager::passwordIsStrongEnough(const String& password, String* reason) {
   const size_t len = password.length();
   if (len < WEB_PASSWORD_MIN_LENGTH || len > WEB_PASSWORD_MAX_LENGTH) {
@@ -351,11 +366,46 @@ String WebManager::extractCookieValue(const char* cookieName) const {
   return "";
 }
 
+String WebManager::extractAuthorizationBearer() const {
+  if (!_srv.hasHeader("Authorization")) return "";
+  String header = _srv.header("Authorization");
+  header.trim();
+  if (header.length() < 7) return "";
+  if (!header.substring(0, 7).equalsIgnoreCase("Bearer ")) return "";
+  String token = header.substring(7);
+  token.trim();
+  return token;
+}
+
 bool WebManager::requireWebAuth() {
   if (currentSession()) return true;
   addCommonSecurityHeaders();
   _srv.sendHeader("Set-Cookie", String(SP7_SESSION_COOKIE_NAME) + "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
   replyErrorJson(401, "auth required");
+  return false;
+}
+
+bool WebManager::homeAssistantTokenConfigured() const {
+  return _s && _s->homeAssistantToken[0] != '\0';
+}
+
+bool WebManager::requireHomeAssistantToken() {
+  if (!_s) {
+    replyErrorJson(500, "settings missing");
+    return false;
+  }
+  if (!homeAssistantTokenConfigured()) {
+    replyErrorJson(403, "home assistant token not configured");
+    return false;
+  }
+
+  const String token = extractAuthorizationBearer();
+  if (homeAssistantTokenIsValid(token) && secureEquals(_s->homeAssistantToken, token.c_str())) {
+    return true;
+  }
+
+  addCommonSecurityHeaders();
+  replyErrorJson(401, "invalid home assistant token");
   return false;
 }
 
@@ -379,8 +429,8 @@ bool WebManager::begin(SettingsStore* store,
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
 
-  const char* headers[] = {"Cookie"};
-  _srv.collectHeaders(headers, 1);
+  const char* headers[] = {"Cookie", "Authorization"};
+  _srv.collectHeaders(headers, 2);
   routes();
   _srv.begin();
   setupLiveStream();
@@ -417,6 +467,9 @@ void WebManager::routes() {
   _srv.on("/api/users/password", HTTP_POST, [this]() { handleUsersPassword(); });
   _srv.on("/api/users/delete", HTTP_POST, [this]() { handleUsersDelete(); });
 
+  _srv.on("/api/ha/status", HTTP_GET, [this]() { handleHomeAssistantStatus(); });
+  _srv.on("/api/homeassistant", HTTP_GET, [this]() { handleHomeAssistantGet(); });
+  _srv.on("/api/homeassistant", HTTP_POST, [this]() { handleHomeAssistantSave(); });
   _srv.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
 
   _srv.on("/api/pin", HTTP_POST, [this]() { handlePinSave(); });
@@ -589,6 +642,29 @@ String WebManager::statusJson() const {
   json += "\"history\":"; json += historyJson();
   json += "}";
 
+  return json;
+}
+
+String WebManager::homeAssistantStatusJson() const {
+  const bool wifiConnected = WiFi.isConnected();
+  const String hostname = (_s && _s->hostname[0] != '\0') ? String(_s->hostname) : String("soundpanel7");
+  const String mac = WiFi.macAddress();
+
+  String json;
+  json.reserve(320);
+  json += "{";
+  sp7json::appendEscapedField(json, "name", hostname.c_str());
+  sp7json::appendEscapedField(json, "mac", mac.c_str());
+  sp7json::appendEscapedField(json, "model", "SoundPanel 7");
+  sp7json::appendEscapedField(json, "manufacturer", "JJ");
+  sp7json::appendEscapedField(json, "version", SOUNDPANEL7_VERSION);
+  json += "\"db\":"; json += String(g_webDbInstant, 1); json += ",";
+  json += "\"leq\":"; json += String(g_webLeq, 1); json += ",";
+  json += "\"peak\":"; json += String(g_webPeak, 1); json += ",";
+  json += "\"rssi\":"; json += String(wifiConnected ? WiFi.RSSI() : 0); json += ",";
+  sp7json::appendEscapedField(json, "ip", wifiConnected ? WiFi.localIP().toString().c_str() : "");
+  json += "\"uptime_s\":"; json += String((millis() - g_bootMs) / 1000);
+  json += "}";
   return json;
 }
 
@@ -950,6 +1026,63 @@ void WebManager::handleUsersDelete() {
 
   invalidateSessionsForUser(username.c_str());
   replyOkJson();
+}
+
+void WebManager::handleHomeAssistantGet() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  String json;
+  json.reserve(192);
+  json += "{";
+  json += "\"tokenConfigured\":"; json += (homeAssistantTokenConfigured() ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken);
+  sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
+  sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
+  json += "}";
+  replyJson(200, json);
+}
+
+void WebManager::handleHomeAssistantSave() {
+  if (!requireWebAuth()) return;
+  if (!requireStoreAndSettingsJson()) return;
+
+  const String body = _srv.arg("plain");
+  const bool clear = sp7json::parseBool(body, "clear", false);
+  const bool generate = sp7json::parseBool(body, "generate", false);
+
+  String token;
+  if (clear) token = "";
+  else if (generate) token = randomHex(HOME_ASSISTANT_TOKEN_MAX_LENGTH);
+  else {
+    token = sp7json::parseString(body, "token", "", true);
+    token.trim();
+    if (!homeAssistantTokenIsValid(token)) {
+      replyErrorJson(400, "bad home assistant token");
+      return;
+    }
+  }
+
+  if (!sp7json::safeCopy(_s->homeAssistantToken, sizeof(_s->homeAssistantToken), token)) {
+    replyErrorJson(400, "home assistant token too long");
+    return;
+  }
+
+  _store->save(*_s);
+
+  String json;
+  json.reserve(160);
+  json += "{";
+  json += "\"ok\":true,";
+  json += "\"tokenConfigured\":"; json += (homeAssistantTokenConfigured() ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken, false);
+  json += "}";
+  replyJson(200, json);
+}
+
+void WebManager::handleHomeAssistantStatus() {
+  if (!requireHomeAssistantToken()) return;
+  replyJson(200, homeAssistantStatusJson());
 }
 
 void WebManager::handleStatus() {
@@ -2509,6 +2642,28 @@ R"HTML(
             <article class="card settingsCardFlat">
               <div class="sectionHead">
                 <div>
+                  <div class="sectionKicker">Integration Native</div>
+                  <h2 class="sectionTitle">Home Assistant</h2>
+                  <div class="hint">Token dedie pour l'integration HTTP native. A renseigner ensuite dans Home Assistant.</div>
+                </div>
+              </div>
+              <div class="field">
+                <label>Bearer token Home Assistant</label>
+                <input id="homeAssistantTokenAdv" type="text" autocomplete="off" maxlength="64" placeholder="genere ou colle un token"/>
+              </div>
+              <div class="hint mono" id="homeAssistantStatusAdv">Token: --</div>
+              <div class="hint mono" id="homeAssistantPathAdv">Endpoint: /api/ha/status</div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveHomeAssistantAdv">Sauver token</button>
+                <button class="btn" id="generateHomeAssistantTokenBtn">Generer</button>
+                <button class="btn danger" id="clearHomeAssistantTokenBtn">Revoquer</button>
+              </div>
+              <div class="toast" id="toastHomeAssistantAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
                   <div class="sectionKicker">Temps Reseau</div>
                   <h2 class="sectionTitle">Heure, NTP & timezone</h2>
                 </div>
@@ -2672,7 +2827,7 @@ R"HTML(
                 <label>Importer depuis un fichier JSON</label>
                 <input id="configFile" type="file" accept=".json,application/json"/>
               </div>
-              <div class="hint">L'export inclut aussi les mots de passe OTA et MQTT.</div>
+              <div class="hint">L'export inclut aussi les secrets Wi-Fi, OTA, MQTT et Home Assistant.</div>
               <div class="btnRow">
                 <button class="btn" id="exportConfigBtn">Exporter JSON</button>
                 <button class="btn accent" id="importConfigBtn">Importer JSON</button>
@@ -2681,7 +2836,7 @@ R"HTML(
                 <label>Reset partiel</label>
                 <select id="configResetScope">
                   <option value="ui">UI</option>
-                  <option value="security">Securite</option>
+                  <option value="security">Securite web + HA</option>
                   <option value="time">Heure / hostname</option>
                   <option value="wifi">Wi-Fi</option>
                   <option value="audio">Audio</option>
@@ -2920,6 +3075,10 @@ R"HTML(
 
   function sanitizeUsernameValue(value) {
     return String(value || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 24);
+  }
+
+  function sanitizeHomeAssistantTokenValue(value) {
+    return String(value || "").trim().replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
   }
 
   function passwordPolicyHint(password) {
@@ -3901,6 +4060,7 @@ R"HTML(
     await refreshStatus();
     clearProtectedSettingsFields();
     await loadUsers();
+    await loadHomeAssistantSettings();
     await loadTimeSettings();
     await loadWifiSettings();
     await loadOtaSettings();
@@ -4018,6 +4178,62 @@ R"HTML(
     } catch (err) {
       setToastError("toastTimeAdv", err);
     }
+  }
+
+  function applyHomeAssistantSettings(config) {
+    const token = String(config.token || "");
+    const configured = Boolean(config.tokenConfigured);
+    $("homeAssistantTokenAdv").value = token;
+    $("homeAssistantStatusAdv").textContent = configured
+      ? `Token actif (${token.length} caracteres)`
+      : "Token: non configure";
+    $("homeAssistantPathAdv").textContent = `Endpoint HA: ${config.statusPath || "/api/ha/status"} (${config.authScheme || "Bearer"})`;
+    $("clearHomeAssistantTokenBtn").disabled = !configured;
+  }
+
+  async function loadHomeAssistantSettings() {
+    try {
+      const ha = await apiGet("/api/homeassistant");
+      applyHomeAssistantSettings(ha);
+    } catch (err) {
+      setToastError("toastHomeAssistantAdv", err);
+    }
+  }
+
+  async function saveHomeAssistantSettings() {
+    const token = sanitizeHomeAssistantTokenValue(getFieldValue("homeAssistantTokenAdv"));
+    $("homeAssistantTokenAdv").value = token;
+    if (!token) {
+      setToast("toastHomeAssistantAdv", "Token requis ou utilise Generer.");
+      return;
+    }
+
+    await runToastRequest("toastHomeAssistantAdv", "Sauvegarde...", () => apiPost("/api/homeassistant", { token }),
+      "Token Home Assistant sauve.",
+      async (result) => {
+        applyHomeAssistantSettings(result);
+      });
+  }
+
+  async function generateHomeAssistantToken() {
+    const hasToken = Boolean(getTrimmedValue("homeAssistantTokenAdv"));
+    if (hasToken && !confirm("Regenerer le token Home Assistant ? L'integration actuelle devra etre mise a jour.")) return;
+
+    await runToastRequest("toastHomeAssistantAdv", "Generation...", () => apiPost("/api/homeassistant", { generate: true }),
+      "Token Home Assistant genere.",
+      async (result) => {
+        applyHomeAssistantSettings(result);
+      });
+  }
+
+  async function clearHomeAssistantToken() {
+    if (!confirm("Revoquer le token Home Assistant ? L'integration native cessera de fonctionner.")) return;
+
+    await runToastRequest("toastHomeAssistantAdv", "Revocation...", () => apiPost("/api/homeassistant", { clear: true }),
+      "Token Home Assistant revoque.",
+      async (result) => {
+        applyHomeAssistantSettings(result);
+      });
   }
 
   async function saveTimeSettings() {
@@ -4265,6 +4481,9 @@ R"HTML(
   $("updateWebPasswordBtn").addEventListener("click", updateWebPassword);
   $("deleteWebUserBtn").addEventListener("click", () => deleteWebUser());
   $("logoutBtn").addEventListener("click", logout);
+  $("saveHomeAssistantAdv").addEventListener("click", saveHomeAssistantSettings);
+  $("generateHomeAssistantTokenBtn").addEventListener("click", generateHomeAssistantToken);
+  $("clearHomeAssistantTokenBtn").addEventListener("click", clearHomeAssistantToken);
   $("exportConfigBtn").addEventListener("click", exportConfig);
   $("importConfigBtn").addEventListener("click", importConfig);
   $("backupConfigBtn").addEventListener("click", backupConfig);
@@ -4303,6 +4522,9 @@ R"HTML(
   });
   $("accessPinAdv").addEventListener("input", () => {
     $("accessPinAdv").value = sanitizePinValue($("accessPinAdv").value);
+  });
+  $("homeAssistantTokenAdv").addEventListener("input", () => {
+    $("homeAssistantTokenAdv").value = sanitizeHomeAssistantTokenValue($("homeAssistantTokenAdv").value);
   });
   [1, 2, 3, 4].forEach((slot) => {
     $(`wifiPassword${slot}`).addEventListener("input", () => {

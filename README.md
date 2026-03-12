@@ -395,6 +395,9 @@ GET   /api/users
 POST  /api/users/create
 POST  /api/users/password
 POST  /api/users/delete
+GET   /api/homeassistant
+POST  /api/homeassistant
+GET   /api/ha/status
 GET   /api/status
 POST  /api/pin
 POST  /api/ui
@@ -516,7 +519,7 @@ Le firmware annonce le service :
 _soundpanel7._tcp.local.
 ```
 
-L'integration interroge ensuite l'API HTTP du panneau, notamment `/api/status`.
+L'integration interroge l'endpoint dedie `/api/ha/status` avec un bearer token Home Assistant.
 
 Capteurs exposes par l'integration native :
 
@@ -544,13 +547,19 @@ cp -R custom_components/soundpanel7 /config/custom_components/
 
 Puis :
 
-1. redemarrer Home Assistant
-2. redemarrer le SoundPanel 7
-3. ouvrir `Parametres > Appareils et services`
-4. attendre la decouverte automatique
+1. dans l'interface web du panneau, ouvrir `Parametres > Home Assistant`
+2. generer ou definir un token dedie
+3. copier `custom_components/soundpanel7` dans Home Assistant
+4. redemarrer Home Assistant
+5. redemarrer le SoundPanel 7
+6. ouvrir `Parametres > Appareils et services`
+7. attendre la decouverte automatique
+
+Le flow de configuration demandera ce token.
 
 Si rien n'apparait, verifier en priorite :
 
+- que le token Home Assistant est bien configure cote panneau
 - que Home Assistant et le panneau sont sur le meme reseau
 - que `manifest.json` est bien present cote Home Assistant
 - que le panneau repond bien sur son interface web
@@ -1026,6 +1035,9 @@ GET   /api/users
 POST  /api/users/create
 POST  /api/users/password
 POST  /api/users/delete
+GET   /api/homeassistant
+POST  /api/homeassistant
+GET   /api/ha/status
 GET   /api/status
 POST  /api/pin
 POST  /api/ui
@@ -1142,7 +1154,7 @@ The firmware advertises:
 _soundpanel7._tcp.local.
 ```
 
-The integration then queries the panel over HTTP, including `/api/status`.
+The integration queries the dedicated `/api/ha/status` endpoint with a Home Assistant bearer token.
 
 Sensors exposed by the native integration:
 
@@ -1162,13 +1174,19 @@ cp -R custom_components/soundpanel7 /config/custom_components/
 
 After that:
 
-1. restart Home Assistant
-2. restart SoundPanel 7
-3. open `Settings > Devices & Services`
-4. wait for auto-discovery
+1. in the panel web UI, open `Settings > Home Assistant`
+2. generate or set a dedicated token
+3. copy `custom_components/soundpanel7` into Home Assistant
+4. restart Home Assistant
+5. restart SoundPanel 7
+6. open `Settings > Devices & Services`
+7. wait for auto-discovery
+
+The config flow will ask for that token.
 
 If the device does not show up, check:
 
+- the Home Assistant token is configured on the panel
 - same local network on both sides
 - `manifest.json` correctly copied
 - panel reachable through its web UI

@@ -34,6 +34,7 @@ static constexpr uint8_t WEB_PASSWORD_MIN_LENGTH = 10;
 static constexpr uint8_t WEB_PASSWORD_MAX_LENGTH = 64;
 static constexpr uint8_t WEB_PASSWORD_SALT_LENGTH = 32;
 static constexpr uint8_t WEB_PASSWORD_HASH_LENGTH = 64;
+static constexpr uint8_t HOME_ASSISTANT_TOKEN_MAX_LENGTH = 64;
 static constexpr uint8_t WIFI_CREDENTIAL_MAX_COUNT = 4;
 static constexpr uint8_t WIFI_SSID_MAX_LENGTH = 32;
 static constexpr uint8_t WIFI_PASSWORD_MAX_LENGTH = 64;
@@ -140,6 +141,7 @@ struct SettingsV1 {
   uint8_t dashboardPage = DEFAULT_DASHBOARD_PAGE;
   uint8_t dashboardFullscreenMask = DEFAULT_DASHBOARD_FULLSCREEN_MASK;
   char dashboardPin[PIN_CODE_MAX_LENGTH + 1] = "";
+  char homeAssistantToken[HOME_ASSISTANT_TOKEN_MAX_LENGTH + 1] = "";
 
   // Time / locale
   char tz[64]        = "CET-1CEST,M3.5.0/2,M10.5.0/3";

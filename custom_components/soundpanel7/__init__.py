@@ -4,7 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_API_PATH, DEFAULT_API_PATH, DEFAULT_PORT, DOMAIN, PLATFORMS
+from .const import CONF_API_PATH, CONF_HA_TOKEN, DEFAULT_API_PATH, DEFAULT_PORT, DOMAIN, PLATFORMS
 from .coordinator import SoundPanel7Coordinator
 
 
@@ -15,6 +15,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         host=entry.data[CONF_HOST],
         port=entry.data.get(CONF_PORT, DEFAULT_PORT),
         api_path=entry.data.get(CONF_API_PATH, DEFAULT_API_PATH),
+        ha_token=entry.data[CONF_HA_TOKEN],
     )
     await coordinator.async_config_entry_first_refresh()
 

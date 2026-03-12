@@ -16,7 +16,14 @@ LOGGER = logging.getLogger(__name__)
 class SoundPanel7Coordinator(DataUpdateCoordinator[dict]):
     """Coordinate SoundPanel 7 API updates."""
 
-    def __init__(self, hass, host: str, port: int = DEFAULT_PORT, api_path: str = DEFAULT_API_PATH) -> None:
+    def __init__(
+        self,
+        hass,
+        host: str,
+        port: int = DEFAULT_PORT,
+        api_path: str = DEFAULT_API_PATH,
+        ha_token: str = "",
+    ) -> None:
         super().__init__(
             hass,
             logger=LOGGER,
@@ -26,6 +33,7 @@ class SoundPanel7Coordinator(DataUpdateCoordinator[dict]):
         self.host = host
         self.port = port
         self.api_path = api_path or DEFAULT_API_PATH
+        self.ha_token = ha_token
         self.session = async_get_clientsession(hass)
 
     @property
@@ -36,9 +44,13 @@ class SoundPanel7Coordinator(DataUpdateCoordinator[dict]):
     def status_url(self) -> str:
         return f"{self.base_url}{self.api_path}"
 
+    @property
+    def request_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.ha_token}"}
+
     async def _async_update_data(self) -> dict:
         try:
-            response = await self.session.get(self.status_url, timeout=10)
+            response = await self.session.get(self.status_url, headers=self.request_headers, timeout=10)
             response.raise_for_status()
             payload = await response.json()
         except (ClientError, TimeoutError, ValueError) as err:
