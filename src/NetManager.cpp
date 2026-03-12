@@ -255,13 +255,26 @@ void NetManager::loop() {
   ensureWifiConnection();
 
   wl_status_t wifiStatus = WiFi.status();
+  const bool wifiConnected = (wifiStatus == WL_CONNECTED);
   String currentIp = isWifiConnected() ? WiFi.localIP().toString() : String("");
   if (wifiStatus != g_lastWifiStatus || currentIp != g_lastWifiIp) {
     g_lastWifiStatus = wifiStatus;
     g_lastWifiIp = currentIp;
 
-    if (isWifiConnected()) {
+    if (!wifiConnected) {
+      if (_mdnsStarted) {
+        MDNS.end();
+        _mdnsStarted = false;
+        Serial0.println("[Net] mDNS stopped");
+      }
+      _ntpConfigured = false;
+      Serial0.printf("[Net] WiFi status=%d\n", (int)wifiStatus);
+    } else {
       _wifiAttemptFailures = 0;
+      if (g_wm.getConfigPortalActive()) {
+        Serial0.println("[Net] WiFi restored, stopping config portal");
+        g_wm.stopConfigPortal();
+      }
       Serial0.printf("[Net] WiFi OK IP=%s RSSI=%ld\n",
                      currentIp.c_str(),
                      (long)rssi());
@@ -270,8 +283,6 @@ void NetManager::loop() {
         Serial0.printf("[Net] NTP server: %s\n", _s->ntpServer);
         Serial0.printf("[Net] TZ: %s\n", _s->tz);
       }
-    } else {
-      Serial0.printf("[Net] WiFi status=%d\n", (int)wifiStatus);
     }
   }
 
