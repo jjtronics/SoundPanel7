@@ -1,11 +1,20 @@
 # 🎚️ SoundPanel 7
 
 <p align="center">
-  <strong>A connected wall panel for sound awareness, precision time, and calm workspaces.</strong>
+  <strong>A connected wall panel for sound awareness, precision timing, and calm workspaces.</strong>
 </p>
 
 <p align="center">
-  Built on ESP32-S3 with a 7" touchscreen, real-time sound monitoring, NTP clock, web UI, MQTT, OTA, and Home Assistant integration.
+  Built on ESP32-S3 with a 7" touchscreen for real-time dB monitoring, a large NTP clock, web administration, MQTT, OTA, and Home Assistant integration.
+</p>
+
+<p align="center">
+  <img alt="ESP32-S3" src="https://img.shields.io/badge/ESP32--S3-SoC-1f2937?style=flat-square">
+  <img alt="Waveshare 7 inch" src="https://img.shields.io/badge/Waveshare-7_inch_touch-374151?style=flat-square">
+  <img alt="PlatformIO" src="https://img.shields.io/badge/PlatformIO-Firmware-f97316?style=flat-square">
+  <img alt="MQTT" src="https://img.shields.io/badge/MQTT-Ready-0f766e?style=flat-square">
+  <img alt="OTA" src="https://img.shields.io/badge/OTA-Enabled-2563eb?style=flat-square">
+  <img alt="Home Assistant" src="https://img.shields.io/badge/Home_Assistant-Integrated-0ea5e9?style=flat-square">
 </p>
 
 <p align="center">
@@ -13,16 +22,31 @@
 </p>
 
 <p align="center">
+  <em>Measured in real environments: lab, studio, and day-to-day workspace.</em>
+</p>
+
+<p align="center">
   <a href="#francais">Francais</a> ·
   <a href="#english">English</a>
 </p>
 
----
+<p align="center">
+  FR :
+  <a href="#fr-apercu-visuel">Photos</a> ·
+  <a href="#fr-interface-web">Web UI</a> ·
+  <a href="#fr-demarrage-rapide">Quick Start</a> ·
+  <a href="#fr-home-assistant">Home Assistant</a> ·
+  <a href="#fr-calibration">Calibration</a>
+</p>
 
-## Navigation
-
-- [🇫🇷 Aller a la version francaise](#francais)
-- [🇬🇧 Go to the English version](#english)
+<p align="center">
+  EN :
+  <a href="#en-visual-tour">Visual Tour</a> ·
+  <a href="#en-web-interface">Web UI</a> ·
+  <a href="#en-quick-start">Quick Start</a> ·
+  <a href="#en-mqtt-and-home-assistant">Home Assistant</a> ·
+  <a href="#en-calibration-workflow">Calibration</a>
+</p>
 
 ---
 
