@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_3.jpg" alt="SoundPanel 7 installed in a recording studio" width="900">
+</p>
+
+<p align="center">
   <a href="#francais">Francais</a> ·
   <a href="#english">English</a>
 </p>
@@ -29,6 +33,7 @@
 ### Menu Francais
 
 - [Vision](#fr-vision)
+- [Apercu visuel](#fr-apercu-visuel)
 - [Points forts](#fr-points-forts)
 - [Cas d'usage](#fr-cas-dusage)
 - [Fonctionnalites](#fr-fonctionnalites)
@@ -71,6 +76,27 @@ C'est un vrai **panneau d'ambiance et de supervision locale**,
 capable d'afficher le son, le temps, l'etat reseau,
 des diagnostics systeme, et de s'integrer proprement
 dans un environnement connecte.
+
+<a id="fr-apercu-visuel"></a>
+
+### 📸 Apercu visuel
+
+Avant les details techniques, voici le projet dans ses contextes reels :
+en labo, en studio, et en usage quotidien.
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-LABO.jpg" alt="SoundPanel 7 dans la salle de labo" width="900">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_2.jpg" alt="SoundPanel 7 dans un studio d'enregistrement" width="49%">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_3.jpg" alt="SoundPanel 7 dans un studio d'enregistrement professionnel" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_4.jpg" alt="SoundPanel 7 integre dans un environnement studio" width="49%">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_1.jpg" alt="SoundPanel 7 en format portrait dans un studio" width="36.7%">
+</p>
 
 <a id="fr-points-forts"></a>
 
@@ -292,6 +318,18 @@ Une fois l'appareil connecte au Wi-Fi :
 - `http://soundpanel7.local/` si le mDNS est disponible
 - flux live : `http://IP_DU_SOUNDPANEL:81/api/events`
 
+#### Apercu des dashboards
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Principal_1.jpg" alt="Dashboard web principal de SoundPanel 7" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Horloge_2.jpg" alt="Dashboard horloge de SoundPanel 7" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Sonometre_3.jpg" alt="Dashboard sonometre de SoundPanel 7" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Calibration_4.jpg" alt="Dashboard calibration de SoundPanel 7" width="49%">
+</p>
+
 L'interface permet notamment de regler :
 
 - luminosite
@@ -304,6 +342,28 @@ L'interface permet notamment de regler :
 - parametres MQTT
 - calibration micro
 - backup / restore / import / export des reglages
+
+#### Zone Parametres
+
+Le README est deja pret pour l'animation complete des reglages :
+
+[Voir le futur GIF des parametres](MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif)
+
+En attendant sa generation, voici les 5 captures qui serviront a cette animation :
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_1.jpg" alt="Parametres web SoundPanel 7 - ecran 1" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_2.jpg" alt="Parametres web SoundPanel 7 - ecran 2" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_3.jpg" alt="Parametres web SoundPanel 7 - ecran 3" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_4.jpg" alt="Parametres web SoundPanel 7 - ecran 4" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_5.jpg" alt="Parametres web SoundPanel 7 - ecran 5" width="70%">
+</p>
 
 Endpoints principaux exposes par le firmware :
 
@@ -508,6 +568,13 @@ Le firmware permet aussi :
 
 Le firmware stocke ensuite les points et corrige la lecture.
 
+#### Validation avec sonometre de reference
+
+Une video de demonstration montre le SoundPanel 7 a cote d'un vrai sonometre professionnel,
+pendant une montee progressive de bruit blanc, afin de verifier que les mesures restent coherentes.
+
+[Voir la video de validation](MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4)
+
 <a id="fr-architecture"></a>
 
 ### 🧠 Architecture
@@ -585,6 +652,7 @@ Point d'entree recommande :
 ### English Menu
 
 - [Overview](#en-overview)
+- [Visual tour](#en-visual-tour)
 - [Key features](#en-key-features)
 - [Use cases](#en-use-cases)
 - [Features](#en-features)
@@ -626,6 +694,27 @@ recording studio, podcast setup, workshop, or public-facing space.
 SoundPanel 7 is not just a sound meter.
 It is a **local monitoring panel** for sound, time, network visibility,
 runtime diagnostics, and connected integration.
+
+<a id="en-visual-tour"></a>
+
+### 📸 Visual tour
+
+Before getting into firmware and integration details, here is the project in real environments:
+lab space, recording studio, and day-to-day use.
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-LABO.jpg" alt="SoundPanel 7 installed in the lab" width="900">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_2.jpg" alt="SoundPanel 7 in a recording studio" width="49%">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_3.jpg" alt="SoundPanel 7 in a professional studio setup" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_4.jpg" alt="SoundPanel 7 integrated into a studio workspace" width="49%">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_1.jpg" alt="Portrait view of SoundPanel 7 in a studio" width="36.7%">
+</p>
 
 <a id="en-key-features"></a>
 
@@ -847,6 +936,18 @@ Once the device is connected to Wi-Fi:
 - `http://soundpanel7.local/` if mDNS is available
 - live stream: `http://DEVICE_IP:81/api/events`
 
+#### Dashboard overview
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Principal_1.jpg" alt="SoundPanel 7 main web dashboard" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Horloge_2.jpg" alt="SoundPanel 7 clock dashboard" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Sonometre_3.jpg" alt="SoundPanel 7 sound meter dashboard" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Calibration_4.jpg" alt="SoundPanel 7 calibration dashboard" width="49%">
+</p>
+
 The interface lets you configure:
 
 - brightness
@@ -859,6 +960,28 @@ The interface lets you configure:
 - MQTT settings
 - microphone calibration
 - backup / restore / import / export of settings
+
+#### Settings flow
+
+The README is already wired for the future animated walkthrough:
+
+[Open the future settings GIF](MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif)
+
+While that GIF is being generated, these five still frames document the full settings area:
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_1.jpg" alt="SoundPanel 7 settings screen 1" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_2.jpg" alt="SoundPanel 7 settings screen 2" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_3.jpg" alt="SoundPanel 7 settings screen 3" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_4.jpg" alt="SoundPanel 7 settings screen 4" width="49%">
+</p>
+
+<p align="center">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres_5.jpg" alt="SoundPanel 7 settings screen 5" width="70%">
+</p>
 
 Main endpoints exposed by the firmware:
 
@@ -1049,6 +1172,13 @@ The firmware also lets you:
 - keep fallback offsets in settings
 
 The firmware stores those points and applies the correction curve accordingly.
+
+#### Reference meter validation
+
+A short demo video shows SoundPanel 7 next to a professional sound level meter
+while white noise is increased progressively, to confirm the readings stay aligned.
+
+[Watch the measurement comparison video](MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4)
 
 <a id="en-firmware-architecture"></a>
 
