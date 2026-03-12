@@ -348,7 +348,7 @@ L'interface permet notamment de regler :
 Animation complete des reglages :
 
 <p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des parametres web de SoundPanel 7" width="96%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des parametres web de SoundPanel 7" width="100%">
 </p>
 
 Endpoints principaux exposes par le firmware :
@@ -952,7 +952,7 @@ The interface lets you configure:
 Animated walkthrough of the settings area:
 
 <p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animated SoundPanel 7 settings walkthrough" width="96%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animated SoundPanel 7 settings walkthrough" width="100%">
 </p>
 
 Main endpoints exposed by the firmware:
