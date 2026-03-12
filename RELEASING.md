@@ -79,12 +79,56 @@ After a successful build, useful firmware files are generated in:
 - `.pio/build/soundpanel7_usb/firmware.bin`
 - `.pio/build/soundpanel7_usb/bootloader.bin`
 - `.pio/build/soundpanel7_usb/partitions.bin`
+- `.pio/build/soundpanel7_usb/release-manifest.json`
 
 If GitHub Actions is enabled for the repository, publishing the GitHub release will automatically build the firmware and attach these files to the release.
 
 If you prefer to do it manually, you can still attach these files yourself.
 
 For source-based installation, GitHub already provides the source archive automatically.
+
+## Release manifest
+
+The release workflow also publishes `release-manifest.json`.
+
+Its purpose is to give the device a stable machine-readable source for:
+
+- latest version
+- OTA firmware URL
+- SHA-256 checksum
+- release metadata
+
+Current structure:
+
+```json
+{
+  "project": "SoundPanel7",
+  "tag": "v0.1.0",
+  "version": "0.1.0",
+  "published_at": "2026-03-12T20:00:00Z",
+  "release_url": "https://github.com/jjtronics/SoundPanel7/releases/tag/v0.1.0",
+  "ota": {
+    "asset": "soundpanel7_usb-firmware.bin",
+    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.1.0/soundpanel7_usb-firmware.bin",
+    "sha256": "..."
+  },
+  "assets": [
+    {
+      "name": "soundpanel7_usb-firmware.bin",
+      "type": "firmware",
+      "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.1.0/soundpanel7_usb-firmware.bin",
+      "sha256": "..."
+    }
+  ]
+}
+```
+
+For the future update-check task, the recommended flow is:
+
+1. fetch `release-manifest.json`
+2. compare `version` with the current firmware version
+3. use `ota.url` for download
+4. verify `ota.sha256` before applying the update
 
 ## Suggested first release notes
 

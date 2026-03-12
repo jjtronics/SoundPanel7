@@ -41,6 +41,51 @@ jobs:
       - name: Build firmware
         run: pio run -e soundpanel7_usb
 
+      - name: Generate release manifest
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          FIRMWARE_SHA256="$(sha256sum .pio/build/soundpanel7_usb/firmware.bin | awk '{print $1}')"
+          BOOTLOADER_SHA256="$(sha256sum .pio/build/soundpanel7_usb/bootloader.bin | awk '{print $1}')"
+          PARTITIONS_SHA256="$(sha256sum .pio/build/soundpanel7_usb/partitions.bin | awk '{print $1}')"
+
+          cat > .pio/build/soundpanel7_usb/release-manifest.json <<EOF
+          {
+            "project": "SoundPanel7",
+            "tag": "${TAG_NAME}",
+            "version": "${VERSION}",
+            "published_at": "${{ github.event.release.published_at }}",
+            "release_url": "https://github.com/${REPOSITORY}/releases/tag/${TAG_NAME}",
+            "ota": {
+              "asset": "soundpanel7_usb-firmware.bin",
+              "url": "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/soundpanel7_usb-firmware.bin",
+              "sha256": "${FIRMWARE_SHA256}"
+            },
+            "assets": [
+              {
+                "name": "soundpanel7_usb-firmware.bin",
+                "type": "firmware",
+                "url": "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/soundpanel7_usb-firmware.bin",
+                "sha256": "${FIRMWARE_SHA256}"
+              },
+              {
+                "name": "soundpanel7_usb-bootloader.bin",
+                "type": "bootloader",
+                "url": "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/soundpanel7_usb-bootloader.bin",
+                "sha256": "${BOOTLOADER_SHA256}"
+              },
+              {
+                "name": "soundpanel7_usb-partitions.bin",
+                "type": "partitions",
+                "url": "https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/soundpanel7_usb-partitions.bin",
+                "sha256": "${PARTITIONS_SHA256}"
+              }
+            ]
+          }
+          EOF
+
       - name: Upload release workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -49,6 +94,7 @@ jobs:
             .pio/build/soundpanel7_usb/firmware.bin
             .pio/build/soundpanel7_usb/bootloader.bin
             .pio/build/soundpanel7_usb/partitions.bin
+            .pio/build/soundpanel7_usb/release-manifest.json
 
       - name: Attach binaries to GitHub release
         env:
@@ -58,4 +104,5 @@ jobs:
             .pio/build/soundpanel7_usb/firmware.bin#soundpanel7_usb-firmware.bin \
             .pio/build/soundpanel7_usb/bootloader.bin#soundpanel7_usb-bootloader.bin \
             .pio/build/soundpanel7_usb/partitions.bin#soundpanel7_usb-partitions.bin \
+            .pio/build/soundpanel7_usb/release-manifest.json#release-manifest.json \
             --clobber
