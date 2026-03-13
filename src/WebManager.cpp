@@ -27,6 +27,8 @@ static float g_webLeq = 0.0f;
 static float g_webPeak = 0.0f;
 
 static constexpr char SP7_SESSION_COOKIE_NAME[] = "sp7_session";
+static constexpr HTTPMethod kSyncHttpGet = static_cast<HTTPMethod>(::HTTP_GET);
+static constexpr HTTPMethod kSyncHttpPost = static_cast<HTTPMethod>(::HTTP_POST);
 
 static void appendBoolField(String& json, const char* key, bool value, bool trailingComma = true) {
   json += "\"";
@@ -456,51 +458,51 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
 }
 
 void WebManager::routes() {
-  _srv.on("/", HTTP_GET, [this]() { handleRoot(); });
+  _srv.on("/", kSyncHttpGet, [this]() { handleRoot(); });
 
-  _srv.on("/api/auth/status", HTTP_GET, [this]() { handleAuthStatus(); });
-  _srv.on("/api/auth/login", HTTP_POST, [this]() { handleAuthLogin(); });
-  _srv.on("/api/auth/logout", HTTP_POST, [this]() { handleAuthLogout(); });
-  _srv.on("/api/auth/bootstrap", HTTP_POST, [this]() { handleAuthBootstrap(); });
-  _srv.on("/api/users", HTTP_GET, [this]() { handleUsersGet(); });
-  _srv.on("/api/users/create", HTTP_POST, [this]() { handleUsersCreate(); });
-  _srv.on("/api/users/password", HTTP_POST, [this]() { handleUsersPassword(); });
-  _srv.on("/api/users/delete", HTTP_POST, [this]() { handleUsersDelete(); });
+  _srv.on("/api/auth/status", kSyncHttpGet, [this]() { handleAuthStatus(); });
+  _srv.on("/api/auth/login", kSyncHttpPost, [this]() { handleAuthLogin(); });
+  _srv.on("/api/auth/logout", kSyncHttpPost, [this]() { handleAuthLogout(); });
+  _srv.on("/api/auth/bootstrap", kSyncHttpPost, [this]() { handleAuthBootstrap(); });
+  _srv.on("/api/users", kSyncHttpGet, [this]() { handleUsersGet(); });
+  _srv.on("/api/users/create", kSyncHttpPost, [this]() { handleUsersCreate(); });
+  _srv.on("/api/users/password", kSyncHttpPost, [this]() { handleUsersPassword(); });
+  _srv.on("/api/users/delete", kSyncHttpPost, [this]() { handleUsersDelete(); });
 
-  _srv.on("/api/ha/status", HTTP_GET, [this]() { handleHomeAssistantStatus(); });
-  _srv.on("/api/homeassistant", HTTP_GET, [this]() { handleHomeAssistantGet(); });
-  _srv.on("/api/homeassistant", HTTP_POST, [this]() { handleHomeAssistantSave(); });
-  _srv.on("/api/status", HTTP_GET, [this]() { handleStatus(); });
+  _srv.on("/api/ha/status", kSyncHttpGet, [this]() { handleHomeAssistantStatus(); });
+  _srv.on("/api/homeassistant", kSyncHttpGet, [this]() { handleHomeAssistantGet(); });
+  _srv.on("/api/homeassistant", kSyncHttpPost, [this]() { handleHomeAssistantSave(); });
+  _srv.on("/api/status", kSyncHttpGet, [this]() { handleStatus(); });
 
-  _srv.on("/api/pin", HTTP_POST, [this]() { handlePinSave(); });
+  _srv.on("/api/pin", kSyncHttpPost, [this]() { handlePinSave(); });
 
-  _srv.on("/api/ui", HTTP_POST, [this]() { handleUiSave(); });
-  _srv.on("/api/live", HTTP_GET, [this]() { handleLiveGet(); });
-  _srv.on("/api/live", HTTP_POST, [this]() { handleLiveSave(); });
-  _srv.on("/api/wifi", HTTP_GET, [this]() { handleWifiGet(); });
-  _srv.on("/api/wifi", HTTP_POST, [this]() { handleWifiSave(); });
+  _srv.on("/api/ui", kSyncHttpPost, [this]() { handleUiSave(); });
+  _srv.on("/api/live", kSyncHttpGet, [this]() { handleLiveGet(); });
+  _srv.on("/api/live", kSyncHttpPost, [this]() { handleLiveSave(); });
+  _srv.on("/api/wifi", kSyncHttpGet, [this]() { handleWifiGet(); });
+  _srv.on("/api/wifi", kSyncHttpPost, [this]() { handleWifiSave(); });
 
-  _srv.on("/api/time", HTTP_GET,  [this]() { handleTimeGet(); });
-  _srv.on("/api/time", HTTP_POST, [this]() { handleTimeSave(); });
-  _srv.on("/api/config/export", HTTP_GET, [this]() { handleConfigExport(); });
-  _srv.on("/api/config/import", HTTP_POST, [this]() { handleConfigImport(); });
-  _srv.on("/api/config/backup", HTTP_POST, [this]() { handleConfigBackup(); });
-  _srv.on("/api/config/restore", HTTP_POST, [this]() { handleConfigRestore(); });
-  _srv.on("/api/config/reset_partial", HTTP_POST, [this]() { handleConfigResetPartial(); });
+  _srv.on("/api/time", kSyncHttpGet,  [this]() { handleTimeGet(); });
+  _srv.on("/api/time", kSyncHttpPost, [this]() { handleTimeSave(); });
+  _srv.on("/api/config/export", kSyncHttpGet, [this]() { handleConfigExport(); });
+  _srv.on("/api/config/import", kSyncHttpPost, [this]() { handleConfigImport(); });
+  _srv.on("/api/config/backup", kSyncHttpPost, [this]() { handleConfigBackup(); });
+  _srv.on("/api/config/restore", kSyncHttpPost, [this]() { handleConfigRestore(); });
+  _srv.on("/api/config/reset_partial", kSyncHttpPost, [this]() { handleConfigResetPartial(); });
 
-  _srv.on("/api/ota", HTTP_GET,  [this]() { handleOtaGet(); });
-  _srv.on("/api/ota", HTTP_POST, [this]() { handleOtaSave(); });
+  _srv.on("/api/ota", kSyncHttpGet,  [this]() { handleOtaGet(); });
+  _srv.on("/api/ota", kSyncHttpPost, [this]() { handleOtaSave(); });
 
-  _srv.on("/api/mqtt", HTTP_GET,  [this]() { handleMqttGet(); });
-  _srv.on("/api/mqtt", HTTP_POST, [this]() { handleMqttSave(); });
+  _srv.on("/api/mqtt", kSyncHttpGet,  [this]() { handleMqttGet(); });
+  _srv.on("/api/mqtt", kSyncHttpPost, [this]() { handleMqttSave(); });
 
-  _srv.on("/api/calibrate", HTTP_POST, [this]() { handleCalPoint(); });
-  _srv.on("/api/calibrate/clear", HTTP_POST, [this]() { handleCalClear(); });
-  _srv.on("/api/calibrate/mode", HTTP_POST, [this]() { handleCalMode(); });
+  _srv.on("/api/calibrate", kSyncHttpPost, [this]() { handleCalPoint(); });
+  _srv.on("/api/calibrate/clear", kSyncHttpPost, [this]() { handleCalClear(); });
+  _srv.on("/api/calibrate/mode", kSyncHttpPost, [this]() { handleCalMode(); });
 
-  _srv.on("/api/reboot", HTTP_POST, [this]() { handleReboot(); });
-  _srv.on("/api/shutdown", HTTP_POST, [this]() { handleShutdown(); });
-  _srv.on("/api/factory_reset", HTTP_POST, [this]() { handleFactoryReset(); });
+  _srv.on("/api/reboot", kSyncHttpPost, [this]() { handleReboot(); });
+  _srv.on("/api/shutdown", kSyncHttpPost, [this]() { handleShutdown(); });
+  _srv.on("/api/factory_reset", kSyncHttpPost, [this]() { handleFactoryReset(); });
 
   _srv.onNotFound([this]() { replyText(404, "404\n"); });
 }
