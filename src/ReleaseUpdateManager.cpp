@@ -337,9 +337,8 @@ void ReleaseUpdateManager::processInstall() {
     return;
   }
 
-  uint8_t buffer[4096];
-  const size_t targetRead = min(sizeof(buffer), min(remaining, (size_t)available));
-  const size_t readLen = stream->readBytes(buffer, targetRead);
+  const size_t targetRead = min(kInstallChunkSize, min(remaining, (size_t)available));
+  const size_t readLen = stream->readBytes(_installBuffer, targetRead);
   if (readLen == 0) {
     if (!_installHttp->connected()) {
       cleanupInstallTransport();
@@ -349,8 +348,8 @@ void ReleaseUpdateManager::processInstall() {
     return;
   }
 
-  mbedtls_sha256_update(&_installSha, buffer, readLen);
-  const size_t written = Update.write(buffer, readLen);
+  mbedtls_sha256_update(&_installSha, _installBuffer, readLen);
+  const size_t written = Update.write(_installBuffer, readLen);
   if (written != readLen) {
     cleanupInstallTransport();
     Update.abort();

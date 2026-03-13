@@ -46,6 +46,7 @@ private:
   static constexpr uint16_t kHttpConnectTimeoutMs = 5000;
   static constexpr uint16_t kHttpTimeoutMs = 12000;
   static constexpr uint32_t kInstallRebootDelayMs = 2200;
+  static constexpr size_t kInstallChunkSize = 1024;
 
   NetManager* _net = nullptr;
   bool _busy = false;
@@ -94,6 +95,7 @@ private:
   HTTPClient* _installHttp = nullptr;
   mbedtls_sha256_context _installSha = {};
   bool _installShaActive = false;
+  uint8_t _installBuffer[kInstallChunkSize] = {};
   Preferences _prefs;
   bool _prefsReady = false;
 };
