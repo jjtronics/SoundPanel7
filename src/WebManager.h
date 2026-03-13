@@ -1,8 +1,18 @@
 #pragma once
 
 #include <Arduino.h>
-#include <WebServer.h>
+#include <http_parser.h>
+
+// Present the core HTTP types to ESPAsyncWebServer without including the
+// full WebServer header first, which avoids the HTTP_ANY/HTTP_* collisions.
+typedef enum http_method HTTPMethod;
+#define WEBSERVER_H
+#define HTTP_ANY ((HTTPMethod)255)
 #include <ESPAsyncWebServer.h>
+#undef HTTP_ANY
+#undef WEBSERVER_H
+
+#include <WebServer.h>
 #include <esp_display_panel.hpp>
 
 #include "SettingsStore.h"
