@@ -31,4 +31,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run hassfest validation
-        uses: home-assistant/actions/hassfest@master
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if docker pull ghcr.io/home-assistant/hassfest; then
+              break
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+
+            sleep $((attempt * 10))
+          done
+
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/github/workspace" \
+            ghcr.io/home-assistant/hassfest
