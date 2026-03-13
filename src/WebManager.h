@@ -53,6 +53,7 @@ private:
   LiveEventServer* _live = nullptr;
 
   bool _started = false;
+  bool _httpListening = false;
   WebServer _srv = WebServer(80);
 
   uint32_t _lastLivePushMs = 0;
@@ -62,6 +63,9 @@ private:
   uint32_t _loginLockUntilMs = 0;
 
   void routes();
+  void startHttpServer();
+  void stopHttpServer();
+  void syncHttpAvailability();
   void setupLiveStream();
   void pushLiveMetrics(bool force = false);
   void addCommonSecurityHeaders(bool noStore = true);
@@ -146,4 +150,44 @@ private:
   void handleOtaSave();
   void handleMqttGet();
   void handleMqttSave();
+  void handleNotificationsGet();
+  void handleNotificationsSave();
+  void handleNotificationsTest();
+
+  void updateAlertState(float dbInstant, float leq, float peak);
+  void enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak);
+  void processPendingNotification();
+  bool dispatchNotification(uint8_t alertState,
+                            bool isTest,
+                            float dbInstant,
+                            float leq,
+                            float peak,
+                            bool updateAlertTracking);
+  bool sendSlackNotification(const String& message, String& summary);
+  bool sendTelegramNotification(const String& message, String& summary);
+  bool sendWhatsappNotification(const String& message, String& summary);
+  bool postJsonToUrl(const String& url,
+                     const String& payload,
+                     const String& authorization,
+                     int& statusCodeOut,
+                     String& responseOut);
+  String buildNotificationMessage(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak) const;
+  String notificationsJson(bool includeSecrets = false) const;
+  static const char* alertStateName(uint8_t alertState);
+
+  uint32_t _orangeZoneSinceMs = 0;
+  uint32_t _redZoneSinceMs = 0;
+  uint8_t _alertState = 0;
+  uint8_t _lastNotifiedAlertState = 0;
+  bool _notificationPending = false;
+  bool _notificationPendingTest = false;
+  uint8_t _pendingNotificationState = 0;
+  float _pendingNotificationDb = 0.0f;
+  float _pendingNotificationLeq = 0.0f;
+  float _pendingNotificationPeak = 0.0f;
+  uint32_t _notificationLastAttemptTs = 0;
+  uint32_t _notificationLastSuccessTs = 0;
+  bool _notificationLastOk = false;
+  String _notificationLastEvent = "idle";
+  String _notificationLastResult;
 };

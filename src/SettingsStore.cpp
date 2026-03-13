@@ -2,6 +2,7 @@
 #include "JsonHelpers.h"
 
 #include <ctime>
+#include <cstring>
 #include <math.h>
 
 bool SettingsStore::begin(const char* nvsNamespace) {
@@ -69,6 +70,20 @@ void SettingsStore::load(SettingsV1 &out) {
   _prefs.getString("mq_base", out.mqttBaseTopic, sizeof(out.mqttBaseTopic));
   out.mqttPublishPeriodMs = (uint16_t)_prefs.getUShort("mq_pubms", out.mqttPublishPeriodMs);
   out.mqttRetain = (uint8_t)_prefs.getUChar("mq_ret", out.mqttRetain);
+
+  out.notifyOnWarning = (uint8_t)_prefs.getUChar("n_lvl", out.notifyOnWarning);
+  out.notifyOnRecovery = (uint8_t)_prefs.getUChar("n_rec", out.notifyOnRecovery);
+  out.slackEnabled = (uint8_t)_prefs.getUChar("n_s_en", out.slackEnabled);
+  _prefs.getString("n_s_url", out.slackWebhookUrl, sizeof(out.slackWebhookUrl));
+  _prefs.getString("n_s_ch", out.slackChannel, sizeof(out.slackChannel));
+  out.telegramEnabled = (uint8_t)_prefs.getUChar("n_t_en", out.telegramEnabled);
+  _prefs.getString("n_t_tok", out.telegramBotToken, sizeof(out.telegramBotToken));
+  _prefs.getString("n_t_chat", out.telegramChatId, sizeof(out.telegramChatId));
+  out.whatsappEnabled = (uint8_t)_prefs.getUChar("n_w_en", out.whatsappEnabled);
+  _prefs.getString("n_w_tok", out.whatsappAccessToken, sizeof(out.whatsappAccessToken));
+  _prefs.getString("n_w_pid", out.whatsappPhoneNumberId, sizeof(out.whatsappPhoneNumberId));
+  _prefs.getString("n_w_to", out.whatsappRecipient, sizeof(out.whatsappRecipient));
+  _prefs.getString("n_w_ver", out.whatsappApiVersion, sizeof(out.whatsappApiVersion));
 
   for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     char keyRef[8];
@@ -142,6 +157,20 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUShort("mq_pubms", s.mqttPublishPeriodMs);
   _prefs.putUChar("mq_ret", s.mqttRetain);
 
+  _prefs.putUChar("n_lvl", s.notifyOnWarning);
+  _prefs.putUChar("n_rec", s.notifyOnRecovery);
+  _prefs.putUChar("n_s_en", s.slackEnabled);
+  _prefs.putString("n_s_url", s.slackWebhookUrl);
+  _prefs.putString("n_s_ch", s.slackChannel);
+  _prefs.putUChar("n_t_en", s.telegramEnabled);
+  _prefs.putString("n_t_tok", s.telegramBotToken);
+  _prefs.putString("n_t_chat", s.telegramChatId);
+  _prefs.putUChar("n_w_en", s.whatsappEnabled);
+  _prefs.putString("n_w_tok", s.whatsappAccessToken);
+  _prefs.putString("n_w_pid", s.whatsappPhoneNumberId);
+  _prefs.putString("n_w_to", s.whatsappRecipient);
+  _prefs.putString("n_w_ver", s.whatsappApiVersion);
+
   for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     char keyRef[8];
     char keyRaw[8];
@@ -205,6 +234,23 @@ void SettingsStore::sanitize(SettingsV1& s) {
   s.otaEnabled = s.otaEnabled ? 1 : 0;
   s.mqttEnabled = s.mqttEnabled ? 1 : 0;
   s.mqttRetain = s.mqttRetain ? 1 : 0;
+  s.notifyOnWarning = s.notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING ? ALERT_NOTIFY_LEVEL_WARNING : ALERT_NOTIFY_LEVEL_CRITICAL;
+  s.notifyOnRecovery = s.notifyOnRecovery ? 1 : 0;
+  s.slackEnabled = s.slackEnabled ? 1 : 0;
+  s.telegramEnabled = s.telegramEnabled ? 1 : 0;
+  s.whatsappEnabled = s.whatsappEnabled ? 1 : 0;
+  s.slackWebhookUrl[sizeof(s.slackWebhookUrl) - 1] = '\0';
+  s.slackChannel[sizeof(s.slackChannel) - 1] = '\0';
+  s.telegramBotToken[sizeof(s.telegramBotToken) - 1] = '\0';
+  s.telegramChatId[sizeof(s.telegramChatId) - 1] = '\0';
+  s.whatsappAccessToken[sizeof(s.whatsappAccessToken) - 1] = '\0';
+  s.whatsappPhoneNumberId[sizeof(s.whatsappPhoneNumberId) - 1] = '\0';
+  s.whatsappRecipient[sizeof(s.whatsappRecipient) - 1] = '\0';
+  s.whatsappApiVersion[sizeof(s.whatsappApiVersion) - 1] = '\0';
+  if (!strlen(s.whatsappApiVersion)) {
+    strncpy(s.whatsappApiVersion, "v22.0", sizeof(s.whatsappApiVersion) - 1);
+    s.whatsappApiVersion[sizeof(s.whatsappApiVersion) - 1] = '\0';
+  }
 
   const float* recommended = (s.calibrationPointCount == CALIBRATION_POINT_MAX) ? RECOMMENDED_CALIBRATION_5 : RECOMMENDED_CALIBRATION_3;
   for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
@@ -387,7 +433,7 @@ void SettingsStore::clearWebUsers() {
 
 String SettingsStore::exportJson(const SettingsV1& s) const {
   String json;
-  json.reserve(2048);
+  json.reserve(3072);
   json += "{";
   json += "\"type\":\"soundpanel7-config\",";
   json += "\"version\":"; json += String(SETTINGS_VERSION); json += ",";
@@ -459,7 +505,20 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"mqttClientId\":\""; json += sp7json::escape(s.mqttClientId); json += "\",";
   json += "\"mqttBaseTopic\":\""; json += sp7json::escape(s.mqttBaseTopic); json += "\",";
   json += "\"mqttPublishPeriodMs\":"; json += String(s.mqttPublishPeriodMs); json += ",";
-  json += "\"mqttRetain\":"; json += (s.mqttRetain ? "true" : "false");
+  json += "\"mqttRetain\":"; json += (s.mqttRetain ? "true" : "false"); json += ",";
+  json += "\"notifyOnWarning\":"; json += (s.notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING ? "true" : "false"); json += ",";
+  json += "\"notifyOnRecovery\":"; json += (s.notifyOnRecovery ? "true" : "false"); json += ",";
+  json += "\"slackEnabled\":"; json += (s.slackEnabled ? "true" : "false"); json += ",";
+  json += "\"slackWebhookUrl\":\""; json += sp7json::escape(s.slackWebhookUrl); json += "\",";
+  json += "\"slackChannel\":\""; json += sp7json::escape(s.slackChannel); json += "\",";
+  json += "\"telegramEnabled\":"; json += (s.telegramEnabled ? "true" : "false"); json += ",";
+  json += "\"telegramBotToken\":\""; json += sp7json::escape(s.telegramBotToken); json += "\",";
+  json += "\"telegramChatId\":\""; json += sp7json::escape(s.telegramChatId); json += "\",";
+  json += "\"whatsappEnabled\":"; json += (s.whatsappEnabled ? "true" : "false"); json += ",";
+  json += "\"whatsappAccessToken\":\""; json += sp7json::escape(s.whatsappAccessToken); json += "\",";
+  json += "\"whatsappPhoneNumberId\":\""; json += sp7json::escape(s.whatsappPhoneNumberId); json += "\",";
+  json += "\"whatsappRecipient\":\""; json += sp7json::escape(s.whatsappRecipient); json += "\",";
+  json += "\"whatsappApiVersion\":\""; json += sp7json::escape(s.whatsappApiVersion); json += "\"";
   json += "}";
   return json;
 }
@@ -575,6 +634,22 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   String mqttPassword = sp7json::parseString(json, "mqttPassword", String(next.mqttPassword));
   String mqttClientId = sp7json::parseString(json, "mqttClientId", String(next.mqttClientId));
   String mqttBaseTopic = sp7json::parseString(json, "mqttBaseTopic", String(next.mqttBaseTopic));
+  next.notifyOnWarning = sp7json::parseBool(json, "notifyOnWarning", next.notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING)
+    ? ALERT_NOTIFY_LEVEL_WARNING
+    : ALERT_NOTIFY_LEVEL_CRITICAL;
+  next.notifyOnRecovery = sp7json::parseBool(json, "notifyOnRecovery", next.notifyOnRecovery != 0) ? 1 : 0;
+  next.slackEnabled = sp7json::parseBool(json, "slackEnabled", next.slackEnabled != 0) ? 1 : 0;
+  next.telegramEnabled = sp7json::parseBool(json, "telegramEnabled", next.telegramEnabled != 0) ? 1 : 0;
+  next.whatsappEnabled = sp7json::parseBool(json, "whatsappEnabled", next.whatsappEnabled != 0) ? 1 : 0;
+
+  String slackWebhookUrl = sp7json::parseString(json, "slackWebhookUrl", String(next.slackWebhookUrl));
+  String slackChannel = sp7json::parseString(json, "slackChannel", String(next.slackChannel));
+  String telegramBotToken = sp7json::parseString(json, "telegramBotToken", String(next.telegramBotToken));
+  String telegramChatId = sp7json::parseString(json, "telegramChatId", String(next.telegramChatId));
+  String whatsappAccessToken = sp7json::parseString(json, "whatsappAccessToken", String(next.whatsappAccessToken));
+  String whatsappPhoneNumberId = sp7json::parseString(json, "whatsappPhoneNumberId", String(next.whatsappPhoneNumberId));
+  String whatsappRecipient = sp7json::parseString(json, "whatsappRecipient", String(next.whatsappRecipient));
+  String whatsappApiVersion = sp7json::parseString(json, "whatsappApiVersion", String(next.whatsappApiVersion));
 
   if (!sp7json::safeCopy(next.mqttHost, sizeof(next.mqttHost), mqttHost)) {
     if (err) *err = "mqttHost too long";
@@ -594,6 +669,38 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   }
   if (!sp7json::safeCopy(next.mqttBaseTopic, sizeof(next.mqttBaseTopic), mqttBaseTopic)) {
     if (err) *err = "mqttBaseTopic too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.slackWebhookUrl, sizeof(next.slackWebhookUrl), slackWebhookUrl)) {
+    if (err) *err = "slackWebhookUrl too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.slackChannel, sizeof(next.slackChannel), slackChannel)) {
+    if (err) *err = "slackChannel too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.telegramBotToken, sizeof(next.telegramBotToken), telegramBotToken)) {
+    if (err) *err = "telegramBotToken too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.telegramChatId, sizeof(next.telegramChatId), telegramChatId)) {
+    if (err) *err = "telegramChatId too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.whatsappAccessToken, sizeof(next.whatsappAccessToken), whatsappAccessToken)) {
+    if (err) *err = "whatsappAccessToken too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.whatsappPhoneNumberId, sizeof(next.whatsappPhoneNumberId), whatsappPhoneNumberId)) {
+    if (err) *err = "whatsappPhoneNumberId too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.whatsappRecipient, sizeof(next.whatsappRecipient), whatsappRecipient)) {
+    if (err) *err = "whatsappRecipient too long";
+    return false;
+  }
+  if (!sp7json::safeCopy(next.whatsappApiVersion, sizeof(next.whatsappApiVersion), whatsappApiVersion)) {
+    if (err) *err = "whatsappApiVersion too long";
     return false;
   }
 
@@ -694,6 +801,20 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     memcpy(s.mqttBaseTopic, def.mqttBaseTopic, sizeof(s.mqttBaseTopic));
     s.mqttPublishPeriodMs = def.mqttPublishPeriodMs;
     s.mqttRetain = def.mqttRetain;
+  } else if (scope == "notifications") {
+    s.notifyOnWarning = def.notifyOnWarning;
+    s.notifyOnRecovery = def.notifyOnRecovery;
+    s.slackEnabled = def.slackEnabled;
+    memcpy(s.slackWebhookUrl, def.slackWebhookUrl, sizeof(s.slackWebhookUrl));
+    memcpy(s.slackChannel, def.slackChannel, sizeof(s.slackChannel));
+    s.telegramEnabled = def.telegramEnabled;
+    memcpy(s.telegramBotToken, def.telegramBotToken, sizeof(s.telegramBotToken));
+    memcpy(s.telegramChatId, def.telegramChatId, sizeof(s.telegramChatId));
+    s.whatsappEnabled = def.whatsappEnabled;
+    memcpy(s.whatsappAccessToken, def.whatsappAccessToken, sizeof(s.whatsappAccessToken));
+    memcpy(s.whatsappPhoneNumberId, def.whatsappPhoneNumberId, sizeof(s.whatsappPhoneNumberId));
+    memcpy(s.whatsappRecipient, def.whatsappRecipient, sizeof(s.whatsappRecipient));
+    memcpy(s.whatsappApiVersion, def.whatsappApiVersion, sizeof(s.whatsappApiVersion));
   } else {
     if (err) *err = "unknown scope";
     return false;

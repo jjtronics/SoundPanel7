@@ -2,6 +2,7 @@
 #pragma once
 #include <Arduino.h>
 #include <WiFi.h>
+#include <functional>
 
 #include "SettingsStore.h"
 
@@ -11,6 +12,8 @@ public:
   void loop();
 
   bool isWifiConnected() const;
+  bool isConfigPortalActive() const;
+  void setConfigPortalStateCallback(std::function<void(bool)> callback);
   String ipString() const;
   int32_t rssi() const;
   String currentSsid() const;
@@ -36,6 +39,7 @@ private:
   uint32_t _lastWifiAttemptMs = 0;
   uint8_t _wifiAttemptFailures = 0;
   bool _legacyCredentialTried = false;
+  std::function<void(bool)> _configPortalStateCallback;
 
   void ensureMdns();
   void rebuildWifiMulti();

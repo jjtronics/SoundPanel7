@@ -147,6 +147,7 @@ en labo, en studio, et en usage quotidien.
 - Studio d'enregistrement : garder les niveaux et l'heure sous les yeux
 - Regie ou diffusion : afficher une heure reseau fiable avec secondes
 - Podcast ou voix off : suivre un top horaire ou un timing de prise
+- Soiree a la maison : garder un oeil sur le volume quand les fetards aiment le monter un peu trop fort
 - Atelier ou lieu public : afficher un indicateur simple, comprehensible par tous dans le genre des panneaux LIVE devant les studios d'enregistrement.
 - Domotique personnelle : Remonter les niveaux sonores pour traitement/execution d'actions
 

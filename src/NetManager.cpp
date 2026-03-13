@@ -14,6 +14,7 @@ static constexpr const char* kDefaultHostname = "soundpanel7";
 static constexpr const char* kSetupApName = "SoundPanel7-Setup";
 static constexpr uint32_t kWifiRetryPeriodMs = 15000UL;
 static constexpr uint32_t kWifiConnectTimeoutMs = 8000UL;
+static constexpr uint32_t kWifiPortalRetryTimeoutMs = 3000UL;
 static constexpr uint8_t kWifiFailuresBeforePortal = 3;
 static WiFiManager g_wm;
 static WiFiMulti g_wifiMulti;
@@ -36,6 +37,7 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   g_wm.setConfigPortalBlocking(false); // IMPORTANT: non-bloquant, on fera g_wm.process() dans loop()
   g_wm.setEnableConfigPortal(false);   // on ouvre le portail explicitement apres les tentatives multi-AP
   g_wm.setSaveConfigCallback([this]() { onPortalWifiSaved(); });
+  g_wm.setWiFiAutoReconnect(true);
 
   // Optionnel mais pratique pour éviter des waits interminables
   g_wm.setConnectTimeout(20);          // sec
@@ -43,6 +45,7 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
 
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
 
   _ntpConfigured = false;
   migrateLegacyCredentialIfNeeded();
@@ -79,8 +82,18 @@ void NetManager::rebuildWifiMulti() {
 
 void NetManager::startConfigPortal() {
   if (g_wm.getConfigPortalActive()) return;
+  if (_configPortalStateCallback) _configPortalStateCallback(true);
   Serial0.printf("[Net] Starting WiFi portal '%s'\n", kSetupApName);
   g_wm.startConfigPortal(kSetupApName);
+  if (g_wm.getConfigPortalActive()) {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.enableSTA(true);
+    configureHostname();
+    Serial0.println("[Net] WiFi portal running with STA retries enabled");
+  }
+  if (!g_wm.getConfigPortalActive() && _configPortalStateCallback) {
+    _configPortalStateCallback(false);
+  }
 }
 
 void NetManager::reloadWifiConfig() {
@@ -97,6 +110,7 @@ void NetManager::reloadWifiConfig() {
 
   if (g_wm.getConfigPortalActive()) {
     g_wm.stopConfigPortal();
+    if (_configPortalStateCallback) _configPortalStateCallback(false);
   }
 
   if (WiFi.getMode() != WIFI_STA) {
@@ -181,19 +195,35 @@ void NetManager::onPortalWifiSaved() {
 }
 
 void NetManager::ensureWifiConnection(bool force) {
-  if (!_started || isWifiConnected() || g_wm.getConfigPortalActive()) return;
+  if (!_started || isWifiConnected()) return;
 
   const uint32_t now = millis();
   if (!force && (uint32_t)(now - _lastWifiAttemptMs) < kWifiRetryPeriodMs) return;
   _lastWifiAttemptMs = now;
+  const bool portalActive = g_wm.getConfigPortalActive();
 
   const uint8_t credentialCount = wifiCredentialCount();
   if (credentialCount > 0) {
-    Serial0.printf("[Net] Trying %u saved WiFi AP(s)\n", (unsigned)credentialCount);
-    const uint8_t status = g_wifiMulti.run(kWifiConnectTimeoutMs);
+    if (portalActive) {
+      if (WiFi.getMode() != WIFI_AP_STA) {
+        WiFi.mode(WIFI_AP_STA);
+      }
+      WiFi.enableSTA(true);
+    }
+    Serial0.printf(portalActive
+                     ? "[Net] Portal active, retrying %u saved WiFi AP(s)\n"
+                     : "[Net] Trying %u saved WiFi AP(s)\n",
+                   (unsigned)credentialCount);
+    const uint32_t timeoutMs = portalActive ? kWifiPortalRetryTimeoutMs : kWifiConnectTimeoutMs;
+    const uint8_t status = g_wifiMulti.run(timeoutMs);
     if (status == WL_CONNECTED || isWifiConnected()) {
       _wifiAttemptFailures = 0;
       _legacyCredentialTried = true;
+      return;
+    }
+
+    if (portalActive) {
+      Serial0.printf("[Net] WiFi retry during portal status=%d\n", (int)status);
       return;
     }
 
@@ -208,7 +238,7 @@ void NetManager::ensureWifiConnection(bool force) {
     return;
   }
 
-  if (!_legacyCredentialTried) {
+  if (!_legacyCredentialTried && !portalActive) {
     Serial0.println("[Net] Trying legacy WiFiManager credential");
     _legacyCredentialTried = true;
     if (g_wm.autoConnect(kSetupApName) || isWifiConnected()) {
@@ -218,7 +248,9 @@ void NetManager::ensureWifiConnection(bool force) {
     Serial0.println("[Net] No legacy WiFi credential available");
   }
 
-  startConfigPortal();
+  if (!portalActive) {
+    startConfigPortal();
+  }
 }
 
 void NetManager::ensureMdns() {
@@ -274,6 +306,7 @@ void NetManager::loop() {
       if (g_wm.getConfigPortalActive()) {
         Serial0.println("[Net] WiFi restored, stopping config portal");
         g_wm.stopConfigPortal();
+        if (_configPortalStateCallback) _configPortalStateCallback(false);
       }
       Serial0.printf("[Net] WiFi OK IP=%s RSSI=%ld\n",
                      currentIp.c_str(),
@@ -308,6 +341,14 @@ void NetManager::loop() {
 
 bool NetManager::isWifiConnected() const {
   return WiFi.status() == WL_CONNECTED;
+}
+
+bool NetManager::isConfigPortalActive() const {
+  return g_wm.getConfigPortalActive();
+}
+
+void NetManager::setConfigPortalStateCallback(std::function<void(bool)> callback) {
+  _configPortalStateCallback = callback;
 }
 
 String NetManager::ipString() const {

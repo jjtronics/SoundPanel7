@@ -5,6 +5,8 @@
 #include "ui/UiManager.h"
 
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <esp_sntp.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
@@ -29,6 +31,7 @@ static float g_webPeak = 0.0f;
 static constexpr char SP7_SESSION_COOKIE_NAME[] = "sp7_session";
 static constexpr HTTPMethod kSyncHttpGet = static_cast<HTTPMethod>(::HTTP_GET);
 static constexpr HTTPMethod kSyncHttpPost = static_cast<HTTPMethod>(::HTTP_POST);
+static constexpr uint32_t kNotificationHttpTimeoutMs = 8000UL;
 
 static void appendBoolField(String& json, const char* key, bool value, bool trailingComma = true) {
   json += "\"";
@@ -117,6 +120,20 @@ static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
   json += "\"heapPsramFree\":"; json += String(stats.heapPsramFree); json += ",";
   json += "\"heapPsramMin\":"; json += String(stats.heapPsramMin); json += ",";
   sp7json::appendEscapedField(json, "activePage", stats.activePage);
+}
+
+static uint32_t currentUnixTimestamp() {
+  time_t now = time(nullptr);
+  return now > 946684800 ? (uint32_t)now : 0U;
+}
+
+static String trimmedHttpResponse(String value) {
+  value.trim();
+  if (value.length() > 96) {
+    value.remove(96);
+    value += "...";
+  }
+  return value;
 }
 
 void WebManager::addCommonSecurityHeaders(bool noStore) {
@@ -428,6 +445,15 @@ bool WebManager::begin(SettingsStore* store,
   _mqtt = mqtt;
   _ui = ui;
   if (!_live) _live = new LiveEventServer(81, "/api/events");
+  if (_net) {
+    _net->setConfigPortalStateCallback([this](bool active) {
+      if (active) {
+        stopHttpServer();
+      } else {
+        syncHttpAvailability();
+      }
+    });
+  }
 
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
@@ -435,17 +461,10 @@ bool WebManager::begin(SettingsStore* store,
   const char* headers[] = {"Cookie", "Authorization"};
   _srv.collectHeaders(headers, 2);
   routes();
-  _srv.begin();
   setupLiveStream();
   _started = true;
-
-  Serial0.println("[WEB] LISTEN on 80");
   Serial0.println("[WEB] LIVE SSE on 81");
-  if (WiFi.isConnected()) {
-    Serial0.printf("[WEB] URL: http://%s/\n", WiFi.localIP().toString().c_str());
-  } else {
-    Serial0.println("[WEB] WiFi not connected yet (URL available after connect)");
-  }
+  syncHttpAvailability();
   return true;
 }
 
@@ -455,6 +474,7 @@ void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
   g_webPeak = peak;
 
   pushLiveMetrics();
+  updateAlertState(dbInstant, leq, peak);
 }
 
 void WebManager::routes() {
@@ -495,6 +515,9 @@ void WebManager::routes() {
 
   _srv.on("/api/mqtt", kSyncHttpGet,  [this]() { handleMqttGet(); });
   _srv.on("/api/mqtt", kSyncHttpPost, [this]() { handleMqttSave(); });
+  _srv.on("/api/notifications", kSyncHttpGet,  [this]() { handleNotificationsGet(); });
+  _srv.on("/api/notifications", kSyncHttpPost, [this]() { handleNotificationsSave(); });
+  _srv.on("/api/notifications/test", kSyncHttpPost, [this]() { handleNotificationsTest(); });
 
   _srv.on("/api/calibrate", kSyncHttpPost, [this]() { handleCalPoint(); });
   _srv.on("/api/calibrate/clear", kSyncHttpPost, [this]() { handleCalClear(); });
@@ -509,7 +532,110 @@ void WebManager::routes() {
 
 void WebManager::loop() {
   if (!_started) return;
+  processPendingNotification();
+  syncHttpAvailability();
+  if (!_httpListening) return;
   _srv.handleClient();
+}
+
+const char* WebManager::alertStateName(uint8_t alertState) {
+  switch (alertState) {
+    case 1: return "warning";
+    case 2: return "critical";
+    default: return "recovery";
+  }
+}
+
+void WebManager::updateAlertState(float dbInstant, float leq, float peak) {
+  if (!_s) return;
+
+  const uint32_t now = millis();
+  const bool orangeZone = dbInstant > _s->th.greenMax && dbInstant <= _s->th.orangeMax;
+  const bool redZone = dbInstant > _s->th.orangeMax;
+
+  if (redZone) {
+    if (_redZoneSinceMs == 0) _redZoneSinceMs = now;
+    _orangeZoneSinceMs = 0;
+  } else if (orangeZone) {
+    if (_orangeZoneSinceMs == 0) _orangeZoneSinceMs = now;
+    _redZoneSinceMs = 0;
+  } else {
+    _orangeZoneSinceMs = 0;
+    _redZoneSinceMs = 0;
+  }
+
+  const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= _s->orangeAlertHoldMs;
+  const bool redAlert = _redZoneSinceMs != 0 && (now - _redZoneSinceMs) >= _s->redAlertHoldMs;
+  const uint8_t nextAlertState = redAlert ? 2 : (orangeAlert ? 1 : 0);
+  const uint8_t previousAlertState = _alertState;
+  _alertState = nextAlertState;
+
+  if (nextAlertState == previousAlertState) return;
+
+  if (nextAlertState > previousAlertState) {
+    if (nextAlertState == 2) {
+      enqueueNotification(2, false, dbInstant, leq, peak);
+    } else if (_s->notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING) {
+      enqueueNotification(1, false, dbInstant, leq, peak);
+    }
+    return;
+  }
+
+  if (nextAlertState == 0 && previousAlertState > 0 && _s->notifyOnRecovery && _lastNotifiedAlertState > 0) {
+    enqueueNotification(0, false, dbInstant, leq, peak);
+  }
+}
+
+void WebManager::enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak) {
+  _notificationPending = true;
+  _notificationPendingTest = isTest;
+  _pendingNotificationState = alertState;
+  _pendingNotificationDb = dbInstant;
+  _pendingNotificationLeq = leq;
+  _pendingNotificationPeak = peak;
+}
+
+void WebManager::processPendingNotification() {
+  if (!_notificationPending) return;
+
+  const bool isTest = _notificationPendingTest;
+  const uint8_t alertState = _pendingNotificationState;
+  const float dbInstant = _pendingNotificationDb;
+  const float leq = _pendingNotificationLeq;
+  const float peak = _pendingNotificationPeak;
+
+  _notificationPending = false;
+  _notificationPendingTest = false;
+
+  dispatchNotification(alertState, isTest, dbInstant, leq, peak, !isTest);
+}
+
+void WebManager::startHttpServer() {
+  if (_httpListening) return;
+  _srv.begin();
+  _httpListening = true;
+  Serial0.println("[WEB] LISTEN on 80");
+  if (WiFi.isConnected()) {
+    Serial0.printf("[WEB] URL: http://%s/\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial0.println("[WEB] WiFi not connected yet (URL available after connect)");
+  }
+}
+
+void WebManager::stopHttpServer() {
+  if (!_httpListening) return;
+  Serial0.println("[WEB] WiFi portal active, stopping main HTTP server");
+  _srv.stop();
+  _httpListening = false;
+}
+
+void WebManager::syncHttpAvailability() {
+  const bool portalActive = _net && _net->isConfigPortalActive();
+  if (portalActive) {
+    stopHttpServer();
+    return;
+  }
+  startHttpServer();
 }
 
 void WebManager::setupLiveStream() {
@@ -1706,6 +1832,404 @@ void WebManager::handleMqttSave() {
   replyOkJsonRebootRecommended();
 }
 
+String WebManager::buildNotificationMessage(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak) const {
+  const String hostname = (_s && _s->hostname[0] != '\0') ? String(_s->hostname) : String("soundpanel7");
+  const String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("offline");
+
+  struct tm ti;
+  char tbuf[32] = {0};
+  const bool hasTime = getLocalTime(&ti, 0);
+  if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
+
+  String message;
+  message.reserve(320);
+  message += "SoundPanel 7 ";
+  message += hostname;
+  message += "\n";
+  if (isTest) {
+    message += "Notification de test";
+  } else if (alertState == 2) {
+    message += "Alerte critique";
+  } else if (alertState == 1) {
+    message += "Alerte warning";
+  } else {
+    message += "Retour a la normale";
+  }
+  if (hasTime) {
+    message += "\n";
+    message += tbuf;
+  }
+  message += "\n";
+  message += "dB ";
+  message += String(dbInstant, 1);
+  message += " | Leq ";
+  message += String(leq, 1);
+  message += " | Peak ";
+  message += String(peak, 1);
+  message += "\n";
+  message += "Seuils <= ";
+  message += String(_s ? _s->th.greenMax : DEFAULT_GREEN_MAX);
+  message += " / <= ";
+  message += String(_s ? _s->th.orangeMax : DEFAULT_ORANGE_MAX);
+  message += "\n";
+  message += "IP ";
+  message += ip;
+  return message;
+}
+
+bool WebManager::postJsonToUrl(const String& url,
+                               const String& payload,
+                               const String& authorization,
+                               int& statusCodeOut,
+                               String& responseOut) {
+  statusCodeOut = -1;
+  responseOut = "";
+
+  if (!url.length()) return false;
+
+  HTTPClient http;
+  http.setTimeout(kNotificationHttpTimeoutMs);
+
+  bool started = false;
+  if (url.startsWith("https://")) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    started = http.begin(client, url);
+    if (!started) return false;
+    http.addHeader("Content-Type", "application/json");
+    if (authorization.length()) http.addHeader("Authorization", authorization);
+    statusCodeOut = http.POST((uint8_t*)payload.c_str(), payload.length());
+    responseOut = http.getString();
+    http.end();
+    return statusCodeOut > 0;
+  }
+
+  WiFiClient client;
+  started = http.begin(client, url);
+  if (!started) return false;
+  http.addHeader("Content-Type", "application/json");
+  if (authorization.length()) http.addHeader("Authorization", authorization);
+  statusCodeOut = http.POST((uint8_t*)payload.c_str(), payload.length());
+  responseOut = http.getString();
+  http.end();
+  return statusCodeOut > 0;
+}
+
+bool WebManager::sendSlackNotification(const String& message, String& summary) {
+  if (!_s || !_s->slackEnabled) return true;
+  if (!_s->slackWebhookUrl[0]) {
+    summary = "Slack: webhook manquant";
+    return false;
+  }
+
+  String payload = String("{\"text\":\"") + sp7json::escape(message.c_str()) + "\"";
+  if (_s->slackChannel[0]) {
+    payload += ",\"channel\":\"";
+    payload += sp7json::escape(_s->slackChannel);
+    payload += "\"";
+  }
+  payload += "}";
+  int statusCode = -1;
+  String response;
+  if (!postJsonToUrl(_s->slackWebhookUrl, payload, "", statusCode, response)) {
+    summary = "Slack: echec HTTP";
+    return false;
+  }
+  if (statusCode >= 200 && statusCode < 300) {
+    summary = "Slack OK";
+    return true;
+  }
+
+  summary = "Slack " + String(statusCode) + " " + trimmedHttpResponse(response);
+  return false;
+}
+
+bool WebManager::sendTelegramNotification(const String& message, String& summary) {
+  if (!_s || !_s->telegramEnabled) return true;
+  if (!_s->telegramBotToken[0] || !_s->telegramChatId[0]) {
+    summary = "Telegram: token/chat manquant";
+    return false;
+  }
+
+  String url = "https://api.telegram.org/bot";
+  url += _s->telegramBotToken;
+  url += "/sendMessage";
+
+  String payload;
+  payload.reserve(256 + message.length());
+  payload += "{";
+  payload += "\"chat_id\":\""; payload += sp7json::escape(_s->telegramChatId); payload += "\",";
+  payload += "\"text\":\""; payload += sp7json::escape(message.c_str()); payload += "\",";
+  payload += "\"disable_web_page_preview\":true";
+  payload += "}";
+
+  int statusCode = -1;
+  String response;
+  if (!postJsonToUrl(url, payload, "", statusCode, response)) {
+    summary = "Telegram: echec HTTP";
+    return false;
+  }
+  if (statusCode >= 200 && statusCode < 300) {
+    summary = "Telegram OK";
+    return true;
+  }
+
+  summary = "Telegram " + String(statusCode) + " " + trimmedHttpResponse(response);
+  return false;
+}
+
+bool WebManager::sendWhatsappNotification(const String& message, String& summary) {
+  if (!_s || !_s->whatsappEnabled) return true;
+  if (!_s->whatsappAccessToken[0] || !_s->whatsappPhoneNumberId[0] || !_s->whatsappRecipient[0]) {
+    summary = "WhatsApp: config incomplete";
+    return false;
+  }
+
+  String url = "https://graph.facebook.com/";
+  url += (_s->whatsappApiVersion[0] ? _s->whatsappApiVersion : "v22.0");
+  url += "/";
+  url += _s->whatsappPhoneNumberId;
+  url += "/messages";
+
+  String payload;
+  payload.reserve(320 + message.length());
+  payload += "{";
+  payload += "\"messaging_product\":\"whatsapp\",";
+  payload += "\"to\":\""; payload += sp7json::escape(_s->whatsappRecipient); payload += "\",";
+  payload += "\"type\":\"text\",";
+  payload += "\"text\":{\"preview_url\":false,\"body\":\""; payload += sp7json::escape(message.c_str()); payload += "\"}";
+  payload += "}";
+
+  const String authorization = String("Bearer ") + _s->whatsappAccessToken;
+  int statusCode = -1;
+  String response;
+  if (!postJsonToUrl(url, payload, authorization, statusCode, response)) {
+    summary = "WhatsApp: echec HTTP";
+    return false;
+  }
+  if (statusCode >= 200 && statusCode < 300) {
+    summary = "WhatsApp OK";
+    return true;
+  }
+
+  summary = "WhatsApp " + String(statusCode) + " " + trimmedHttpResponse(response);
+  return false;
+}
+
+bool WebManager::dispatchNotification(uint8_t alertState,
+                                      bool isTest,
+                                      float dbInstant,
+                                      float leq,
+                                      float peak,
+                                      bool updateAlertTracking) {
+  if (!_s) return false;
+
+  const bool slackActive = _s->slackEnabled != 0;
+  const bool telegramActive = _s->telegramEnabled != 0;
+  const bool whatsappActive = _s->whatsappEnabled != 0;
+  if (!slackActive && !telegramActive && !whatsappActive) {
+    _notificationLastOk = false;
+    _notificationLastEvent = isTest ? "test" : String(alertStateName(alertState));
+    _notificationLastResult = "Aucune cible active";
+    _notificationLastAttemptTs = currentUnixTimestamp();
+    return false;
+  }
+
+  if (!WiFi.isConnected()) {
+    _notificationLastOk = false;
+    _notificationLastEvent = isTest ? "test" : String(alertStateName(alertState));
+    _notificationLastResult = "WiFi indisponible";
+    _notificationLastAttemptTs = currentUnixTimestamp();
+    return false;
+  }
+
+  const String message = buildNotificationMessage(alertState, isTest, dbInstant, leq, peak);
+
+  bool overallOk = true;
+  bool attempted = false;
+  String summary;
+
+  if (slackActive) {
+    String result;
+    attempted = true;
+    if (!sendSlackNotification(message, result)) overallOk = false;
+    if (summary.length()) summary += " | ";
+    summary += result;
+  }
+  if (telegramActive) {
+    String result;
+    attempted = true;
+    if (!sendTelegramNotification(message, result)) overallOk = false;
+    if (summary.length()) summary += " | ";
+    summary += result;
+  }
+  if (whatsappActive) {
+    String result;
+    attempted = true;
+    if (!sendWhatsappNotification(message, result)) overallOk = false;
+    if (summary.length()) summary += " | ";
+    summary += result;
+  }
+
+  _notificationLastAttemptTs = currentUnixTimestamp();
+  _notificationLastOk = attempted && overallOk;
+  _notificationLastEvent = isTest ? "test" : String(alertStateName(alertState));
+  _notificationLastResult = summary.length() ? summary : String("Aucune cible active");
+  if (_notificationLastOk) {
+    _notificationLastSuccessTs = _notificationLastAttemptTs;
+    if (updateAlertTracking) _lastNotifiedAlertState = alertState;
+  }
+
+  Serial0.printf("[WEB][NOTIFY] event=%s result=%s\n",
+                 _notificationLastEvent.c_str(),
+                 _notificationLastResult.c_str());
+  return _notificationLastOk;
+}
+
+String WebManager::notificationsJson(bool includeSecrets) const {
+  String json;
+  json.reserve(1024);
+  json += "{";
+  json += "\"notifyOnWarning\":"; json += (_s && _s->notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING ? "true" : "false"); json += ",";
+  json += "\"notifyOnRecovery\":"; json += (_s && _s->notifyOnRecovery ? "true" : "false"); json += ",";
+  json += "\"slackEnabled\":"; json += (_s && _s->slackEnabled ? "true" : "false"); json += ",";
+  json += "\"slackWebhookConfigured\":"; json += (_s && strlen(_s->slackWebhookUrl) ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "slackChannel", _s ? _s->slackChannel : "");
+  if (includeSecrets) sp7json::appendEscapedField(json, "slackWebhookUrl", _s ? _s->slackWebhookUrl : "");
+  sp7json::appendEscapedField(json, "telegramChatId", _s ? _s->telegramChatId : "");
+  json += "\"telegramEnabled\":"; json += (_s && _s->telegramEnabled ? "true" : "false"); json += ",";
+  json += "\"telegramTokenConfigured\":"; json += (_s && strlen(_s->telegramBotToken) ? "true" : "false"); json += ",";
+  if (includeSecrets) sp7json::appendEscapedField(json, "telegramBotToken", _s ? _s->telegramBotToken : "");
+  json += "\"whatsappEnabled\":"; json += (_s && _s->whatsappEnabled ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "whatsappPhoneNumberId", _s ? _s->whatsappPhoneNumberId : "");
+  sp7json::appendEscapedField(json, "whatsappRecipient", _s ? _s->whatsappRecipient : "");
+  sp7json::appendEscapedField(json, "whatsappApiVersion", _s ? _s->whatsappApiVersion : "v22.0");
+  json += "\"whatsappAccessTokenConfigured\":"; json += (_s && strlen(_s->whatsappAccessToken) ? "true" : "false"); json += ",";
+  if (includeSecrets) sp7json::appendEscapedField(json, "whatsappAccessToken", _s ? _s->whatsappAccessToken : "");
+  json += "\"currentAlertState\":"; json += String(_alertState); json += ",";
+  json += "\"lastOk\":"; json += (_notificationLastOk ? "true" : "false"); json += ",";
+  json += "\"lastAttemptTs\":"; json += String(_notificationLastAttemptTs); json += ",";
+  json += "\"lastSuccessTs\":"; json += String(_notificationLastSuccessTs); json += ",";
+  sp7json::appendEscapedField(json, "lastEvent", _notificationLastEvent.c_str());
+  sp7json::appendEscapedField(json, "lastResult", _notificationLastResult.c_str(), false);
+  json += "}";
+  return json;
+}
+
+void WebManager::handleNotificationsGet() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+  replyJson(200, notificationsJson(false));
+}
+
+void WebManager::handleNotificationsSave() {
+  if (!requireWebAuth()) return;
+  if (!requireStoreAndSettingsJson()) return;
+
+  const String body = _srv.arg("plain");
+  SettingsV1 next = *_s;
+
+  next.notifyOnWarning = sp7json::parseBool(body, "notifyOnWarning", next.notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING)
+    ? ALERT_NOTIFY_LEVEL_WARNING
+    : ALERT_NOTIFY_LEVEL_CRITICAL;
+  next.notifyOnRecovery = sp7json::parseBool(body, "notifyOnRecovery", next.notifyOnRecovery != 0) ? 1 : 0;
+  next.slackEnabled = sp7json::parseBool(body, "slackEnabled", next.slackEnabled != 0) ? 1 : 0;
+  next.telegramEnabled = sp7json::parseBool(body, "telegramEnabled", next.telegramEnabled != 0) ? 1 : 0;
+  next.whatsappEnabled = sp7json::parseBool(body, "whatsappEnabled", next.whatsappEnabled != 0) ? 1 : 0;
+
+  String slackWebhookUrl = sp7json::parseString(body, "slackWebhookUrl", "", true);
+  String slackChannel = sp7json::parseString(body, "slackChannel", String(next.slackChannel), false);
+  String telegramBotToken = sp7json::parseString(body, "telegramBotToken", "", true);
+  String telegramChatId = sp7json::parseString(body, "telegramChatId", String(next.telegramChatId), false);
+  String whatsappAccessToken = sp7json::parseString(body, "whatsappAccessToken", "", true);
+  String whatsappPhoneNumberId = sp7json::parseString(body, "whatsappPhoneNumberId", String(next.whatsappPhoneNumberId), false);
+  String whatsappRecipient = sp7json::parseString(body, "whatsappRecipient", String(next.whatsappRecipient), false);
+  String whatsappApiVersion = sp7json::parseString(body, "whatsappApiVersion", String(next.whatsappApiVersion), false);
+
+  const bool slackKeepWebhook = sp7json::parseBool(body, "slackKeepWebhook", false);
+  const bool telegramKeepToken = sp7json::parseBool(body, "telegramKeepToken", false);
+  const bool whatsappKeepAccessToken = sp7json::parseBool(body, "whatsappKeepAccessToken", false);
+
+  slackWebhookUrl.trim();
+  slackChannel.trim();
+  telegramBotToken.trim();
+  telegramChatId.trim();
+  whatsappAccessToken.trim();
+  whatsappPhoneNumberId.trim();
+  whatsappRecipient.trim();
+  whatsappApiVersion.trim();
+
+  if (slackKeepWebhook && !slackWebhookUrl.length()) slackWebhookUrl = String(_s->slackWebhookUrl);
+  if (telegramKeepToken && !telegramBotToken.length()) telegramBotToken = String(_s->telegramBotToken);
+  if (whatsappKeepAccessToken && !whatsappAccessToken.length()) whatsappAccessToken = String(_s->whatsappAccessToken);
+
+  if (next.slackEnabled && !(slackWebhookUrl.startsWith("https://") || slackWebhookUrl.startsWith("http://"))) {
+    replyErrorJson(400, "bad slack webhook");
+    return;
+  }
+  if (next.telegramEnabled && (!telegramBotToken.length() || !telegramChatId.length())) {
+    replyErrorJson(400, "telegram token/chat required");
+    return;
+  }
+  if (next.whatsappEnabled && (!whatsappAccessToken.length() || !whatsappPhoneNumberId.length() || !whatsappRecipient.length())) {
+    replyErrorJson(400, "whatsapp config incomplete");
+    return;
+  }
+  if (next.whatsappEnabled && (!whatsappApiVersion.startsWith("v") || whatsappApiVersion.length() < 2)) {
+    replyErrorJson(400, "bad whatsapp api version");
+    return;
+  }
+
+  if (!sp7json::safeCopy(next.slackWebhookUrl, sizeof(next.slackWebhookUrl), slackWebhookUrl)) {
+    replyErrorJson(400, "slack webhook too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.slackChannel, sizeof(next.slackChannel), slackChannel)) {
+    replyErrorJson(400, "slack channel too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.telegramBotToken, sizeof(next.telegramBotToken), telegramBotToken)) {
+    replyErrorJson(400, "telegram token too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.telegramChatId, sizeof(next.telegramChatId), telegramChatId)) {
+    replyErrorJson(400, "telegram chat too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.whatsappAccessToken, sizeof(next.whatsappAccessToken), whatsappAccessToken)) {
+    replyErrorJson(400, "whatsapp token too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.whatsappPhoneNumberId, sizeof(next.whatsappPhoneNumberId), whatsappPhoneNumberId)) {
+    replyErrorJson(400, "whatsapp phone id too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.whatsappRecipient, sizeof(next.whatsappRecipient), whatsappRecipient)) {
+    replyErrorJson(400, "whatsapp recipient too long");
+    return;
+  }
+  if (!sp7json::safeCopy(next.whatsappApiVersion, sizeof(next.whatsappApiVersion), whatsappApiVersion.length() ? whatsappApiVersion : String("v22.0"))) {
+    replyErrorJson(400, "whatsapp api version too long");
+    return;
+  }
+
+  *_s = next;
+  _store->save(*_s);
+  replyJson(200, String("{\"ok\":true,\"config\":") + notificationsJson(false) + "}");
+}
+
+void WebManager::handleNotificationsTest() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  if (!dispatchNotification(_alertState, true, g_webDbInstant, g_webLeq, g_webPeak, false)) {
+    replyErrorJson(502, _notificationLastResult.length() ? _notificationLastResult : String("notification failed"));
+    return;
+  }
+
+  replyJson(200, String("{\"ok\":true,\"lastOk\":true,\"lastResult\":\"") + sp7json::escape(_notificationLastResult.c_str()) + "\"}");
+}
+
 void WebManager::handleRoot() {
   const char* html =
 R"HTML(
@@ -2803,6 +3327,130 @@ R"HTML(
               </div>
               <div class="toast" id="toastMqttAdv"></div>
             </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Alertes Sortantes</div>
+                  <h2 class="sectionTitle">Slack, Telegram & WhatsApp</h2>
+                  <div class="hint">Envoi lors d'une alerte warning / critique ou au retour a la normale. Slack utilise un incoming webhook, Telegram le Bot API, WhatsApp le Cloud API Meta.</div>
+                </div>
+              </div>
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>Notifier des le niveau warning</label>
+                    <select id="notifyWarningAdv">
+                      <option value="0">Non, critique seulement</option>
+                      <option value="1">Oui, warning + critique</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Notifier le retour a la normale</label>
+                    <select id="notifyRecoveryAdv">
+                      <option value="1">Oui</option>
+                      <option value="0">Non</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Etat courant</label>
+                    <div class="pill mono" id="notificationsCurrentStateAdv">--</div>
+                  </div>
+                </div>
+                <div>
+                  <div class="field">
+                    <label>Cibles actives</label>
+                    <div class="hint mono" id="notificationsSummaryAdv">--</div>
+                  </div>
+                  <div class="field">
+                    <label>Dernier resultat</label>
+                    <div class="hint mono" id="notificationsLastResultAdv">Aucun envoi.</div>
+                  </div>
+                  <div class="field">
+                    <label>Dernier succes</label>
+                    <div class="hint mono" id="notificationsLastSuccessAdv">--</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>Slack actif</label>
+                    <select id="slackEnabledAdv">
+                      <option value="0">Non</option>
+                      <option value="1">Oui</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Slack incoming webhook</label>
+                    <input id="slackWebhookUrlAdv" type="password" placeholder="https://hooks.slack.com/services/..."/>
+                    <div class="hint">Laisse vide pour conserver l'URL deja stockee.</div>
+                  </div>
+                  <div class="field">
+                    <label>Room / channel Slack</label>
+                    <input id="slackChannelAdv" type="text" placeholder="#jeedom"/>
+                    <div class="hint">Option legacy. Les webhooks Slack modernes gardent souvent le canal defini cote Slack.</div>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field">
+                    <label>Telegram actif</label>
+                    <select id="telegramEnabledAdv">
+                      <option value="0">Non</option>
+                      <option value="1">Oui</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Telegram chat ID</label>
+                    <input id="telegramChatIdAdv" type="text" placeholder="-1001234567890"/>
+                  </div>
+                  <div class="field">
+                    <label>Telegram bot token</label>
+                    <input id="telegramBotTokenAdv" type="password" placeholder="123456:ABCDEF..."/>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settingsSplit">
+                <div>
+                  <div class="field">
+                    <label>WhatsApp actif</label>
+                    <select id="whatsappEnabledAdv">
+                      <option value="0">Non</option>
+                      <option value="1">Oui</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Meta Graph API version</label>
+                    <input id="whatsappApiVersionAdv" type="text" placeholder="v22.0"/>
+                  </div>
+                  <div class="field">
+                    <label>Phone Number ID</label>
+                    <input id="whatsappPhoneIdAdv" type="text" placeholder="123456789012345"/>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field">
+                    <label>Destinataire WhatsApp</label>
+                    <input id="whatsappRecipientAdv" type="text" placeholder="33612345678"/>
+                  </div>
+                  <div class="field">
+                    <label>Access token Meta</label>
+                    <input id="whatsappAccessTokenAdv" type="password" placeholder="EAA..."/>
+                    <div class="hint">Selon la politique Meta, certains envois WhatsApp peuvent necessiter des templates approuves.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="btnRow">
+                <button class="btn accent" id="saveNotificationsAdv">Sauver alertes</button>
+                <button class="btn" id="testNotificationsAdv">Envoyer un test</button>
+              </div>
+              <div class="toast" id="toastNotificationsAdv"></div>
+            </article>
           </div>
 
           <div class="settingsRail">
@@ -2837,6 +3485,7 @@ R"HTML(
                   <option value="calibration">Calibration</option>
                   <option value="ota">OTA</option>
                   <option value="mqtt">MQTT</option>
+                  <option value="notifications">Notifications</option>
                 </select>
               </div>
               <div class="btnRow">
@@ -4059,6 +4708,7 @@ R"HTML(
     await loadWifiSettings();
     await loadOtaSettings();
     await loadMqttSettings();
+    await loadNotificationSettings();
   }
 
   async function toggleBacklight() {
@@ -4332,6 +4982,89 @@ R"HTML(
       }), (r) => r.rebootRecommended ? "MQTT sauve. Reboot recommande." : "MQTT sauve.");
   }
 
+  function formatEpoch(ts) {
+    const value = Number(ts || 0);
+    if (!value) return "--";
+    return new Date(value * 1000).toLocaleString();
+  }
+
+  function alertStateLabel(value) {
+    if (value === 2) return "critique";
+    if (value === 1) return "warning";
+    return "normal";
+  }
+
+  function setSecretField(id, configured, configuredPlaceholder, emptyPlaceholder) {
+    resetPasswordField(id, configuredPlaceholder, emptyPlaceholder, configured);
+    $(id).dataset.keepSecret = configured ? "1" : "0";
+  }
+
+  function applyNotificationSettings(config) {
+    setBoolSelectValue("notifyWarningAdv", config.notifyOnWarning);
+    setBoolSelectValue("notifyRecoveryAdv", config.notifyOnRecovery);
+    setBoolSelectValue("slackEnabledAdv", config.slackEnabled);
+    setSecretField("slackWebhookUrlAdv", config.slackWebhookConfigured, "********", "https://hooks.slack.com/services/...");
+    setFieldValue("slackChannelAdv", config.slackChannel);
+    setBoolSelectValue("telegramEnabledAdv", config.telegramEnabled);
+    setFieldValue("telegramChatIdAdv", config.telegramChatId);
+    setSecretField("telegramBotTokenAdv", config.telegramTokenConfigured, "********", "123456:ABCDEF...");
+    setBoolSelectValue("whatsappEnabledAdv", config.whatsappEnabled);
+    setFieldValue("whatsappApiVersionAdv", config.whatsappApiVersion || "v22.0");
+    setFieldValue("whatsappPhoneIdAdv", config.whatsappPhoneNumberId);
+    setFieldValue("whatsappRecipientAdv", config.whatsappRecipient);
+    setSecretField("whatsappAccessTokenAdv", config.whatsappAccessTokenConfigured, "********", "EAA...");
+
+    const targets = [];
+    if (config.slackEnabled) targets.push("Slack");
+    if (config.telegramEnabled) targets.push("Telegram");
+    if (config.whatsappEnabled) targets.push("WhatsApp");
+    $("notificationsSummaryAdv").textContent = targets.length ? targets.join(" / ") : "Aucune cible active";
+    $("notificationsCurrentStateAdv").textContent = alertStateLabel(Number(config.currentAlertState || 0));
+    $("notificationsLastResultAdv").textContent = config.lastResult || "Aucun envoi.";
+    $("notificationsLastSuccessAdv").textContent = formatEpoch(config.lastSuccessTs);
+  }
+
+  async function loadNotificationSettings() {
+    try {
+      const n = await apiGet("/api/notifications");
+      applyNotificationSettings(n);
+    } catch (err) {
+      setToastError("toastNotificationsAdv", err);
+    }
+  }
+
+  async function saveNotificationSettings() {
+    await runToastRequest("toastNotificationsAdv", "Sauvegarde...", () => apiPost("/api/notifications", {
+        notifyOnWarning: getIntValue("notifyWarningAdv", 0),
+        notifyOnRecovery: getIntValue("notifyRecoveryAdv", 1),
+        slackEnabled: getIntValue("slackEnabledAdv", 0),
+        slackWebhookUrl: getFieldValue("slackWebhookUrlAdv"),
+        slackChannel: getTrimmedValue("slackChannelAdv"),
+        slackKeepWebhook: !getFieldValue("slackWebhookUrlAdv") && $("slackWebhookUrlAdv").dataset.keepSecret === "1",
+        telegramEnabled: getIntValue("telegramEnabledAdv", 0),
+        telegramChatId: getTrimmedValue("telegramChatIdAdv"),
+        telegramBotToken: getFieldValue("telegramBotTokenAdv"),
+        telegramKeepToken: !getFieldValue("telegramBotTokenAdv") && $("telegramBotTokenAdv").dataset.keepSecret === "1",
+        whatsappEnabled: getIntValue("whatsappEnabledAdv", 0),
+        whatsappApiVersion: getTrimmedValue("whatsappApiVersionAdv"),
+        whatsappPhoneNumberId: getTrimmedValue("whatsappPhoneIdAdv"),
+        whatsappRecipient: getTrimmedValue("whatsappRecipientAdv"),
+        whatsappAccessToken: getFieldValue("whatsappAccessTokenAdv"),
+        whatsappKeepAccessToken: !getFieldValue("whatsappAccessTokenAdv") && $("whatsappAccessTokenAdv").dataset.keepSecret === "1",
+      }), "Notifications sauvees.",
+      async () => {
+        await loadNotificationSettings();
+      });
+  }
+
+  async function testNotificationSettings() {
+    await runToastRequest("toastNotificationsAdv", "Envoi test...", () => apiPost("/api/notifications/test", {}),
+      "Notification de test envoyee.",
+      async () => {
+        await loadNotificationSettings();
+      });
+  }
+
   async function captureCalibration(index) {
     try {
       await apiPost("/api/calibrate", { index, refDb: state.calRefs[index] });
@@ -4492,6 +5225,8 @@ R"HTML(
   $("saveWifiAdv").addEventListener("click", saveWifiSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+  $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
+  $("testNotificationsAdv").addEventListener("click", testNotificationSettings);
   $("authSubmitBtn").addEventListener("click", submitAuth);
   $("authUsername").addEventListener("input", () => {
     $("authUsername").value = sanitizeUsernameValue($("authUsername").value);
@@ -4523,6 +5258,11 @@ R"HTML(
   [1, 2, 3, 4].forEach((slot) => {
     $(`wifiPassword${slot}`).addEventListener("input", () => {
       $(`wifiPassword${slot}`).dataset.keepPassword = "0";
+    });
+  });
+  ["slackWebhookUrlAdv", "telegramBotTokenAdv", "whatsappAccessTokenAdv"].forEach((id) => {
+    $(id).addEventListener("input", () => {
+      $(id).dataset.keepSecret = "0";
     });
   });
   $("configFile").addEventListener("change", async (ev) => {

@@ -38,8 +38,18 @@ static constexpr uint8_t HOME_ASSISTANT_TOKEN_MAX_LENGTH = 64;
 static constexpr uint8_t WIFI_CREDENTIAL_MAX_COUNT = 4;
 static constexpr uint8_t WIFI_SSID_MAX_LENGTH = 32;
 static constexpr uint8_t WIFI_PASSWORD_MAX_LENGTH = 64;
+static constexpr uint8_t SLACK_WEBHOOK_URL_MAX_LENGTH = 192;
+static constexpr uint8_t SLACK_CHANNEL_MAX_LENGTH = 80;
+static constexpr uint8_t TELEGRAM_BOT_TOKEN_MAX_LENGTH = 96;
+static constexpr uint8_t TELEGRAM_CHAT_ID_MAX_LENGTH = 48;
+static constexpr uint8_t WHATSAPP_ACCESS_TOKEN_MAX_LENGTH = 192;
+static constexpr uint8_t WHATSAPP_PHONE_NUMBER_ID_MAX_LENGTH = 32;
+static constexpr uint8_t WHATSAPP_RECIPIENT_MAX_LENGTH = 32;
+static constexpr uint8_t WHATSAPP_API_VERSION_MAX_LENGTH = 12;
 static constexpr uint8_t LIVE_DISABLED = 0;
 static constexpr uint8_t LIVE_ENABLED = 1;
+static constexpr uint8_t ALERT_NOTIFY_LEVEL_CRITICAL = 0;
+static constexpr uint8_t ALERT_NOTIFY_LEVEL_WARNING = 1;
 static constexpr uint8_t DASHBOARD_PAGE_OVERVIEW = 0;
 static constexpr uint8_t DASHBOARD_PAGE_CLOCK = 1;
 static constexpr uint8_t DASHBOARD_PAGE_LIVE = 2;
@@ -198,6 +208,24 @@ struct SettingsV1 {
   char mqttBaseTopic[128] = "soundpanel7";
   uint16_t mqttPublishPeriodMs = DEFAULT_MQTT_PUBLISH_PERIOD_MS;
   uint8_t mqttRetain = 0;
+
+  // Alert notifications
+  uint8_t notifyOnWarning = ALERT_NOTIFY_LEVEL_CRITICAL;
+  uint8_t notifyOnRecovery = 1;
+
+  uint8_t slackEnabled = 0;
+  char slackWebhookUrl[SLACK_WEBHOOK_URL_MAX_LENGTH + 1] = "";
+  char slackChannel[SLACK_CHANNEL_MAX_LENGTH + 1] = "";
+
+  uint8_t telegramEnabled = 0;
+  char telegramBotToken[TELEGRAM_BOT_TOKEN_MAX_LENGTH + 1] = "";
+  char telegramChatId[TELEGRAM_CHAT_ID_MAX_LENGTH + 1] = "";
+
+  uint8_t whatsappEnabled = 0;
+  char whatsappAccessToken[WHATSAPP_ACCESS_TOKEN_MAX_LENGTH + 1] = "";
+  char whatsappPhoneNumberId[WHATSAPP_PHONE_NUMBER_ID_MAX_LENGTH + 1] = "";
+  char whatsappRecipient[WHATSAPP_RECIPIENT_MAX_LENGTH + 1] = "";
+  char whatsappApiVersion[WHATSAPP_API_VERSION_MAX_LENGTH + 1] = "v22.0";
 };
 
 class SettingsStore {
