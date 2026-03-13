@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_display_panel.hpp>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 #include <lvgl.h>
 
 #include "AppRuntimeStats.h"
@@ -10,6 +11,7 @@
 #include "ui/UiManager.h"
 #include "WebManager.h"
 #include "AudioEngine.h"
+#include "AppConfig.h"
 #include "SharedHistory.h"
 
 #include "OtaManager.h"
@@ -37,6 +39,41 @@ static MqttManager g_mqtt;
 static constexpr bool kAudioDebugLogEnabled = false;
 static constexpr uint32_t kLvglSpikeThresholdUs = 30000;
 static constexpr uint32_t kLvglSpikeLogIntervalMs = 1500;
+
+static const char* otaStateLabel(esp_ota_img_states_t state) {
+  switch (state) {
+    case ESP_OTA_IMG_NEW: return "new";
+    case ESP_OTA_IMG_PENDING_VERIFY: return "pending_verify";
+    case ESP_OTA_IMG_VALID: return "valid";
+    case ESP_OTA_IMG_INVALID: return "invalid";
+    case ESP_OTA_IMG_ABORTED: return "aborted";
+    case ESP_OTA_IMG_UNDEFINED: return "undefined";
+    default: return "unknown";
+  }
+}
+
+static void confirmRunningOtaImage() {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  const esp_partition_t* boot = esp_ota_get_boot_partition();
+
+  esp_ota_img_states_t otaState = ESP_OTA_IMG_UNDEFINED;
+  esp_err_t stateErr = ESP_ERR_NOT_FOUND;
+  if (running) {
+    stateErr = esp_ota_get_state_partition(running, &otaState);
+  }
+
+  Serial0.printf("[BOOT] version=%s running=%s boot=%s state=%s err=%s\n",
+                 SOUNDPANEL7_VERSION,
+                 running ? running->label : "?",
+                 boot ? boot->label : "?",
+                 stateErr == ESP_OK ? otaStateLabel(otaState) : "unavailable",
+                 esp_err_to_name(stateErr));
+
+  if (stateErr == ESP_OK && otaState == ESP_OTA_IMG_PENDING_VERIFY) {
+    const esp_err_t confirmErr = esp_ota_mark_app_valid_cancel_rollback();
+    Serial0.printf("[BOOT] confirm running OTA image -> %s\n", esp_err_to_name(confirmErr));
+  }
+}
 
 static lv_obj_tree_walk_res_t countLvglObjectsCb(lv_obj_t* obj, void* user_data) {
   (void)obj;
@@ -68,6 +105,7 @@ void setup() {
   delay(200);
   Serial0.println();
   Serial0.println("BOOT OK (UART0)");
+  confirmRunningOtaImage();
 
   g_store.begin();
 
