@@ -1,6 +1,7 @@
 #include "WebManager.h"
 #include "LiveEventServer.h"
 #include "JsonHelpers.h"
+#include "ReleaseUpdateManager.h"
 #include "lvgl_v8_port.h"
 #include "ui/UiManager.h"
 
@@ -68,6 +69,26 @@ static void appendDeviceJson(String& json,
   json += "\"mqttEnabled\":"; json += (mqtt && mqtt->enabled() ? "true" : "false"); json += ",";
   json += "\"mqttConnected\":"; json += (mqtt && mqtt->connected() ? "true" : "false"); json += ",";
   sp7json::appendEscapedField(json, "mqttLastError", (mqtt && mqtt->lastError()) ? mqtt->lastError() : "");
+}
+
+static void appendReleaseUpdateJson(String& json, const ReleaseUpdateManager* releaseUpdate) {
+  json += "\"releaseUpdateChecked\":";
+  json += (releaseUpdate && releaseUpdate->hasChecked() ? "true" : "false");
+  json += ",";
+  json += "\"releaseUpdateOk\":";
+  json += (releaseUpdate && releaseUpdate->lastCheckOk() ? "true" : "false");
+  json += ",";
+  json += "\"releaseUpdateAvailable\":";
+  json += (releaseUpdate && releaseUpdate->updateAvailable() ? "true" : "false");
+  json += ",";
+  json += "\"releaseUpdateCheckedAt\":";
+  json += String(releaseUpdate ? releaseUpdate->lastCheckUnix() : 0U);
+  json += ",";
+  sp7json::appendEscapedField(json, "releaseLatestVersion",
+                              (releaseUpdate && releaseUpdate->latestVersion()[0]) ? releaseUpdate->latestVersion() : "");
+  sp7json::appendEscapedField(json, "releaseLastError",
+                              (releaseUpdate && releaseUpdate->lastError()[0]) ? releaseUpdate->lastError() : "",
+                              false);
 }
 
 static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHistory* history, bool includeCalibrationPointCount) {
@@ -434,6 +455,7 @@ bool WebManager::begin(SettingsStore* store,
                        esp_panel::board::Board* board,
                        SharedHistory* history,
                        OtaManager* ota,
+                       ReleaseUpdateManager* releaseUpdate,
                        MqttManager* mqtt,
                        UiManager* ui) {
   _store = store;
@@ -442,6 +464,7 @@ bool WebManager::begin(SettingsStore* store,
   _board = board;
   _history = history;
   _ota = ota;
+  _releaseUpdate = releaseUpdate;
   _mqtt = mqtt;
   _ui = ui;
   if (!_live) _live = new LiveEventServer(81, "/api/events");
@@ -513,6 +536,8 @@ void WebManager::routes() {
 
   _srv.on("/api/ota", kSyncHttpGet,  [this]() { handleOtaGet(); });
   _srv.on("/api/ota", kSyncHttpPost, [this]() { handleOtaSave(); });
+  _srv.on("/api/release", kSyncHttpGet,  [this]() { handleReleaseGet(); });
+  _srv.on("/api/release/check", kSyncHttpPost, [this]() { handleReleaseCheck(); });
 
   _srv.on("/api/mqtt", kSyncHttpGet,  [this]() { handleMqttGet(); });
   _srv.on("/api/mqtt", kSyncHttpPost, [this]() { handleMqttSave(); });
@@ -744,6 +769,7 @@ String WebManager::statusJson() const {
   json += "\"backupTs\":"; json += String(backupTs); json += ",";
   appendTimeJson(json, hasTime, tbuf);
   appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
+  appendReleaseUpdateJson(json, _releaseUpdate);
   appendUiStateJson(json, _s, _history, true);
   appendPinStateJson(json, pinConfigured());
   appendAudioMetricsJson(json, am);
@@ -1721,6 +1747,70 @@ void WebManager::handleOtaSave() {
                  strlen(_s->otaPassword) ? "<set>" : "<empty>");
 
   replyOkJsonRebootRequired();
+}
+
+void WebManager::handleReleaseGet() {
+  if (!requireWebAuth()) return;
+
+  String json;
+  json.reserve(960);
+  json += "{";
+  sp7json::appendEscapedField(json, "manifestUrl",
+                              (_releaseUpdate && _releaseUpdate->manifestUrl()) ? _releaseUpdate->manifestUrl() : "");
+  sp7json::appendEscapedField(json, "currentVersion",
+                              (_releaseUpdate && _releaseUpdate->currentVersion()) ? _releaseUpdate->currentVersion() : "");
+  json += "\"checked\":";
+  json += (_releaseUpdate && _releaseUpdate->hasChecked() ? "true" : "false");
+  json += ",";
+  json += "\"ok\":";
+  json += (_releaseUpdate && _releaseUpdate->lastCheckOk() ? "true" : "false");
+  json += ",";
+  json += "\"busy\":";
+  json += (_releaseUpdate && _releaseUpdate->busy() ? "true" : "false");
+  json += ",";
+  json += "\"available\":";
+  json += (_releaseUpdate && _releaseUpdate->updateAvailable() ? "true" : "false");
+  json += ",";
+  json += "\"httpCode\":";
+  json += String(_releaseUpdate ? _releaseUpdate->lastHttpCode() : 0);
+  json += ",";
+  json += "\"checkedAt\":";
+  json += String(_releaseUpdate ? _releaseUpdate->lastCheckUnix() : 0U);
+  json += ",";
+  sp7json::appendEscapedField(json, "latestVersion",
+                              (_releaseUpdate && _releaseUpdate->latestVersion()[0]) ? _releaseUpdate->latestVersion() : "");
+  sp7json::appendEscapedField(json, "publishedAt",
+                              (_releaseUpdate && _releaseUpdate->publishedAt()[0]) ? _releaseUpdate->publishedAt() : "");
+  sp7json::appendEscapedField(json, "releaseUrl",
+                              (_releaseUpdate && _releaseUpdate->releaseUrl()[0]) ? _releaseUpdate->releaseUrl() : "");
+  sp7json::appendEscapedField(json, "otaUrl",
+                              (_releaseUpdate && _releaseUpdate->otaUrl()[0]) ? _releaseUpdate->otaUrl() : "");
+  sp7json::appendEscapedField(json, "otaSha256",
+                              (_releaseUpdate && _releaseUpdate->otaSha256()[0]) ? _releaseUpdate->otaSha256() : "");
+  sp7json::appendEscapedField(json, "error",
+                              (_releaseUpdate && _releaseUpdate->lastError()[0]) ? _releaseUpdate->lastError() : "",
+                              false);
+  json += "}";
+
+  replyJson(200, json);
+}
+
+void WebManager::handleReleaseCheck() {
+  if (!requireWebAuth()) return;
+  if (!_releaseUpdate) {
+    replyErrorJson(500, "release manager unavailable");
+    return;
+  }
+  if (_releaseUpdate->busy()) {
+    replyErrorJson(409, "release check already running");
+    return;
+  }
+
+  const bool ok = _releaseUpdate->checkNow();
+  handleReleaseGet();
+  if (!ok) {
+    Serial0.printf("[WEB] Release check failed: %s\n", _releaseUpdate->lastError());
+  }
 }
 
 void WebManager::handleMqttGet() {
@@ -3564,6 +3654,46 @@ R"HTML(
             <article class="card settingsCardFlat">
               <div class="sectionHead">
                 <div>
+                  <div class="sectionKicker">Mise A Jour</div>
+                  <h2 class="sectionTitle">GitHub Releases</h2>
+                </div>
+              </div>
+              <div class="statusList compact">
+                <div class="statusItem">
+                  <div class="k">Firmware actuel</div>
+                  <div class="v mono" id="releaseCurrentVersion">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Dernier check</div>
+                  <div class="v mono" id="releaseLastCheck">Jamais</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Etat</div>
+                  <div class="v" id="releaseState">En attente</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Derniere version</div>
+                  <div class="v mono" id="releaseLatestVersion">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Publiee le</div>
+                  <div class="v mono" id="releasePublishedAt">--</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Manifest</div>
+                  <div class="v mono" id="releaseManifestUrl">--</div>
+                </div>
+              </div>
+              <div class="hint" id="releaseHint">Check manuel du dernier firmware publie sur GitHub.</div>
+              <div class="btnRow">
+                <button class="btn accent" id="checkReleaseBtn">Verifier les mises a jour</button>
+              </div>
+              <div class="toast" id="toastReleaseAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
                   <div class="sectionKicker">Diagnostic</div>
                   <h2 class="sectionTitle">Audio brut</h2>
                 </div>
@@ -4125,7 +4255,12 @@ R"HTML(
     const mqttState = st.mqttEnabled
       ? (st.mqttConnected ? "connecte" : (st.mqttLastError ? `erreur (${st.mqttLastError})` : "en attente"))
       : "off";
-    $("settingsOtaMqtt").textContent = `OTA ${otaState} / MQTT ${mqttState}`;
+    const releaseState = st.releaseUpdateChecked
+      ? (st.releaseUpdateAvailable
+          ? `update ${st.releaseLatestVersion || "dispo"}`
+          : (st.releaseUpdateOk ? "a jour" : "check en echec"))
+      : "update non verifiee";
+    $("settingsOtaMqtt").textContent = `OTA ${otaState} / MQTT ${mqttState} / ${releaseState}`;
     $("settingsActivePage").textContent = st.activePage || "--";
     $("settingsLvglLoad").textContent = `${lvglLoadPct}% / ${lvglIdlePct}%`;
     $("settingsLvglTiming").textContent =
@@ -4717,6 +4852,7 @@ R"HTML(
     await loadTimeSettings();
     await loadWifiSettings();
     await loadOtaSettings();
+    await loadReleaseStatus();
     await loadMqttSettings();
     await loadNotificationSettings();
   }
@@ -4976,6 +5112,77 @@ R"HTML(
     } catch (err) {
       setToastError("toastOtaAdv", err);
     }
+  }
+
+  function applyReleaseStatus(release) {
+    const checked = Boolean(release && release.checked);
+    const ok = Boolean(release && release.ok);
+    const available = Boolean(release && release.available);
+    const latestVersion = String((release && release.latestVersion) || "");
+    const error = String((release && release.error) || "");
+    const httpCode = Number((release && release.httpCode) || 0);
+
+    $("releaseCurrentVersion").textContent = String((release && release.currentVersion) || "--");
+    $("releaseLastCheck").textContent = checked ? formatEpoch(release.checkedAt) : "Jamais";
+    $("releaseLatestVersion").textContent = latestVersion || "--";
+    $("releasePublishedAt").textContent = (release && release.publishedAt) ? String(release.publishedAt) : "--";
+    $("releaseManifestUrl").textContent = String((release && release.manifestUrl) || "--");
+
+    let stateText = "En attente";
+    if (release && release.busy) {
+      stateText = "Verification en cours";
+    } else if (!checked) {
+      stateText = "Aucune verification encore";
+    } else if (!ok) {
+      stateText = error ? `Erreur: ${error}` : "Echec de verification";
+      if (httpCode > 0) stateText += ` (HTTP ${httpCode})`;
+    } else if (available) {
+      stateText = latestVersion ? `Mise a jour dispo: ${latestVersion}` : "Mise a jour disponible";
+    } else {
+      stateText = "Firmware a jour";
+    }
+    $("releaseState").textContent = stateText;
+
+    let hint = "Check manuel du dernier firmware publie sur GitHub.";
+    if (ok && available) {
+      hint = (release && release.otaUrl)
+        ? `Firmware pret pour l'etape suivante: ${release.otaUrl}`
+        : "Une release plus recente est disponible.";
+    } else if (ok && !available) {
+      hint = "Aucune release plus recente detectee.";
+    } else if (checked && error) {
+      hint = error;
+    }
+    $("releaseHint").textContent = hint;
+  }
+
+  async function loadReleaseStatus() {
+    try {
+      const release = await apiGet("/api/release");
+      applyReleaseStatus(release);
+    } catch (err) {
+      setToastError("toastReleaseAdv", err);
+    }
+  }
+
+  async function checkReleaseNow() {
+    await runToastRequest(
+      "toastReleaseAdv",
+      "Verification GitHub...",
+      () => apiPost("/api/release/check", {}),
+      (release) => {
+        applyReleaseStatus(release);
+        if (release && release.ok && release.available) {
+          return `Nouvelle version detectee: ${release.latestVersion || "inconnue"}.`;
+        }
+        if (release && release.ok) return "Firmware deja a jour.";
+        return "Verification terminee.";
+      },
+      async (release) => {
+        applyReleaseStatus(release);
+        await refreshStatus();
+      }
+    );
   }
 
   async function saveOtaSettings() {
@@ -5261,6 +5468,7 @@ R"HTML(
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveWifiAdv").addEventListener("click", saveWifiSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
+  $("checkReleaseBtn").addEventListener("click", checkReleaseNow);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
   $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
   $("testNotificationsAdv").addEventListener("click", testNotificationSettings);

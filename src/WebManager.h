@@ -12,6 +12,7 @@
 
 class UiManager;
 class LiveEventServer;
+class ReleaseUpdateManager;
 
 class WebManager {
 public:
@@ -21,6 +22,7 @@ public:
              esp_panel::board::Board* board,
              SharedHistory* history,
              OtaManager* ota,
+             ReleaseUpdateManager* releaseUpdate,
              MqttManager* mqtt,
              UiManager* ui);
   void loop();
@@ -48,6 +50,7 @@ private:
   NetManager* _net = nullptr;
   esp_panel::board::Board* _board = nullptr;
   OtaManager* _ota = nullptr;
+  ReleaseUpdateManager* _releaseUpdate = nullptr;
   MqttManager* _mqtt = nullptr;
   UiManager* _ui = nullptr;
   LiveEventServer* _live = nullptr;
@@ -149,6 +152,8 @@ private:
   void handleCalMode();
   void handleOtaGet();
   void handleOtaSave();
+  void handleReleaseGet();
+  void handleReleaseCheck();
   void handleMqttGet();
   void handleMqttSave();
   void handleNotificationsGet();
