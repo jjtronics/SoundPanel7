@@ -14,14 +14,14 @@ The version is declared in:
 - `include/AppConfig.h`
 - `custom_components/soundpanel7/manifest.json`
 
-At the time of writing, both are set to `0.1.5`.
+At the time of writing, both are set to `0.2.0`.
 
 ## First release recommendation
 
 If the current state is the one you want to publish, release:
 
-- Git tag: `v0.1.5`
-- GitHub release title: `SoundPanel7 v0.1.5`
+- Git tag: `v0.2.0`
+- GitHub release title: `SoundPanel7 v0.2.0`
 
 ## Release checklist
 
@@ -47,12 +47,12 @@ pio run -e soundpanel7_ota
 ## Create the Git tag
 
 ```bash
-git tag -a v0.1.5 -m "SoundPanel7 v0.1.5"
+git tag -a v0.2.0 -m "SoundPanel7 v0.2.0"
 git push origin main
-git push origin v0.1.5
+git push origin v0.2.0
 ```
 
-If you release another version later, replace `0.1.5` everywhere consistently.
+If you release another version later, replace `0.2.0` everywhere consistently.
 
 ## Create the GitHub release
 
@@ -60,8 +60,8 @@ On GitHub:
 
 1. Open `Releases`
 2. Click `Draft a new release`
-3. Select tag `v0.1.5`
-4. Title it `SoundPanel7 v0.1.5`
+3. Select tag `v0.2.0`
+4. Title it `SoundPanel7 v0.2.0`
 5. Add release notes
 6. Publish
 
@@ -103,21 +103,21 @@ Current structure:
 ```json
 {
   "project": "SoundPanel7",
-  "tag": "v0.1.5",
-  "version": "0.1.5",
+  "tag": "v0.2.0",
+  "version": "0.2.0",
   "published_at": "2026-03-13T12:00:00Z",
-  "release_url": "https://github.com/jjtronics/SoundPanel7/releases/tag/v0.1.5",
+  "release_url": "https://github.com/jjtronics/SoundPanel7/releases/tag/v0.2.0",
   "ota": {
     "name": "soundpanel7_usb-firmware.bin",
     "type": "firmware",
-    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.1.5/soundpanel7_usb-firmware.bin",
+    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_usb-firmware.bin",
     "sha256": "..."
   },
   "assets": [
     {
       "name": "soundpanel7_usb-firmware.bin",
       "type": "firmware",
-      "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.1.5/soundpanel7_usb-firmware.bin",
+      "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_usb-firmware.bin",
       "sha256": "..."
     }
   ]
