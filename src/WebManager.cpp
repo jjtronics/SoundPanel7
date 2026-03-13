@@ -86,9 +86,36 @@ static void appendReleaseUpdateJson(String& json, const ReleaseUpdateManager* re
   json += ",";
   sp7json::appendEscapedField(json, "releaseLatestVersion",
                               (releaseUpdate && releaseUpdate->latestVersion()[0]) ? releaseUpdate->latestVersion() : "");
+  json += "\"releaseInstallInProgress\":";
+  json += (releaseUpdate && releaseUpdate->installInProgress() ? "true" : "false");
+  json += ",";
+  json += "\"releaseInstallFinished\":";
+  json += (releaseUpdate && releaseUpdate->installFinished() ? "true" : "false");
+  json += ",";
+  json += "\"releaseInstallSucceeded\":";
+  json += (releaseUpdate && releaseUpdate->installSucceeded() ? "true" : "false");
+  json += ",";
+  json += "\"releaseInstallStartedAt\":";
+  json += String(releaseUpdate ? releaseUpdate->installStartedUnix() : 0U);
+  json += ",";
+  json += "\"releaseInstallFinishedAt\":";
+  json += String(releaseUpdate ? releaseUpdate->installFinishedUnix() : 0U);
+  json += ",";
+  json += "\"releaseInstallTotalBytes\":";
+  json += String(releaseUpdate ? releaseUpdate->installTotalBytes() : 0U);
+  json += ",";
+  json += "\"releaseInstallWrittenBytes\":";
+  json += String(releaseUpdate ? releaseUpdate->installWrittenBytes() : 0U);
+  json += ",";
+  json += "\"releaseInstallProgressPct\":";
+  json += String(releaseUpdate ? releaseUpdate->installProgressPct() : 0U);
+  json += ",";
+  sp7json::appendEscapedField(json, "releaseInstallStatus",
+                              (releaseUpdate && releaseUpdate->installStatus()[0]) ? releaseUpdate->installStatus() : "");
+  sp7json::appendEscapedField(json, "releaseInstallError",
+                              (releaseUpdate && releaseUpdate->installError()[0]) ? releaseUpdate->installError() : "");
   sp7json::appendEscapedField(json, "releaseLastError",
-                              (releaseUpdate && releaseUpdate->lastError()[0]) ? releaseUpdate->lastError() : "",
-                              false);
+                              (releaseUpdate && releaseUpdate->lastError()[0]) ? releaseUpdate->lastError() : "");
 }
 
 static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHistory* history, bool includeCalibrationPointCount) {
@@ -538,6 +565,7 @@ void WebManager::routes() {
   _srv.on("/api/ota", kSyncHttpPost, [this]() { handleOtaSave(); });
   _srv.on("/api/release", kSyncHttpGet,  [this]() { handleReleaseGet(); });
   _srv.on("/api/release/check", kSyncHttpPost, [this]() { handleReleaseCheck(); });
+  _srv.on("/api/release/install", kSyncHttpPost, [this]() { handleReleaseInstall(); });
 
   _srv.on("/api/mqtt", kSyncHttpGet,  [this]() { handleMqttGet(); });
   _srv.on("/api/mqtt", kSyncHttpPost, [this]() { handleMqttSave(); });
@@ -1787,6 +1815,34 @@ void WebManager::handleReleaseGet() {
                               (_releaseUpdate && _releaseUpdate->otaUrl()[0]) ? _releaseUpdate->otaUrl() : "");
   sp7json::appendEscapedField(json, "otaSha256",
                               (_releaseUpdate && _releaseUpdate->otaSha256()[0]) ? _releaseUpdate->otaSha256() : "");
+  json += "\"installing\":";
+  json += (_releaseUpdate && _releaseUpdate->installInProgress() ? "true" : "false");
+  json += ",";
+  json += "\"installFinished\":";
+  json += (_releaseUpdate && _releaseUpdate->installFinished() ? "true" : "false");
+  json += ",";
+  json += "\"installSucceeded\":";
+  json += (_releaseUpdate && _releaseUpdate->installSucceeded() ? "true" : "false");
+  json += ",";
+  json += "\"installStartedAt\":";
+  json += String(_releaseUpdate ? _releaseUpdate->installStartedUnix() : 0U);
+  json += ",";
+  json += "\"installFinishedAt\":";
+  json += String(_releaseUpdate ? _releaseUpdate->installFinishedUnix() : 0U);
+  json += ",";
+  json += "\"installTotalBytes\":";
+  json += String(_releaseUpdate ? _releaseUpdate->installTotalBytes() : 0U);
+  json += ",";
+  json += "\"installWrittenBytes\":";
+  json += String(_releaseUpdate ? _releaseUpdate->installWrittenBytes() : 0U);
+  json += ",";
+  json += "\"installProgressPct\":";
+  json += String(_releaseUpdate ? _releaseUpdate->installProgressPct() : 0U);
+  json += ",";
+  sp7json::appendEscapedField(json, "installStatus",
+                              (_releaseUpdate && _releaseUpdate->installStatus()[0]) ? _releaseUpdate->installStatus() : "");
+  sp7json::appendEscapedField(json, "installError",
+                              (_releaseUpdate && _releaseUpdate->installError()[0]) ? _releaseUpdate->installError() : "");
   sp7json::appendEscapedField(json, "error",
                               (_releaseUpdate && _releaseUpdate->lastError()[0]) ? _releaseUpdate->lastError() : "",
                               false);
@@ -1811,6 +1867,20 @@ void WebManager::handleReleaseCheck() {
   if (!ok) {
     Serial0.printf("[WEB] Release check failed: %s\n", _releaseUpdate->lastError());
   }
+}
+
+void WebManager::handleReleaseInstall() {
+  if (!requireWebAuth()) return;
+  if (!_releaseUpdate) {
+    replyErrorJson(500, "release manager unavailable");
+    return;
+  }
+  if (!_releaseUpdate->startInstall()) {
+    const char* error = _releaseUpdate->installError();
+    replyErrorJson(409, (error && error[0]) ? String(error) : String("install start failed"));
+    return;
+  }
+  handleReleaseGet();
 }
 
 void WebManager::handleMqttGet() {
@@ -2540,7 +2610,7 @@ R"HTML(
     .histAxisMid{
       position:absolute;left:50%;transform:translateX(-50%);
     }
-    .settingsPage{display:grid;grid-template-columns:minmax(0,1.35fr) 360px;gap:14px}
+    .settingsPage{display:grid;grid-template-columns:minmax(0,1.2fr) 400px;gap:16px}
     .settingsMain,.settingsRail{display:flex;flex-direction:column;gap:14px}
     .settingsHero{
       background:
@@ -2601,6 +2671,7 @@ R"HTML(
     .statusList{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
     .statusItem{
       background:var(--panel3);border:1px solid rgba(255,255,255,.03);border-radius:16px;padding:14px;
+      min-width:0;
     }
     .statusItem .v{
       font-size:18px;
@@ -2622,6 +2693,29 @@ R"HTML(
     .healthBadge.ok{background:rgba(35,197,82,.12);color:#7ee2a0;border-color:rgba(35,197,82,.2)}
     .healthBadge.bad{background:rgba(229,57,53,.12);color:#ff8f8a;border-color:rgba(229,57,53,.2)}
     .statusList.compact .statusItem{padding:12px 13px}
+    .releaseCard{
+      overflow:hidden;
+      background:
+        radial-gradient(circle at top right, rgba(122,30,44,.18), transparent 34%),
+        linear-gradient(180deg, #121b27 0%, #101722 100%);
+    }
+    .releaseCard .statusList{
+      grid-template-columns:1fr;
+    }
+    .releaseCard .statusItem .v,
+    .releaseCard .hint{
+      white-space:normal;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    .releaseCard .statusItem .v{
+      font-size:15px;
+      line-height:1.35;
+      letter-spacing:0;
+    }
+    .releaseCard .btnRow{
+      margin-top:14px;
+    }
     .settingsSplit{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .actionsCard .btnRow{margin-top:10px}
     .liveActionWrap{display:grid;gap:10px}
@@ -3619,39 +3713,7 @@ R"HTML(
               <div class="toast" id="actionsToast"></div>
             </article>
 
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Mise A Jour</div>
-                  <h2 class="sectionTitle">OTA</h2>
-                </div>
-              </div>
-              <div class="field">
-                <label>Activer OTA</label>
-                <select id="otaEnabledAdv">
-                  <option value="1">Oui</option>
-                  <option value="0">Non</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>Hostname OTA</label>
-                <input id="otaHostnameAdv" type="text" placeholder="soundpanel7"/>
-              </div>
-              <div class="field">
-                <label>Port OTA</label>
-                <input id="otaPortAdv" type="number" min="1" max="65535" placeholder="3232"/>
-              </div>
-              <div class="field">
-                <label>Mot de passe OTA</label>
-                <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
-              </div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveOtaAdv">Sauver OTA</button>
-              </div>
-              <div class="toast" id="toastOtaAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
+            <article class="card settingsCardFlat releaseCard">
               <div class="sectionHead">
                 <div>
                   <div class="sectionKicker">Mise A Jour</div>
@@ -3683,12 +3745,53 @@ R"HTML(
                   <div class="k">Manifest</div>
                   <div class="v mono" id="releaseManifestUrl">--</div>
                 </div>
+                <div class="statusItem">
+                  <div class="k">Installation</div>
+                  <div class="v mono" id="releaseInstallState">Inactive</div>
+                </div>
+                <div class="statusItem">
+                  <div class="k">Progression</div>
+                  <div class="v mono" id="releaseInstallProgress">0%</div>
+                </div>
               </div>
               <div class="hint" id="releaseHint">Check manuel du dernier firmware publie sur GitHub.</div>
               <div class="btnRow">
                 <button class="btn accent" id="checkReleaseBtn">Verifier les mises a jour</button>
+                <button class="btn" id="installReleaseBtn" disabled>Installer</button>
               </div>
               <div class="toast" id="toastReleaseAdv"></div>
+            </article>
+
+            <article class="card settingsCardFlat">
+              <div class="sectionHead">
+                <div>
+                  <div class="sectionKicker">Mise A Jour</div>
+                  <h2 class="sectionTitle">OTA</h2>
+                </div>
+              </div>
+              <div class="field">
+                <label>Activer OTA</label>
+                <select id="otaEnabledAdv">
+                  <option value="1">Oui</option>
+                  <option value="0">Non</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Hostname OTA</label>
+                <input id="otaHostnameAdv" type="text" placeholder="soundpanel7"/>
+              </div>
+              <div class="field">
+                <label>Port OTA</label>
+                <input id="otaPortAdv" type="number" min="1" max="65535" placeholder="3232"/>
+              </div>
+              <div class="field">
+                <label>Mot de passe OTA</label>
+                <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
+              </div>
+              <div class="btnRow">
+                <button class="btn accent" id="saveOtaAdv">Sauver OTA</button>
+              </div>
+              <div class="toast" id="toastOtaAdv"></div>
             </article>
 
             <article class="card settingsCardFlat">
@@ -3747,6 +3850,8 @@ R"HTML(
     currentPage: "overview",
     events: null,
     reconnectTimer: null,
+    releaseInstallPollTimer: null,
+    releaseInstallPollPending: false,
     hasLiveFeed: false,
     lastContactMs: 0,
     orangeSinceMs: 0,
@@ -4260,7 +4365,10 @@ R"HTML(
           ? `update ${st.releaseLatestVersion || "dispo"}`
           : (st.releaseUpdateOk ? "a jour" : "check en echec"))
       : "update non verifiee";
-    $("settingsOtaMqtt").textContent = `OTA ${otaState} / MQTT ${mqttState} / ${releaseState}`;
+    const installState = st.releaseInstallInProgress
+      ? ` / install ${Number(st.releaseInstallProgressPct ?? 0)}%`
+      : "";
+    $("settingsOtaMqtt").textContent = `OTA ${otaState} / MQTT ${mqttState} / ${releaseState}${installState}`;
     $("settingsActivePage").textContent = st.activePage || "--";
     $("settingsLvglLoad").textContent = `${lvglLoadPct}% / ${lvglIdlePct}%`;
     $("settingsLvglTiming").textContent =
@@ -4344,6 +4452,9 @@ R"HTML(
 
     if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "");
     updateStatusSummary(merged);
+    if ("releaseUpdateChecked" in st || "releaseInstallStatus" in st) {
+      applyReleaseStatus(merged);
+    }
     applyPinState();
     updateHistoryLabels();
     if ("calibrationPointCount" in merged) {
@@ -4746,9 +4857,16 @@ R"HTML(
     const url = `${baseUrl}?t=${encodeURIComponent(state.liveToken)}`;
     state.events = new EventSource(url);
     state.events.addEventListener("metrics", (ev) => {
-      state.hasLiveFeed = true;
-      setSystemBadgeOnline();
-      applyStatus(JSON.parse(ev.data));
+      try {
+        const payload = JSON.parse(ev.data);
+        state.hasLiveFeed = true;
+        setSystemBadgeOnline();
+        applyStatus(payload);
+      } catch (err) {
+        state.hasLiveFeed = false;
+        setSystemBadgeError();
+        refreshStatus();
+      }
     });
     state.events.onerror = () => {
       state.hasLiveFeed = false;
@@ -5115,21 +5233,35 @@ R"HTML(
   }
 
   function applyReleaseStatus(release) {
-    const checked = Boolean(release && release.checked);
-    const ok = Boolean(release && release.ok);
-    const available = Boolean(release && release.available);
-    const latestVersion = String((release && release.latestVersion) || "");
-    const error = String((release && release.error) || "");
-    const httpCode = Number((release && release.httpCode) || 0);
+    if (!$("releaseCurrentVersion")) return;
 
-    $("releaseCurrentVersion").textContent = String((release && release.currentVersion) || "--");
-    $("releaseLastCheck").textContent = checked ? formatEpoch(release.checkedAt) : "Jamais";
-    $("releaseLatestVersion").textContent = latestVersion || "--";
-    $("releasePublishedAt").textContent = (release && release.publishedAt) ? String(release.publishedAt) : "--";
-    $("releaseManifestUrl").textContent = String((release && release.manifestUrl) || "--");
+    const checked = Boolean(release && (release.checked ?? release.releaseUpdateChecked));
+    const ok = Boolean(release && (release.ok ?? release.releaseUpdateOk));
+    const available = Boolean(release && (release.available ?? release.releaseUpdateAvailable));
+    const latestVersion = String((release && (release.latestVersion ?? release.releaseLatestVersion)) || "");
+    const error = String((release && (release.error ?? release.releaseLastError)) || "");
+    const httpCode = Number((release && release.httpCode) || 0);
+    const manifestUrl = String((release && release.manifestUrl) || "");
+    const currentVersion = String((release && release.currentVersion) || (state.status && state.status.version) || "--");
+    const publishedAt = String((release && release.publishedAt) || "");
+    const otaUrl = String((release && release.otaUrl) || "");
+    const installing = Boolean(release && (release.installing ?? release.releaseInstallInProgress));
+    const installFinished = Boolean(release && (release.installFinished ?? release.releaseInstallFinished));
+    const installSucceeded = Boolean(release && (release.installSucceeded ?? release.releaseInstallSucceeded));
+    const installStatus = String((release && (release.installStatus ?? release.releaseInstallStatus)) || "idle");
+    const installError = String((release && (release.installError ?? release.releaseInstallError)) || "");
+    const installProgressPct = Number((release && (release.installProgressPct ?? release.releaseInstallProgressPct)) || 0);
+    const installWrittenBytes = Number((release && (release.installWrittenBytes ?? release.releaseInstallWrittenBytes)) || 0);
+    const installTotalBytes = Number((release && (release.installTotalBytes ?? release.releaseInstallTotalBytes)) || 0);
+
+    setTextIfPresent("releaseCurrentVersion", currentVersion || "--");
+    setTextIfPresent("releaseLastCheck", checked ? formatEpoch(release.checkedAt ?? release.releaseUpdateCheckedAt) : "Jamais");
+    setTextIfPresent("releaseLatestVersion", latestVersion || "--");
+    setTextIfPresent("releasePublishedAt", publishedAt || "--");
+    setTextIfPresent("releaseManifestUrl", manifestUrl || "--");
 
     let stateText = "En attente";
-    if (release && release.busy) {
+    if (release && release.busy && !installing) {
       stateText = "Verification en cours";
     } else if (!checked) {
       stateText = "Aucune verification encore";
@@ -5141,19 +5273,90 @@ R"HTML(
     } else {
       stateText = "Firmware a jour";
     }
-    $("releaseState").textContent = stateText;
+    setTextIfPresent("releaseState", stateText);
+
+    let installStateText = "Inactive";
+    if (installing) {
+      installStateText = installStatus === "verifying"
+        ? "Verification SHA-256"
+        : (installStatus === "rebooting" ? "Installation terminee, reboot..." : "Installation en cours");
+    } else if (installFinished) {
+      installStateText = installSucceeded ? "Installation terminee" : `Echec: ${installError || installStatus}`;
+    }
+    setTextIfPresent("releaseInstallState", installStateText);
+
+    const installProgressText = installTotalBytes > 0
+      ? `${installProgressPct}% (${formatBytes(installWrittenBytes)} / ${formatBytes(installTotalBytes)})`
+      : `${installProgressPct}%`;
+    setTextIfPresent("releaseInstallProgress", installProgressText);
 
     let hint = "Check manuel du dernier firmware publie sur GitHub.";
-    if (ok && available) {
-      hint = (release && release.otaUrl)
-        ? `Firmware pret pour l'etape suivante: ${release.otaUrl}`
+    if (installing) {
+      hint = installTotalBytes > 0
+        ? `Installation ${installProgressPct}% - ${formatBytes(installWrittenBytes)} / ${formatBytes(installTotalBytes)}`
+        : "Installation en cours...";
+    } else if (installFinished && installSucceeded) {
+      hint = "Firmware installe. Redemarrage automatique en cours.";
+    } else if (installFinished && installError) {
+      hint = installError;
+    } else if (ok && available) {
+      hint = otaUrl
+        ? `Firmware pret a installer: ${otaUrl}`
         : "Une release plus recente est disponible.";
     } else if (ok && !available) {
       hint = "Aucune release plus recente detectee.";
     } else if (checked && error) {
       hint = error;
     }
-    $("releaseHint").textContent = hint;
+    setTextIfPresent("releaseHint", hint);
+
+    const installBtn = $("installReleaseBtn");
+    if (installBtn) {
+      const canInstall = ok && available && !installing;
+      installBtn.disabled = !canInstall;
+      installBtn.textContent = installing ? "Installation..." : "Installer";
+    }
+
+    syncReleaseInstallPolling(release);
+  }
+
+  function stopReleaseInstallPolling() {
+    if (state.releaseInstallPollTimer) {
+      clearInterval(state.releaseInstallPollTimer);
+      state.releaseInstallPollTimer = null;
+    }
+    state.releaseInstallPollPending = false;
+  }
+
+  async function pollReleaseInstallStatusOnce() {
+    if (!state.authenticated) {
+      stopReleaseInstallPolling();
+      return;
+    }
+    if (state.releaseInstallPollPending) return;
+
+    state.releaseInstallPollPending = true;
+    try {
+      const release = await apiGet("/api/release");
+      applyReleaseStatus(release);
+      const installing = Boolean(release && (release.installing ?? release.releaseInstallInProgress));
+      if (!installing) {
+        stopReleaseInstallPolling();
+        await refreshStatus();
+      }
+    } catch (err) {
+    }
+    state.releaseInstallPollPending = false;
+  }
+
+  function syncReleaseInstallPolling(release) {
+    const installing = Boolean(release && (release.installing ?? release.releaseInstallInProgress));
+    if (!installing) {
+      stopReleaseInstallPolling();
+      return;
+    }
+    if (state.releaseInstallPollTimer) return;
+    state.releaseInstallPollTimer = setInterval(pollReleaseInstallStatusOnce, 1000);
   }
 
   async function loadReleaseStatus() {
@@ -5177,6 +5380,23 @@ R"HTML(
         }
         if (release && release.ok) return "Firmware deja a jour.";
         return "Verification terminee.";
+      },
+      async (release) => {
+        applyReleaseStatus(release);
+        await refreshStatus();
+      }
+    );
+  }
+
+  async function installReleaseNow() {
+    if (!confirm("Installer le firmware trouve sur GitHub puis redemarrer le panneau ?")) return;
+    await runToastRequest(
+      "toastReleaseAdv",
+      "Lancement installation...",
+      () => apiPost("/api/release/install", {}),
+      (release) => {
+        applyReleaseStatus(release);
+        return "Installation OTA demarree.";
       },
       async (release) => {
         applyReleaseStatus(release);
@@ -5229,6 +5449,19 @@ R"HTML(
     const value = Number(ts || 0);
     if (!value) return "--";
     return new Date(value * 1000).toLocaleString();
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    if (!value) return "0 B";
+    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${value} B`;
+  }
+
+  function setTextIfPresent(id, value) {
+    const el = $(id);
+    if (el) el.textContent = value;
   }
 
   function alertStateLabel(value) {
@@ -5468,7 +5701,8 @@ R"HTML(
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveWifiAdv").addEventListener("click", saveWifiSettings);
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
-  $("checkReleaseBtn").addEventListener("click", checkReleaseNow);
+  if ($("checkReleaseBtn")) $("checkReleaseBtn").addEventListener("click", checkReleaseNow);
+  if ($("installReleaseBtn")) $("installReleaseBtn").addEventListener("click", installReleaseNow);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
   $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
   $("testNotificationsAdv").addEventListener("click", testNotificationSettings);

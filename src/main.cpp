@@ -115,6 +115,18 @@ void loop() {
   g_net.loop();
   g_ota.loop();
   g_releaseUpdate.loop();
+  if (g_ota.inProgress()) {
+    // OTA is timing-sensitive on the ESP32. Keep the loop as quiet as possible
+    // so the upload stream and flash writes are not disturbed by UI, audio, MQTT,
+    // or web activity.
+    delay(1);
+    return;
+  }
+  if (g_releaseUpdate.installInProgress()) {
+    g_web.loop();
+    delay(1);
+    return;
+  }
   g_mqtt.loop();
   g_web.loop();
 

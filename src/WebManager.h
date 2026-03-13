@@ -154,6 +154,7 @@ private:
   void handleOtaSave();
   void handleReleaseGet();
   void handleReleaseCheck();
+  void handleReleaseInstall();
   void handleMqttGet();
   void handleMqttSave();
   void handleNotificationsGet();

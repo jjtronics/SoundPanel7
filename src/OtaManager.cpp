@@ -8,7 +8,9 @@ static constexpr uint32_t kOtaRetryIntervalMs = 5000;
 bool OtaManager::begin(SettingsV1* settings) {
   _s = settings;
   _started = false;
+  _inProgress = false;
   _lastStartAttemptMs = 0;
+  _lastLoggedProgressPct = 255;
 
   if (!_s) {
     Serial0.println("[OTA] settings=null");
@@ -44,7 +46,9 @@ bool OtaManager::tryStart() {
     return false;
   }
 
+  WiFi.setSleep(false);
   ArduinoOTA.setHostname(_s->otaHostname);
+  ArduinoOTA.setTimeout(15000);
 
   if (_s->otaPort > 0) {
     ArduinoOTA.setPort(_s->otaPort);
@@ -55,17 +59,23 @@ bool OtaManager::tryStart() {
   }
 
   ArduinoOTA
-    .onStart([]() {
+    .onStart([this]() {
+      _inProgress = true;
+      _lastLoggedProgressPct = 255;
       Serial0.println("[OTA] Start");
     })
-    .onEnd([]() {
+    .onEnd([this]() {
+      _inProgress = false;
       Serial0.println("\n[OTA] End");
     })
-    .onProgress([](unsigned int progress, unsigned int total) {
-      unsigned pct = (total == 0) ? 0 : (progress * 100U) / total;
-      Serial0.printf("[OTA] Progress: %u%%\r", pct);
+    .onProgress([this](unsigned int progress, unsigned int total) {
+      const uint8_t pct = (total == 0) ? 0 : (uint8_t)((progress * 100U) / total);
+      if (pct == _lastLoggedProgressPct) return;
+      _lastLoggedProgressPct = pct;
+      Serial0.printf("[OTA] Progress: %u%%\n", (unsigned)pct);
     })
-    .onError([](ota_error_t error) {
+    .onError([this](ota_error_t error) {
+      _inProgress = false;
       Serial0.printf("[OTA] Error[%u]\n", (unsigned)error);
     });
 

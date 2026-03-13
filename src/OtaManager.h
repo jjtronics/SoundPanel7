@@ -9,11 +9,14 @@ public:
   void loop();
   bool started() const { return _started; }
   bool enabled() const { return _s && _s->otaEnabled; }
+  bool inProgress() const { return _inProgress; }
 
 private:
   SettingsV1* _s = nullptr;
   bool _started = false;
+  bool _inProgress = false;
   uint32_t _lastStartAttemptMs = 0;
+  uint8_t _lastLoggedProgressPct = 255;
 
   bool tryStart();
 };
