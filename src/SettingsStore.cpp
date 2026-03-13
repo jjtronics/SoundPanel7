@@ -4,10 +4,360 @@
 #include <ctime>
 #include <cstring>
 #include <math.h>
+#include <stdlib.h>
+
+#include <esp_mac.h>
+#include <esp_random.h>
+#include <mbedtls/gcm.h>
+#include <mbedtls/sha256.h>
+
+namespace {
+static constexpr const char* kEncryptedSecretPrefix = "enc:v1:";
+static constexpr const char* kPinHashPrefix = "h1:";
+static constexpr size_t kEncryptedSecretNonceLength = 12;
+static constexpr size_t kEncryptedSecretTagLength = 16;
+static constexpr size_t kSecretKeyLength = 32;
+
+bool secureEqualsRaw(const char* a, const char* b) {
+  const size_t lenA = a ? strlen(a) : 0;
+  const size_t lenB = b ? strlen(b) : 0;
+  const size_t len = lenA > lenB ? lenA : lenB;
+  uint8_t diff = (uint8_t)(lenA ^ lenB);
+  for (size_t i = 0; i < len; i++) {
+    const uint8_t ca = (a && i < lenA) ? (uint8_t)a[i] : 0U;
+    const uint8_t cb = (b && i < lenB) ? (uint8_t)b[i] : 0U;
+    diff |= (uint8_t)(ca ^ cb);
+  }
+  return diff == 0;
+}
+
+bool isHexChar(char c) {
+  return (c >= '0' && c <= '9')
+    || (c >= 'a' && c <= 'f')
+    || (c >= 'A' && c <= 'F');
+}
+
+uint8_t hexValue(char c) {
+  if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
+  if (c >= 'a' && c <= 'f') return (uint8_t)(10 + (c - 'a'));
+  if (c >= 'A' && c <= 'F') return (uint8_t)(10 + (c - 'A'));
+  return 0;
+}
+
+void appendHex(String& out, const uint8_t* data, size_t len) {
+  static const char kHexChars[] = "0123456789abcdef";
+  for (size_t i = 0; i < len; i++) {
+    out += kHexChars[(data[i] >> 4) & 0x0F];
+    out += kHexChars[data[i] & 0x0F];
+  }
+}
+
+bool decodeHex(const char* input, uint8_t* out, size_t outLen) {
+  if (!input || !out) return false;
+  const size_t inputLen = strlen(input);
+  if (inputLen != outLen * 2U) return false;
+  for (size_t i = 0; i < outLen; i++) {
+    const char hi = input[i * 2U];
+    const char lo = input[(i * 2U) + 1U];
+    if (!isHexChar(hi) || !isHexChar(lo)) return false;
+    out[i] = (uint8_t)((hexValue(hi) << 4) | hexValue(lo));
+  }
+  return true;
+}
+
+String randomHex(size_t hexChars) {
+  static const char kHexChars[] = "0123456789abcdef";
+  String out;
+  out.reserve(hexChars);
+  while (out.length() < hexChars) {
+    const uint32_t value = esp_random();
+    for (int shift = 28; shift >= 0 && out.length() < hexChars; shift -= 4) {
+      out += kHexChars[(value >> shift) & 0x0F];
+    }
+  }
+  return out;
+}
+
+String hashPinValue(const char* pin, const char* saltHex) {
+  uint8_t digest[32] = {0};
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+
+  auto runRound = [&](bool firstRound) {
+    mbedtls_sha256_starts(&ctx, 0);
+    if (!firstRound) mbedtls_sha256_update(&ctx, digest, sizeof(digest));
+    static const char kPinScope[] = "soundpanel7-pin";
+    mbedtls_sha256_update(&ctx, (const uint8_t*)kPinScope, strlen(kPinScope));
+    if (saltHex) mbedtls_sha256_update(&ctx, (const uint8_t*)saltHex, strlen(saltHex));
+    if (pin) mbedtls_sha256_update(&ctx, (const uint8_t*)pin, strlen(pin));
+    mbedtls_sha256_finish(&ctx, digest);
+  };
+
+  runRound(true);
+  for (uint16_t i = 1; i < PIN_HASH_ROUNDS; i++) runRound(false);
+  mbedtls_sha256_free(&ctx);
+
+  String out;
+  out.reserve(PIN_HASH_LENGTH);
+  appendHex(out, digest, sizeof(digest));
+  return out;
+}
+
+bool isPinHashRecordRaw(const char* value) {
+  if (!value) return false;
+  const size_t prefixLen = strlen(kPinHashPrefix);
+  const size_t expectedLen = prefixLen + PIN_HASH_SALT_LENGTH + 1U + PIN_HASH_LENGTH;
+  if (strncmp(value, kPinHashPrefix, prefixLen) != 0) return false;
+  if (strlen(value) != expectedLen) return false;
+  if (value[prefixLen + PIN_HASH_SALT_LENGTH] != ':') return false;
+  for (size_t i = prefixLen; i < prefixLen + PIN_HASH_SALT_LENGTH; i++) {
+    if (!isHexChar(value[i])) return false;
+  }
+  for (size_t i = prefixLen + PIN_HASH_SALT_LENGTH + 1U; i < expectedLen; i++) {
+    if (!isHexChar(value[i])) return false;
+  }
+  return true;
+}
+}
+
+bool pinCodeIsConfigured(const char* pin) {
+  return pinCodeIsValid(pin) || isPinHashRecordRaw(pin);
+}
+
+bool pinCodeMatches(const char* storedPin, const char* candidate) {
+  if (!storedPin || !storedPin[0] || !candidate || !candidate[0]) return false;
+  if (!pinCodeIsValid(candidate)) return false;
+  if (isPinHashRecordRaw(storedPin)) {
+    const size_t prefixLen = strlen(kPinHashPrefix);
+    char salt[PIN_HASH_SALT_LENGTH + 1] = {0};
+    char expectedHash[PIN_HASH_LENGTH + 1] = {0};
+    memcpy(salt, storedPin + prefixLen, PIN_HASH_SALT_LENGTH);
+    memcpy(expectedHash, storedPin + prefixLen + PIN_HASH_SALT_LENGTH + 1U, PIN_HASH_LENGTH);
+    const String computed = hashPinValue(candidate, salt);
+    return secureEqualsRaw(expectedHash, computed.c_str());
+  }
+  return secureEqualsRaw(storedPin, candidate);
+}
+
+bool encodePinCode(const char* pin, char* out, size_t outSize) {
+  if (!out || outSize == 0) return false;
+  out[0] = '\0';
+  if (!pin || !pin[0]) return true;
+  if (isPinHashRecordRaw(pin)) {
+    const size_t len = strlen(pin);
+    if (len >= outSize) return false;
+    memcpy(out, pin, len + 1U);
+    return true;
+  }
+  if (!pinCodeIsValid(pin)) return false;
+
+  const String salt = randomHex(PIN_HASH_SALT_LENGTH);
+  const String hash = hashPinValue(pin, salt.c_str());
+  const String encoded = String(kPinHashPrefix) + salt + ":" + hash;
+  if (encoded.length() >= outSize) return false;
+  memcpy(out, encoded.c_str(), encoded.length() + 1U);
+  return true;
+}
 
 bool SettingsStore::begin(const char* nvsNamespace) {
   _ns = nvsNamespace ? nvsNamespace : "sp7";
   return _prefs.begin(_ns.c_str(), false);
+}
+
+bool SettingsStore::deriveSecretKey(uint8_t (&outKey)[32]) const {
+  uint8_t baseMac[6] = {0};
+  if (esp_efuse_mac_get_default(baseMac) != ESP_OK) return false;
+
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);
+  static const char kKeyScope[] = "soundpanel7-secret-key-v1";
+  mbedtls_sha256_update(&ctx, (const uint8_t*)kKeyScope, strlen(kKeyScope));
+  if (_ns.length()) {
+    mbedtls_sha256_update(&ctx, (const uint8_t*)_ns.c_str(), _ns.length());
+  }
+  mbedtls_sha256_update(&ctx, baseMac, sizeof(baseMac));
+  mbedtls_sha256_finish(&ctx, outKey);
+  mbedtls_sha256_free(&ctx);
+  return true;
+}
+
+bool SettingsStore::encryptSecret(const char* purpose, const char* plaintext, String& out) const {
+  out = "";
+  if (!plaintext || !plaintext[0]) return true;
+
+  const size_t len = strlen(plaintext);
+  uint8_t key[kSecretKeyLength] = {0};
+  if (!deriveSecretKey(key)) return false;
+
+  uint8_t nonce[kEncryptedSecretNonceLength] = {0};
+  for (size_t offset = 0; offset < sizeof(nonce); offset += sizeof(uint32_t)) {
+    const uint32_t value = esp_random();
+    const size_t chunk = min(sizeof(uint32_t), sizeof(nonce) - offset);
+    memcpy(nonce + offset, &value, chunk);
+  }
+
+  uint8_t tag[kEncryptedSecretTagLength] = {0};
+  uint8_t* cipher = (uint8_t*)malloc(len ? len : 1U);
+  if (!cipher) return false;
+
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
+  int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, sizeof(key) * 8U);
+  if (rc == 0) {
+    rc = mbedtls_gcm_crypt_and_tag(&ctx,
+                                   MBEDTLS_GCM_ENCRYPT,
+                                   len,
+                                   nonce,
+                                   sizeof(nonce),
+                                   (const uint8_t*)(purpose ? purpose : ""),
+                                   purpose ? strlen(purpose) : 0U,
+                                   (const uint8_t*)plaintext,
+                                   cipher,
+                                   sizeof(tag),
+                                   tag);
+  }
+  mbedtls_gcm_free(&ctx);
+  if (rc != 0) {
+    free(cipher);
+    return false;
+  }
+
+  out.reserve(strlen(kEncryptedSecretPrefix) + ((sizeof(nonce) + sizeof(tag) + len) * 2U));
+  out += kEncryptedSecretPrefix;
+  appendHex(out, nonce, sizeof(nonce));
+  appendHex(out, tag, sizeof(tag));
+  appendHex(out, cipher, len);
+  free(cipher);
+  return true;
+}
+
+bool SettingsStore::decryptSecret(const char* purpose, const char* stored, char* out, size_t outSize) const {
+  if (!out || outSize == 0) return false;
+  out[0] = '\0';
+  if (!stored || !stored[0]) return true;
+  if (!isEncryptedSecretRecord(stored)) {
+    return sp7json::safeCopy(out, outSize, String(stored));
+  }
+
+  const char* hex = stored + strlen(kEncryptedSecretPrefix);
+  const size_t hexLen = strlen(hex);
+  if ((hexLen & 1U) != 0) return false;
+  const size_t blobLen = hexLen / 2U;
+  if (blobLen < (kEncryptedSecretNonceLength + kEncryptedSecretTagLength)) return false;
+
+  uint8_t* blob = (uint8_t*)malloc(blobLen ? blobLen : 1U);
+  uint8_t* plain = (uint8_t*)malloc((blobLen - kEncryptedSecretNonceLength - kEncryptedSecretTagLength) + 1U);
+  if (!blob || !plain) {
+    if (blob) free(blob);
+    if (plain) free(plain);
+    return false;
+  }
+  if (!decodeHex(hex, blob, blobLen)) {
+    free(blob);
+    free(plain);
+    return false;
+  }
+
+  const size_t cipherLen = blobLen - kEncryptedSecretNonceLength - kEncryptedSecretTagLength;
+  if ((cipherLen + 1U) > outSize) {
+    free(blob);
+    free(plain);
+    return false;
+  }
+
+  const uint8_t* nonce = blob;
+  const uint8_t* tag = blob + kEncryptedSecretNonceLength;
+  const uint8_t* cipher = blob + kEncryptedSecretNonceLength + kEncryptedSecretTagLength;
+  uint8_t key[kSecretKeyLength] = {0};
+  if (!deriveSecretKey(key)) {
+    free(blob);
+    free(plain);
+    return false;
+  }
+
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
+  int rc = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key, sizeof(key) * 8U);
+  if (rc == 0) {
+    rc = mbedtls_gcm_auth_decrypt(&ctx,
+                                  cipherLen,
+                                  nonce,
+                                  kEncryptedSecretNonceLength,
+                                  (const uint8_t*)(purpose ? purpose : ""),
+                                  purpose ? strlen(purpose) : 0U,
+                                  tag,
+                                  kEncryptedSecretTagLength,
+                                  cipher,
+                                  plain);
+  }
+  mbedtls_gcm_free(&ctx);
+  if (rc != 0) {
+    free(blob);
+    free(plain);
+    return false;
+  }
+
+  plain[cipherLen] = '\0';
+  memcpy(out, plain, cipherLen + 1U);
+  free(blob);
+  free(plain);
+  return true;
+}
+
+bool SettingsStore::loadSecret(const char* key, const char* purpose, char* out, size_t outSize, bool* migrated) {
+  if (migrated) *migrated = false;
+  String stored = _prefs.getString(key, "");
+  if (!stored.length()) {
+    if (outSize) out[0] = '\0';
+    return true;
+  }
+  if (isEncryptedSecretRecord(stored.c_str())) {
+    return decryptSecret(purpose, stored.c_str(), out, outSize);
+  }
+  if (!sp7json::safeCopy(out, outSize, stored)) return false;
+  if (migrated) *migrated = true;
+  return true;
+}
+
+void SettingsStore::saveSecret(const char* key, const char* purpose, const char* value) {
+  String encrypted;
+  if (!encryptSecret(purpose, value, encrypted)) {
+    Serial0.printf("[SET] Failed to encrypt secret '%s'\n", key ? key : "?");
+    return;
+  }
+  _prefs.putString(key, encrypted);
+}
+
+bool SettingsStore::isEncryptedSecretRecord(const char* value) {
+  return value && strncmp(value, kEncryptedSecretPrefix, strlen(kEncryptedSecretPrefix)) == 0;
+}
+
+bool SettingsStore::isPinHashRecord(const char* value) {
+  return isPinHashRecordRaw(value);
+}
+
+bool SettingsStore::normalizePinStorage(char* storage, size_t storageSize) {
+  if (!storage || storageSize == 0) return false;
+  storage[storageSize - 1] = '\0';
+  if (!storage[0]) return true;
+  if (isPinHashRecord(storage)) return true;
+  if (!pinCodeIsValid(storage)) {
+    storage[0] = '\0';
+    return false;
+  }
+
+  char encoded[PIN_STORAGE_MAX_LENGTH + 1] = {0};
+  if (!encodePinCode(storage, encoded, sizeof(encoded))) {
+    storage[0] = '\0';
+    return false;
+  }
+  if (strlen(encoded) >= storageSize) {
+    storage[0] = '\0';
+    return false;
+  }
+  memcpy(storage, encoded, strlen(encoded) + 1U);
+  return true;
 }
 
 void SettingsStore::load(SettingsV1 &out) {
@@ -30,25 +380,39 @@ void SettingsStore::load(SettingsV1 &out) {
   out.dashboardPage = (uint8_t)_prefs.getUChar("ui_page", out.dashboardPage);
   out.dashboardFullscreenMask = (uint8_t)_prefs.getUChar("ui_fsm", out.dashboardFullscreenMask);
   _prefs.getString("ui_pin", out.dashboardPin, sizeof(out.dashboardPin));
-  _prefs.getString("ha_tok", out.homeAssistantToken, sizeof(out.homeAssistantToken));
+  const bool pinMigrated = out.dashboardPin[0]
+    && !isPinHashRecord(out.dashboardPin)
+    && normalizePinStorage(out.dashboardPin, sizeof(out.dashboardPin));
+  bool haMigrated = false;
+  if (!loadSecret("ha_tok", "ha_token", out.homeAssistantToken, sizeof(out.homeAssistantToken), &haMigrated)) {
+    out.homeAssistantToken[0] = '\0';
+  }
 
   _prefs.getString("tz", out.tz, sizeof(out.tz));
   _prefs.getString("ntp", out.ntpServer, sizeof(out.ntpServer));
   out.ntpSyncIntervalMs = _prefs.getUInt("ntp_ms", out.ntpSyncIntervalMs);
   _prefs.getString("hn", out.hostname, sizeof(out.hostname));
+  bool wifiMigrated[WIFI_CREDENTIAL_MAX_COUNT] = {false, false, false, false};
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
     char keySsid[8];
     char keyPass[8];
+    char purpose[8];
     snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(i + 1));
     snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
+    snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
     _prefs.getString(keySsid, out.wifiCredentials[i].ssid, sizeof(out.wifiCredentials[i].ssid));
-    _prefs.getString(keyPass, out.wifiCredentials[i].password, sizeof(out.wifiCredentials[i].password));
+    if (!loadSecret(keyPass, purpose, out.wifiCredentials[i].password, sizeof(out.wifiCredentials[i].password), &wifiMigrated[i])) {
+      out.wifiCredentials[i].password[0] = '\0';
+    }
   }
 
   out.otaEnabled = (uint8_t)_prefs.getUChar("ota_en", out.otaEnabled);
   out.otaPort = (uint16_t)_prefs.getUShort("ota_pt", out.otaPort);
   _prefs.getString("ota_hn", out.otaHostname, sizeof(out.otaHostname));
-  _prefs.getString("ota_pw", out.otaPassword, sizeof(out.otaPassword));
+  bool otaMigrated = false;
+  if (!loadSecret("ota_pw", "ota_password", out.otaPassword, sizeof(out.otaPassword), &otaMigrated)) {
+    out.otaPassword[0] = '\0';
+  }
 
   out.audioSource        = (uint8_t)_prefs.getUChar("a_src", out.audioSource);
   out.analogPin          = (uint8_t)_prefs.getUChar("a_pin", out.analogPin);
@@ -65,7 +429,10 @@ void SettingsStore::load(SettingsV1 &out) {
   _prefs.getString("mq_host", out.mqttHost, sizeof(out.mqttHost));
   out.mqttPort = (uint16_t)_prefs.getUShort("mq_pt", out.mqttPort);
   _prefs.getString("mq_usr", out.mqttUsername, sizeof(out.mqttUsername));
-  _prefs.getString("mq_pwd", out.mqttPassword, sizeof(out.mqttPassword));
+  bool mqttMigrated = false;
+  if (!loadSecret("mq_pwd", "mqtt_password", out.mqttPassword, sizeof(out.mqttPassword), &mqttMigrated)) {
+    out.mqttPassword[0] = '\0';
+  }
   _prefs.getString("mq_cid", out.mqttClientId, sizeof(out.mqttClientId));
   _prefs.getString("mq_base", out.mqttBaseTopic, sizeof(out.mqttBaseTopic));
   out.mqttPublishPeriodMs = (uint16_t)_prefs.getUShort("mq_pubms", out.mqttPublishPeriodMs);
@@ -74,13 +441,22 @@ void SettingsStore::load(SettingsV1 &out) {
   out.notifyOnWarning = (uint8_t)_prefs.getUChar("n_lvl", out.notifyOnWarning);
   out.notifyOnRecovery = (uint8_t)_prefs.getUChar("n_rec", out.notifyOnRecovery);
   out.slackEnabled = (uint8_t)_prefs.getUChar("n_s_en", out.slackEnabled);
-  _prefs.getString("n_s_url", out.slackWebhookUrl, sizeof(out.slackWebhookUrl));
+  bool slackMigrated = false;
+  if (!loadSecret("n_s_url", "slack_webhook", out.slackWebhookUrl, sizeof(out.slackWebhookUrl), &slackMigrated)) {
+    out.slackWebhookUrl[0] = '\0';
+  }
   _prefs.getString("n_s_ch", out.slackChannel, sizeof(out.slackChannel));
   out.telegramEnabled = (uint8_t)_prefs.getUChar("n_t_en", out.telegramEnabled);
-  _prefs.getString("n_t_tok", out.telegramBotToken, sizeof(out.telegramBotToken));
+  bool telegramMigrated = false;
+  if (!loadSecret("n_t_tok", "telegram_token", out.telegramBotToken, sizeof(out.telegramBotToken), &telegramMigrated)) {
+    out.telegramBotToken[0] = '\0';
+  }
   _prefs.getString("n_t_chat", out.telegramChatId, sizeof(out.telegramChatId));
   out.whatsappEnabled = (uint8_t)_prefs.getUChar("n_w_en", out.whatsappEnabled);
-  _prefs.getString("n_w_tok", out.whatsappAccessToken, sizeof(out.whatsappAccessToken));
+  bool whatsappMigrated = false;
+  if (!loadSecret("n_w_tok", "whatsapp_token", out.whatsappAccessToken, sizeof(out.whatsappAccessToken), &whatsappMigrated)) {
+    out.whatsappAccessToken[0] = '\0';
+  }
   _prefs.getString("n_w_pid", out.whatsappPhoneNumberId, sizeof(out.whatsappPhoneNumberId));
   _prefs.getString("n_w_to", out.whatsappRecipient, sizeof(out.whatsappRecipient));
   _prefs.getString("n_w_ver", out.whatsappApiVersion, sizeof(out.whatsappApiVersion));
@@ -99,6 +475,22 @@ void SettingsStore::load(SettingsV1 &out) {
   }
 
   sanitize(out);
+
+  if (pinMigrated) _prefs.putString("ui_pin", out.dashboardPin);
+  if (haMigrated) saveSecret("ha_tok", "ha_token", out.homeAssistantToken);
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    if (!wifiMigrated[i]) continue;
+    char keyPass[8];
+    char purpose[8];
+    snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
+    snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
+    saveSecret(keyPass, purpose, out.wifiCredentials[i].password);
+  }
+  if (otaMigrated) saveSecret("ota_pw", "ota_password", out.otaPassword);
+  if (mqttMigrated) saveSecret("mq_pwd", "mqtt_password", out.mqttPassword);
+  if (slackMigrated) saveSecret("n_s_url", "slack_webhook", out.slackWebhookUrl);
+  if (telegramMigrated) saveSecret("n_t_tok", "telegram_token", out.telegramBotToken);
+  if (whatsappMigrated) saveSecret("n_w_tok", "whatsapp_token", out.whatsappAccessToken);
 }
 
 void SettingsStore::save(const SettingsV1 &s) {
@@ -115,8 +507,14 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("ui_touch", s.touchEnabled);
   _prefs.putUChar("ui_page", s.dashboardPage);
   _prefs.putUChar("ui_fsm", s.dashboardFullscreenMask);
-  _prefs.putString("ui_pin", s.dashboardPin);
-  _prefs.putString("ha_tok", s.homeAssistantToken);
+  char dashboardPin[sizeof(s.dashboardPin)] = {0};
+  if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(s.dashboardPin))
+      && normalizePinStorage(dashboardPin, sizeof(dashboardPin))) {
+    _prefs.putString("ui_pin", dashboardPin);
+  } else {
+    _prefs.putString("ui_pin", "");
+  }
+  saveSecret("ha_tok", "ha_token", s.homeAssistantToken);
 
   _prefs.putString("tz", s.tz);
   _prefs.putString("ntp", s.ntpServer);
@@ -125,16 +523,18 @@ void SettingsStore::save(const SettingsV1 &s) {
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
     char keySsid[8];
     char keyPass[8];
+    char purpose[8];
     snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(i + 1));
     snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
+    snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
     _prefs.putString(keySsid, s.wifiCredentials[i].ssid);
-    _prefs.putString(keyPass, s.wifiCredentials[i].password);
+    saveSecret(keyPass, purpose, s.wifiCredentials[i].password);
   }
 
   _prefs.putUChar("ota_en", s.otaEnabled);
   _prefs.putUShort("ota_pt", s.otaPort);
   _prefs.putString("ota_hn", s.otaHostname);
-  _prefs.putString("ota_pw", s.otaPassword);
+  saveSecret("ota_pw", "ota_password", s.otaPassword);
 
   _prefs.putUChar("a_src", s.audioSource);
   _prefs.putUChar("a_pin", s.analogPin);
@@ -151,7 +551,7 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putString("mq_host", s.mqttHost);
   _prefs.putUShort("mq_pt", s.mqttPort);
   _prefs.putString("mq_usr", s.mqttUsername);
-  _prefs.putString("mq_pwd", s.mqttPassword);
+  saveSecret("mq_pwd", "mqtt_password", s.mqttPassword);
   _prefs.putString("mq_cid", s.mqttClientId);
   _prefs.putString("mq_base", s.mqttBaseTopic);
   _prefs.putUShort("mq_pubms", s.mqttPublishPeriodMs);
@@ -160,13 +560,13 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("n_lvl", s.notifyOnWarning);
   _prefs.putUChar("n_rec", s.notifyOnRecovery);
   _prefs.putUChar("n_s_en", s.slackEnabled);
-  _prefs.putString("n_s_url", s.slackWebhookUrl);
+  saveSecret("n_s_url", "slack_webhook", s.slackWebhookUrl);
   _prefs.putString("n_s_ch", s.slackChannel);
   _prefs.putUChar("n_t_en", s.telegramEnabled);
-  _prefs.putString("n_t_tok", s.telegramBotToken);
+  saveSecret("n_t_tok", "telegram_token", s.telegramBotToken);
   _prefs.putString("n_t_chat", s.telegramChatId);
   _prefs.putUChar("n_w_en", s.whatsappEnabled);
-  _prefs.putString("n_w_tok", s.whatsappAccessToken);
+  saveSecret("n_w_tok", "whatsapp_token", s.whatsappAccessToken);
   _prefs.putString("n_w_pid", s.whatsappPhoneNumberId);
   _prefs.putString("n_w_to", s.whatsappRecipient);
   _prefs.putString("n_w_ver", s.whatsappApiVersion);
@@ -204,7 +604,7 @@ void SettingsStore::sanitize(SettingsV1& s) {
 
   if (s.orangeAlertHoldMs > MAX_ALERT_HOLD_MS) s.orangeAlertHoldMs = MAX_ALERT_HOLD_MS;
   if (s.redAlertHoldMs > MAX_ALERT_HOLD_MS) s.redAlertHoldMs = MAX_ALERT_HOLD_MS;
-  if (s.dashboardPin[0] && !pinCodeIsValid(s.dashboardPin)) {
+  if (s.dashboardPin[0] && !pinCodeIsConfigured(s.dashboardPin)) {
     s.dashboardPin[0] = '\0';
   }
   s.homeAssistantToken[sizeof(s.homeAssistantToken) - 1] = '\0';
@@ -431,12 +831,17 @@ void SettingsStore::clearWebUsers() {
   }
 }
 
-String SettingsStore::exportJson(const SettingsV1& s) const {
+String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMode) const {
+  const bool includeSecrets = secretMode != EXPORT_SECRETS_OMIT;
+  const bool clearSecrets = secretMode == EXPORT_SECRETS_CLEAR;
   String json;
-  json.reserve(3072);
+  json.reserve(includeSecrets ? 4096 : 3072);
   json += "{";
   json += "\"type\":\"soundpanel7-config\",";
   json += "\"version\":"; json += String(SETTINGS_VERSION); json += ",";
+  json += "\"secretMode\":\"";
+  json += clearSecrets ? "clear" : (includeSecrets ? "device-encrypted" : "omitted");
+  json += "\",";
   json += "\"backlight\":"; json += String(s.backlight); json += ",";
   json += "\"greenMax\":"; json += String(s.th.greenMax); json += ",";
   json += "\"orangeMax\":"; json += String(s.th.orangeMax); json += ",";
@@ -447,8 +852,20 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"touchEnabled\":"; json += (s.touchEnabled ? "true" : "false"); json += ",";
   json += "\"dashboardPage\":"; json += String(s.dashboardPage); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s.dashboardFullscreenMask); json += ",";
-  json += "\"dashboardPin\":\""; json += sp7json::escape(s.dashboardPin); json += "\",";
-  json += "\"homeAssistantToken\":\""; json += sp7json::escape(s.homeAssistantToken); json += "\",";
+  if (includeSecrets) {
+    char dashboardPin[sizeof(s.dashboardPin)] = {0};
+    if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(s.dashboardPin))) {
+      normalizePinStorage(dashboardPin, sizeof(dashboardPin));
+    }
+    sp7json::appendEscapedField(json, "dashboardPin", dashboardPin);
+    if (clearSecrets) {
+      sp7json::appendEscapedField(json, "homeAssistantToken", s.homeAssistantToken);
+    } else {
+      String homeAssistantToken;
+      encryptSecret("ha_token", s.homeAssistantToken, homeAssistantToken);
+      sp7json::appendEscapedField(json, "homeAssistantToken", homeAssistantToken.c_str());
+    }
+  }
   json += "\"tz\":\""; json += sp7json::escape(s.tz); json += "\",";
   json += "\"ntpServer\":\""; json += sp7json::escape(s.ntpServer); json += "\",";
   json += "\"ntpSyncMinutes\":"; json += String(s.ntpSyncIntervalMs / MS_PER_MINUTE); json += ",";
@@ -459,11 +876,21 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
     json += "Ssid\":\"";
     json += sp7json::escape(s.wifiCredentials[i].ssid);
     json += "\",";
-    json += "\"wifi";
-    json += String(i + 1);
-    json += "Password\":\"";
-    json += sp7json::escape(s.wifiCredentials[i].password);
-    json += "\",";
+    if (includeSecrets) {
+      json += "\"wifi";
+      json += String(i + 1);
+      json += "Password\":\"";
+      if (clearSecrets) {
+        json += sp7json::escape(s.wifiCredentials[i].password);
+      } else {
+        char purpose[8];
+        snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
+        String encrypted;
+        encryptSecret(purpose, s.wifiCredentials[i].password, encrypted);
+        json += sp7json::escape(encrypted.c_str());
+      }
+      json += "\",";
+    }
   }
   json += "\"audioSource\":"; json += String(s.audioSource); json += ",";
   json += "\"analogPin\":"; json += String(s.analogPin); json += ",";
@@ -496,12 +923,28 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"otaEnabled\":"; json += (s.otaEnabled ? "true" : "false"); json += ",";
   json += "\"otaPort\":"; json += String(s.otaPort); json += ",";
   json += "\"otaHostname\":\""; json += sp7json::escape(s.otaHostname); json += "\",";
-  json += "\"otaPassword\":\""; json += sp7json::escape(s.otaPassword); json += "\",";
+  if (includeSecrets) {
+    if (clearSecrets) {
+      sp7json::appendEscapedField(json, "otaPassword", s.otaPassword);
+    } else {
+      String otaPassword;
+      encryptSecret("ota_password", s.otaPassword, otaPassword);
+      sp7json::appendEscapedField(json, "otaPassword", otaPassword.c_str());
+    }
+  }
   json += "\"mqttEnabled\":"; json += (s.mqttEnabled ? "true" : "false"); json += ",";
   json += "\"mqttHost\":\""; json += sp7json::escape(s.mqttHost); json += "\",";
   json += "\"mqttPort\":"; json += String(s.mqttPort); json += ",";
   json += "\"mqttUsername\":\""; json += sp7json::escape(s.mqttUsername); json += "\",";
-  json += "\"mqttPassword\":\""; json += sp7json::escape(s.mqttPassword); json += "\",";
+  if (includeSecrets) {
+    if (clearSecrets) {
+      sp7json::appendEscapedField(json, "mqttPassword", s.mqttPassword);
+    } else {
+      String mqttPassword;
+      encryptSecret("mqtt_password", s.mqttPassword, mqttPassword);
+      sp7json::appendEscapedField(json, "mqttPassword", mqttPassword.c_str());
+    }
+  }
   json += "\"mqttClientId\":\""; json += sp7json::escape(s.mqttClientId); json += "\",";
   json += "\"mqttBaseTopic\":\""; json += sp7json::escape(s.mqttBaseTopic); json += "\",";
   json += "\"mqttPublishPeriodMs\":"; json += String(s.mqttPublishPeriodMs); json += ",";
@@ -509,13 +952,37 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
   json += "\"notifyOnWarning\":"; json += (s.notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING ? "true" : "false"); json += ",";
   json += "\"notifyOnRecovery\":"; json += (s.notifyOnRecovery ? "true" : "false"); json += ",";
   json += "\"slackEnabled\":"; json += (s.slackEnabled ? "true" : "false"); json += ",";
-  json += "\"slackWebhookUrl\":\""; json += sp7json::escape(s.slackWebhookUrl); json += "\",";
+  if (includeSecrets) {
+    if (clearSecrets) {
+      sp7json::appendEscapedField(json, "slackWebhookUrl", s.slackWebhookUrl);
+    } else {
+      String slackWebhookUrl;
+      encryptSecret("slack_webhook", s.slackWebhookUrl, slackWebhookUrl);
+      sp7json::appendEscapedField(json, "slackWebhookUrl", slackWebhookUrl.c_str());
+    }
+  }
   json += "\"slackChannel\":\""; json += sp7json::escape(s.slackChannel); json += "\",";
   json += "\"telegramEnabled\":"; json += (s.telegramEnabled ? "true" : "false"); json += ",";
-  json += "\"telegramBotToken\":\""; json += sp7json::escape(s.telegramBotToken); json += "\",";
+  if (includeSecrets) {
+    if (clearSecrets) {
+      sp7json::appendEscapedField(json, "telegramBotToken", s.telegramBotToken);
+    } else {
+      String telegramBotToken;
+      encryptSecret("telegram_token", s.telegramBotToken, telegramBotToken);
+      sp7json::appendEscapedField(json, "telegramBotToken", telegramBotToken.c_str());
+    }
+  }
   json += "\"telegramChatId\":\""; json += sp7json::escape(s.telegramChatId); json += "\",";
   json += "\"whatsappEnabled\":"; json += (s.whatsappEnabled ? "true" : "false"); json += ",";
-  json += "\"whatsappAccessToken\":\""; json += sp7json::escape(s.whatsappAccessToken); json += "\",";
+  if (includeSecrets) {
+    if (clearSecrets) {
+      sp7json::appendEscapedField(json, "whatsappAccessToken", s.whatsappAccessToken);
+    } else {
+      String whatsappAccessToken;
+      encryptSecret("whatsapp_token", s.whatsappAccessToken, whatsappAccessToken);
+      sp7json::appendEscapedField(json, "whatsappAccessToken", whatsappAccessToken.c_str());
+    }
+  }
   json += "\"whatsappPhoneNumberId\":\""; json += sp7json::escape(s.whatsappPhoneNumberId); json += "\",";
   json += "\"whatsappRecipient\":\""; json += sp7json::escape(s.whatsappRecipient); json += "\",";
   json += "\"whatsappApiVersion\":\""; json += sp7json::escape(s.whatsappApiVersion); json += "\"";
@@ -525,6 +992,24 @@ String SettingsStore::exportJson(const SettingsV1& s) const {
 
 bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   SettingsV1 next = s;
+  auto loadImportedSecret = [&](const String& raw,
+                                const char* purpose,
+                                char* out,
+                                size_t outSize,
+                                const String& fieldName) -> bool {
+    if (isEncryptedSecretRecord(raw.c_str())) {
+      if (!decryptSecret(purpose, raw.c_str(), out, outSize)) {
+        if (err) *err = String(fieldName) + " unreadable on this device";
+        return false;
+      }
+      return true;
+    }
+    if (!sp7json::safeCopy(out, outSize, raw)) {
+      if (err) *err = String(fieldName) + " too long";
+      return false;
+    }
+    return true;
+  };
 
   next.backlight = (uint8_t)sp7json::parseInt(json, "backlight", next.backlight);
   next.th.greenMax = (uint8_t)sp7json::parseInt(json, "greenMax", next.th.greenMax);
@@ -552,12 +1037,17 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
     wifiSsids[i] = sp7json::parseString(json, ssidKey.c_str(), String(next.wifiCredentials[i].ssid));
     wifiPasswords[i] = sp7json::parseString(json, passwordKey.c_str(), String(next.wifiCredentials[i].password));
   }
-  if (!sp7json::safeCopy(next.dashboardPin, sizeof(next.dashboardPin), dashboardPin)) {
-    if (err) *err = "dashboardPin too long";
-    return false;
+  dashboardPin.trim();
+  if (dashboardPin.length()) {
+    if (!sp7json::safeCopy(next.dashboardPin, sizeof(next.dashboardPin), dashboardPin)
+        || !normalizePinStorage(next.dashboardPin, sizeof(next.dashboardPin))) {
+      if (err) *err = "bad dashboardPin";
+      return false;
+    }
+  } else {
+    next.dashboardPin[0] = '\0';
   }
-  if (!sp7json::safeCopy(next.homeAssistantToken, sizeof(next.homeAssistantToken), homeAssistantToken)) {
-    if (err) *err = "homeAssistantToken too long";
+  if (!loadImportedSecret(homeAssistantToken, "ha_token", next.homeAssistantToken, sizeof(next.homeAssistantToken), "homeAssistantToken")) {
     return false;
   }
   if (!sp7json::safeCopy(next.tz, sizeof(next.tz), tz)) {
@@ -577,8 +1067,13 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
       if (err) *err = String("wifi") + String(i + 1) + "Ssid too long";
       return false;
     }
-    if (!sp7json::safeCopy(next.wifiCredentials[i].password, sizeof(next.wifiCredentials[i].password), wifiPasswords[i])) {
-      if (err) *err = String("wifi") + String(i + 1) + "Password too long";
+    char purpose[8];
+    snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
+    if (!loadImportedSecret(wifiPasswords[i],
+                            purpose,
+                            next.wifiCredentials[i].password,
+                            sizeof(next.wifiCredentials[i].password),
+                            String("wifi") + String(i + 1) + "Password")) {
       return false;
     }
   }
@@ -619,8 +1114,7 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
     if (err) *err = "otaHostname too long";
     return false;
   }
-  if (!sp7json::safeCopy(next.otaPassword, sizeof(next.otaPassword), otaPassword)) {
-    if (err) *err = "otaPassword too long";
+  if (!loadImportedSecret(otaPassword, "ota_password", next.otaPassword, sizeof(next.otaPassword), "otaPassword")) {
     return false;
   }
 
@@ -659,8 +1153,7 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
     if (err) *err = "mqttUsername too long";
     return false;
   }
-  if (!sp7json::safeCopy(next.mqttPassword, sizeof(next.mqttPassword), mqttPassword)) {
-    if (err) *err = "mqttPassword too long";
+  if (!loadImportedSecret(mqttPassword, "mqtt_password", next.mqttPassword, sizeof(next.mqttPassword), "mqttPassword")) {
     return false;
   }
   if (!sp7json::safeCopy(next.mqttClientId, sizeof(next.mqttClientId), mqttClientId)) {
@@ -671,24 +1164,21 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
     if (err) *err = "mqttBaseTopic too long";
     return false;
   }
-  if (!sp7json::safeCopy(next.slackWebhookUrl, sizeof(next.slackWebhookUrl), slackWebhookUrl)) {
-    if (err) *err = "slackWebhookUrl too long";
+  if (!loadImportedSecret(slackWebhookUrl, "slack_webhook", next.slackWebhookUrl, sizeof(next.slackWebhookUrl), "slackWebhookUrl")) {
     return false;
   }
   if (!sp7json::safeCopy(next.slackChannel, sizeof(next.slackChannel), slackChannel)) {
     if (err) *err = "slackChannel too long";
     return false;
   }
-  if (!sp7json::safeCopy(next.telegramBotToken, sizeof(next.telegramBotToken), telegramBotToken)) {
-    if (err) *err = "telegramBotToken too long";
+  if (!loadImportedSecret(telegramBotToken, "telegram_token", next.telegramBotToken, sizeof(next.telegramBotToken), "telegramBotToken")) {
     return false;
   }
   if (!sp7json::safeCopy(next.telegramChatId, sizeof(next.telegramChatId), telegramChatId)) {
     if (err) *err = "telegramChatId too long";
     return false;
   }
-  if (!sp7json::safeCopy(next.whatsappAccessToken, sizeof(next.whatsappAccessToken), whatsappAccessToken)) {
-    if (err) *err = "whatsappAccessToken too long";
+  if (!loadImportedSecret(whatsappAccessToken, "whatsapp_token", next.whatsappAccessToken, sizeof(next.whatsappAccessToken), "whatsappAccessToken")) {
     return false;
   }
   if (!sp7json::safeCopy(next.whatsappPhoneNumberId, sizeof(next.whatsappPhoneNumberId), whatsappPhoneNumberId)) {
@@ -713,7 +1203,7 @@ bool SettingsStore::saveBackup(const SettingsV1& s) {
   Preferences backupPrefs;
   String backupNs = _ns + "_bak";
   if (!backupPrefs.begin(backupNs.c_str(), false)) return false;
-  backupPrefs.putString("cfg", exportJson(s));
+  backupPrefs.putString("cfg", exportJson(s, EXPORT_SECRETS_ENCRYPTED));
   time_t now = time(nullptr);
   backupPrefs.putUInt("ts", now > 946684800 ? (uint32_t)now : 0U);
   backupPrefs.end();

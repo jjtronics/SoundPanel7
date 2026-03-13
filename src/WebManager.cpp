@@ -505,6 +505,7 @@ void WebManager::routes() {
   _srv.on("/api/time", kSyncHttpGet,  [this]() { handleTimeGet(); });
   _srv.on("/api/time", kSyncHttpPost, [this]() { handleTimeSave(); });
   _srv.on("/api/config/export", kSyncHttpGet, [this]() { handleConfigExport(); });
+  _srv.on("/api/config/export_full", kSyncHttpGet, [this]() { handleConfigExportFull(); });
   _srv.on("/api/config/import", kSyncHttpPost, [this]() { handleConfigImport(); });
   _srv.on("/api/config/backup", kSyncHttpPost, [this]() { handleConfigBackup(); });
   _srv.on("/api/config/restore", kSyncHttpPost, [this]() { handleConfigRestore(); });
@@ -1153,10 +1154,9 @@ void WebManager::handleHomeAssistantGet() {
   if (!requireSettingsJson()) return;
 
   String json;
-  json.reserve(192);
+  json.reserve(160);
   json += "{";
   json += "\"tokenConfigured\":"; json += (homeAssistantTokenConfigured() ? "true" : "false"); json += ",";
-  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken);
   sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
   sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
   json += "}";
@@ -1170,12 +1170,13 @@ void WebManager::handleHomeAssistantSave() {
   const String body = _srv.arg("plain");
   const bool clear = sp7json::parseBool(body, "clear", false);
   const bool generate = sp7json::parseBool(body, "generate", false);
+  const bool keepToken = sp7json::parseBool(body, "keepToken", false);
 
   String token;
   if (clear) token = "";
   else if (generate) token = randomHex(HOME_ASSISTANT_TOKEN_MAX_LENGTH);
   else {
-    token = sp7json::parseString(body, "token", "", true);
+    token = sp7json::parseString(body, "token", keepToken ? String(_s->homeAssistantToken) : String(""), true);
     token.trim();
     if (!homeAssistantTokenIsValid(token)) {
       replyErrorJson(400, "bad home assistant token");
@@ -1191,11 +1192,12 @@ void WebManager::handleHomeAssistantSave() {
   _store->save(*_s);
 
   String json;
-  json.reserve(160);
+  json.reserve(128);
   json += "{";
   json += "\"ok\":true,";
   json += "\"tokenConfigured\":"; json += (homeAssistantTokenConfigured() ? "true" : "false"); json += ",";
-  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken, false);
+  sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
+  sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
   json += "}";
   replyJson(200, json);
 }
@@ -1222,8 +1224,8 @@ void WebManager::handlePinSave() {
     replyErrorJson(400, "bad pin");
     return;
   }
-  if (!sp7json::safeCopy(_s->dashboardPin, sizeof(_s->dashboardPin), pin)) {
-    replyErrorJson(400, "pin too long");
+  if (!encodePinCode(pin.c_str(), _s->dashboardPin, sizeof(_s->dashboardPin))) {
+    replyErrorJson(400, "pin encode failed");
     return;
   }
 
@@ -1539,7 +1541,14 @@ void WebManager::handleConfigExport() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
-  replyJson(200, _store->exportJson(*_s));
+  replyJson(200, _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_OMIT));
+}
+
+void WebManager::handleConfigExportFull() {
+  if (!requireWebAuth()) return;
+  if (!requireStoreAndSettingsJson()) return;
+
+  replyJson(200, _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_CLEAR));
 }
 
 void WebManager::handleConfigImport() {
@@ -3469,9 +3478,10 @@ R"HTML(
                 <label>Importer depuis un fichier JSON</label>
                 <input id="configFile" type="file" accept=".json,application/json"/>
               </div>
-              <div class="hint">L'export inclut aussi les secrets Wi-Fi, OTA, MQTT et Home Assistant.</div>
+              <div class="hint">Export JSON: version safe sans secrets par defaut. L'export complet en clair est volontairement marque comme dangereux. Le backup local conserve une copie chiffrée restaurable sur l'appareil.</div>
               <div class="btnRow">
                 <button class="btn" id="exportConfigBtn">Exporter JSON</button>
+                <button class="btn warn" id="exportFullConfigBtn">Exporter complet dangereux</button>
                 <button class="btn accent" id="importConfigBtn">Importer JSON</button>
               </div>
               <div class="field">
@@ -4748,6 +4758,12 @@ R"HTML(
     return `soundpanel7-config-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
   }
 
+  function exportFullFilename() {
+    const d = new Date();
+    const pad = (v) => String(v).padStart(2, "0");
+    return `soundpanel7-config-full-clear-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+  }
+
   async function exportConfig() {
     setToast("configToast", "Export...");
     try {
@@ -4756,6 +4772,26 @@ R"HTML(
       $("configJsonBox").value = text;
       downloadTextFile(exportFilename(), text);
       setToast("configToast", "Config exportee.");
+    } catch (err) {
+      setToastError("configToast", err);
+    }
+  }
+
+  async function exportConfigFull() {
+    const confirmed = confirm(
+      "Exporter la configuration complete en clair ?\n\n"
+      + "Danger: ce fichier contiendra les mots de passe et tokens en texte lisible. "
+      + "Ne le partage pas et ne le stocke pas dans Git, dans le cloud ou dans un ticket."
+    );
+    if (!confirmed) return;
+
+    setToast("configToast", "Export complet dangereux...");
+    try {
+      const cfg = await apiGet("/api/config/export_full");
+      const text = JSON.stringify(cfg, null, 2);
+      $("configJsonBox").value = text;
+      downloadTextFile(exportFullFilename(), text);
+      setToast("configToast", "Config complete exportee en clair. Manipule ce fichier avec prudence.");
     } catch (err) {
       setToastError("configToast", err);
     }
@@ -4825,11 +4861,10 @@ R"HTML(
   }
 
   function applyHomeAssistantSettings(config) {
-    const token = String(config.token || "");
     const configured = Boolean(config.tokenConfigured);
-    $("homeAssistantTokenAdv").value = token;
+    setSecretField("homeAssistantTokenAdv", configured, "********", "genere ou colle un token");
     $("homeAssistantStatusAdv").textContent = configured
-      ? `Token actif (${token.length} caracteres)`
+      ? "Token actif"
       : "Token: non configure";
     $("homeAssistantPathAdv").textContent = `Endpoint HA: ${config.statusPath || "/api/ha/status"} (${config.authScheme || "Bearer"})`;
     $("clearHomeAssistantTokenBtn").disabled = !configured;
@@ -4847,12 +4882,13 @@ R"HTML(
   async function saveHomeAssistantSettings() {
     const token = sanitizeHomeAssistantTokenValue(getFieldValue("homeAssistantTokenAdv"));
     $("homeAssistantTokenAdv").value = token;
-    if (!token) {
+    const keepToken = !token && $("homeAssistantTokenAdv").dataset.keepSecret === "1";
+    if (!token && !keepToken) {
       setToast("toastHomeAssistantAdv", "Token requis ou utilise Generer.");
       return;
     }
 
-    await runToastRequest("toastHomeAssistantAdv", "Sauvegarde...", () => apiPost("/api/homeassistant", { token }),
+    await runToastRequest("toastHomeAssistantAdv", "Sauvegarde...", () => apiPost("/api/homeassistant", { token, keepToken }),
       "Token Home Assistant sauve.",
       async (result) => {
         applyHomeAssistantSettings(result);
@@ -4860,7 +4896,7 @@ R"HTML(
   }
 
   async function generateHomeAssistantToken() {
-    const hasToken = Boolean(getTrimmedValue("homeAssistantTokenAdv"));
+    const hasToken = $("homeAssistantTokenAdv").dataset.keepSecret === "1" || Boolean(getTrimmedValue("homeAssistantTokenAdv"));
     if (hasToken && !confirm("Regenerer le token Home Assistant ? L'integration actuelle devra etre mise a jour.")) return;
 
     await runToastRequest("toastHomeAssistantAdv", "Generation...", () => apiPost("/api/homeassistant", { generate: true }),
@@ -5212,6 +5248,7 @@ R"HTML(
   $("generateHomeAssistantTokenBtn").addEventListener("click", generateHomeAssistantToken);
   $("clearHomeAssistantTokenBtn").addEventListener("click", clearHomeAssistantToken);
   $("exportConfigBtn").addEventListener("click", exportConfig);
+  $("exportFullConfigBtn").addEventListener("click", exportConfigFull);
   $("importConfigBtn").addEventListener("click", importConfig);
   $("backupConfigBtn").addEventListener("click", backupConfig);
   $("restoreConfigBtn").addEventListener("click", restoreConfig);
@@ -5254,6 +5291,7 @@ R"HTML(
   });
   $("homeAssistantTokenAdv").addEventListener("input", () => {
     $("homeAssistantTokenAdv").value = sanitizeHomeAssistantTokenValue($("homeAssistantTokenAdv").value);
+    $("homeAssistantTokenAdv").dataset.keepSecret = "0";
   });
   [1, 2, 3, 4].forEach((slot) => {
     $(`wifiPassword${slot}`).addEventListener("input", () => {

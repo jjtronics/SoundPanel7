@@ -28,6 +28,10 @@ static constexpr uint16_t MIN_MQTT_PUBLISH_PERIOD_MS = 250;
 static constexpr uint16_t MAX_MQTT_PUBLISH_PERIOD_MS = 60000;
 static constexpr uint8_t PIN_CODE_MIN_LENGTH = 4;
 static constexpr uint8_t PIN_CODE_MAX_LENGTH = 8;
+static constexpr uint8_t PIN_HASH_SALT_LENGTH = 32;
+static constexpr uint8_t PIN_HASH_LENGTH = 64;
+static constexpr uint16_t PIN_HASH_ROUNDS = 20000;
+static constexpr size_t PIN_STORAGE_MAX_LENGTH = 3 + PIN_HASH_SALT_LENGTH + 1 + PIN_HASH_LENGTH;
 static constexpr uint8_t WEB_USER_MAX_COUNT = 4;
 static constexpr uint8_t WEB_USERNAME_MAX_LENGTH = 24;
 static constexpr uint8_t WEB_PASSWORD_MIN_LENGTH = 10;
@@ -89,9 +93,9 @@ static inline bool pinCodeIsValid(const char* pin) {
   return true;
 }
 
-static inline bool pinCodeIsConfigured(const char* pin) {
-  return pinCodeIsValid(pin);
-}
+bool pinCodeIsConfigured(const char* pin);
+bool pinCodeMatches(const char* storedPin, const char* candidate);
+bool encodePinCode(const char* pin, char* out, size_t outSize);
 
 static inline uint8_t normalizedDashboardPage(uint8_t page) {
   return page <= MAX_WEB_DASHBOARD_PAGE ? page : DEFAULT_DASHBOARD_PAGE;
@@ -150,7 +154,7 @@ struct SettingsV1 {
   uint8_t touchEnabled = 1;
   uint8_t dashboardPage = DEFAULT_DASHBOARD_PAGE;
   uint8_t dashboardFullscreenMask = DEFAULT_DASHBOARD_FULLSCREEN_MASK;
-  char dashboardPin[PIN_CODE_MAX_LENGTH + 1] = "";
+  char dashboardPin[PIN_STORAGE_MAX_LENGTH + 1] = "";
   char homeAssistantToken[HOME_ASSISTANT_TOKEN_MAX_LENGTH + 1] = "";
 
   // Time / locale
@@ -230,11 +234,17 @@ struct SettingsV1 {
 
 class SettingsStore {
 public:
+  enum SecretExportMode : uint8_t {
+    EXPORT_SECRETS_OMIT = 0,
+    EXPORT_SECRETS_ENCRYPTED = 1,
+    EXPORT_SECRETS_CLEAR = 2
+  };
+
   bool begin(const char* nvsNamespace = "sp7");
   void load(SettingsV1 &out);
   void save(const SettingsV1 &s);
   void factoryReset();
-  String exportJson(const SettingsV1& s) const;
+  String exportJson(const SettingsV1& s, SecretExportMode secretMode = EXPORT_SECRETS_OMIT) const;
   bool importJson(SettingsV1& s, const String& json, String* err = nullptr);
   bool saveBackup(const SettingsV1& s);
   uint32_t backupTimestamp() const;
@@ -249,6 +259,14 @@ public:
 private:
   Preferences _prefs;
   String _ns;
+  bool deriveSecretKey(uint8_t (&outKey)[32]) const;
+  bool encryptSecret(const char* purpose, const char* plaintext, String& out) const;
+  bool decryptSecret(const char* purpose, const char* stored, char* out, size_t outSize) const;
+  bool loadSecret(const char* key, const char* purpose, char* out, size_t outSize, bool* migrated = nullptr);
+  void saveSecret(const char* key, const char* purpose, const char* value);
+  static bool isEncryptedSecretRecord(const char* value);
+  static bool isPinHashRecord(const char* value);
+  static bool normalizePinStorage(char* storage, size_t storageSize);
   static void sanitize(SettingsV1& s);
   static void sanitizeWebUser(WebUserRecord& user);
   static void sanitizeWifiCredential(WifiCredentialRecord& credential);

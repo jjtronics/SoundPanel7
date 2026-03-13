@@ -301,13 +301,35 @@ pio device monitor -b 115200
 
 #### 6. Mettre à jour en OTA
 
-Quand l'OTA est configurée sur l'appareil (attention au port série à déclarer dans `platformio.ini`) :
+Quand l'OTA est configurée sur l'appareil :
 
 ```bash
 pio run -e soundpanel7_ota -t upload
 ```
 
-Pense à ajuster dans [`platformio.ini`](platformio.ini) :
+Les réglages locaux de machine et de réseau ne doivent pas être commités dans [`platformio.ini`](platformio.ini).
+Utilise plutôt un fichier local `platformio.override.ini` ignoré par Git, par exemple à partir de [`platformio.override.example.ini`](platformio.override.example.ini).
+
+Exemple :
+
+```ini
+[env:soundpanel7_usb]
+upload_port = /dev/cu.usbmodemXXXX
+monitor_port = /dev/cu.usbmodemXXXX
+
+[env:soundpanel7_ota]
+upload_port = 192.168.1.137
+```
+
+Alternative ponctuelle :
+
+```bash
+pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
+```
+
+Vérifie aussi que le poste qui lance `espota` est sur le même réseau Wi-Fi que l'appareil.
+
+Les valeurs locales typiques à surcharger sont :
 
 - `upload_port` (son IP)
 - `monitor_port`
@@ -719,7 +741,15 @@ Dans [`platformio.ini`](platformio.ini), l'environnement OTA repose sur :
 - port par défaut `3232`
 - mot de passe OTA configurable
 
-Pense à ajuster `upload_port` à l'adresse IP réelle de ton appareil.
+Pour éviter de commit des IP ou ports locaux, garde [`platformio.ini`](platformio.ini) générique et place tes réglages perso dans `platformio.override.ini`, ignoré par Git. Un exemple est fourni dans [`platformio.override.example.ini`](platformio.override.example.ini).
+
+Tu peux aussi passer l'IP à la volée :
+
+```bash
+pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
+```
+
+L'OTA `espota` suppose que le poste de build et l'appareil sont sur le même réseau joignable.
 
 <a id="fr-calibration"></a>
 
@@ -1079,7 +1109,29 @@ Once OTA is configured on the device:
 pio run -e soundpanel7_ota -t upload
 ```
 
-Remember to adjust in [`platformio.ini`](platformio.ini):
+Machine- and network-specific values should not be committed in [`platformio.ini`](platformio.ini).
+Use a local `platformio.override.ini` file ignored by Git instead, for example from [`platformio.override.example.ini`](platformio.override.example.ini).
+
+Example:
+
+```ini
+[env:soundpanel7_usb]
+upload_port = /dev/cu.usbmodemXXXX
+monitor_port = /dev/cu.usbmodemXXXX
+
+[env:soundpanel7_ota]
+upload_port = 192.168.1.137
+```
+
+One-shot alternative:
+
+```bash
+pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
+```
+
+Also make sure the machine running `espota` is on the same reachable Wi-Fi/network as the device.
+
+Typical local values to override are:
 
 - `upload_port`
 - `monitor_port`
@@ -1481,7 +1533,15 @@ In [`platformio.ini`](platformio.ini), the OTA environment uses:
 - default port `3232`
 - configurable OTA password
 
-Remember to adjust `upload_port` to the real IP address of your device.
+To avoid committing local IPs or serial ports, keep [`platformio.ini`](platformio.ini) generic and put personal overrides in `platformio.override.ini`, which is ignored by Git. An example is provided in [`platformio.override.example.ini`](platformio.override.example.ini).
+
+You can also pass the target IP directly:
+
+```bash
+pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
+```
+
+`espota` assumes the build machine and the device are on the same reachable network.
 
 <a id="en-calibration-workflow"></a>
 

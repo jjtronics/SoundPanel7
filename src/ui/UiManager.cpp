@@ -802,7 +802,7 @@ void UiManager::submitPinEntry() {
       setPinOverlayStatus("PIN invalide");
       return;
     }
-    if (strcmp(_pinEntry, _s->dashboardPin) != 0) {
+    if (!pinCodeMatches(_s->dashboardPin, _pinEntry)) {
       clearPinEntry(false);
       setPinOverlayStatus("PIN incorrect");
       return;
@@ -838,8 +838,12 @@ void UiManager::submitPinEntry() {
       return;
     }
 
-    strncpy(_s->dashboardPin, _pinDraft, sizeof(_s->dashboardPin) - 1);
-    _s->dashboardPin[sizeof(_s->dashboardPin) - 1] = '\0';
+    if (!encodePinCode(_pinDraft, _s->dashboardPin, sizeof(_s->dashboardPin))) {
+      _pinOverlayMode = PIN_OVERLAY_SET;
+      clearPinEntry(true);
+      setPinOverlayStatus("Erreur de securite");
+      return;
+    }
     _store->save(*_s);
     _touchPinUnlocked = true;
     refreshSettingsControls();

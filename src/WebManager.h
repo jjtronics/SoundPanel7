@@ -126,6 +126,7 @@ private:
   void handleTimeGet();
   void handleTimeSave();
   void handleConfigExport();
+  void handleConfigExportFull();
   void handleConfigImport();
   void handleConfigBackup();
   void handleConfigRestore();
