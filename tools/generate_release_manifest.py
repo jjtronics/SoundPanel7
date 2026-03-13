@@ -41,21 +41,21 @@ def main() -> int:
     firmware = build_asset(
         args.repository,
         args.tag,
-        "soundpanel7_usb-firmware.bin",
+        "firmware.bin",
         "firmware",
         build_dir / "firmware.bin",
     )
     bootloader = build_asset(
         args.repository,
         args.tag,
-        "soundpanel7_usb-bootloader.bin",
+        "bootloader.bin",
         "bootloader",
         build_dir / "bootloader.bin",
     )
     partitions = build_asset(
         args.repository,
         args.tag,
-        "soundpanel7_usb-partitions.bin",
+        "partitions.bin",
         "partitions",
         build_dir / "partitions.bin",
     )
