@@ -6,8 +6,6 @@
 #include <WiFiClientSecure.h>
 #include <ctime>
 #include <mbedtls/sha256.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
 #include "AppConfig.h"
 #include "JsonHelpers.h"
@@ -40,6 +38,7 @@ bool ReleaseUpdateManager::begin(NetManager* net) {
 }
 
 void ReleaseUpdateManager::loop() {
+  processInstall();
   if (_installRebootPending && (uint32_t)(millis() - _installRebootAtMs) >= kInstallRebootDelayMs) {
     Serial0.println("[REL] install complete, rebooting");
     delay(60);
@@ -80,6 +79,7 @@ void ReleaseUpdateManager::setError(const String& error) {
 }
 
 void ReleaseUpdateManager::clearInstallState() {
+  cleanupInstallTransport();
   _installInProgress = false;
   _installFinished = false;
   _installSucceeded = false;
@@ -93,6 +93,22 @@ void ReleaseUpdateManager::clearInstallState() {
   _installError[0] = '\0';
   _installRebootPending = false;
   _installRebootAtMs = 0;
+}
+
+void ReleaseUpdateManager::cleanupInstallTransport() {
+  if (_installShaActive) {
+    mbedtls_sha256_free(&_installSha);
+    _installShaActive = false;
+  }
+  if (_installHttp) {
+    _installHttp->end();
+    delete _installHttp;
+    _installHttp = nullptr;
+  }
+  if (_installClient) {
+    delete _installClient;
+    _installClient = nullptr;
+  }
 }
 
 void ReleaseUpdateManager::setInstallStatus(const char* status) {
@@ -203,154 +219,147 @@ bool ReleaseUpdateManager::startInstall() {
   _installRebootPending = false;
   _installRebootAtMs = 0;
   setInstallStatus("starting");
-
-  BaseType_t created = xTaskCreatePinnedToCore(
-      &ReleaseUpdateManager::installTaskEntry,
-      "sp7_release_ota",
-      14336,
-      this,
-      1,
-      &_installTask,
-      1);
-  if (created != pdPASS) {
-    _installTask = nullptr;
-    finishInstall(false, "failed to start install task");
-    return false;
-  }
   return true;
 }
 
-void ReleaseUpdateManager::installTaskEntry(void* self) {
-  ReleaseUpdateManager* manager = static_cast<ReleaseUpdateManager*>(self);
-  if (manager) {
-    const bool ok = manager->runInstall();
-    if (ok) {
-      manager->finishInstall(true);
-    } else if (manager->installInProgress()) {
-      manager->finishInstall(false, manager->installError()[0] ? manager->installError() : "install failed");
-    }
-    manager->_installTask = nullptr;
-  }
-  vTaskDelete(nullptr);
-}
-
-bool ReleaseUpdateManager::runInstall() {
+void ReleaseUpdateManager::processInstall() {
+  if (!_installInProgress) return;
   if (!WiFi.isConnected()) {
-    setInstallError("wifi disconnected");
-    return false;
+    cleanupInstallTransport();
+    Update.abort();
+    finishInstall(false, "wifi disconnected");
+    return;
   }
 
-  setInstallStatus("downloading");
-  WiFi.setSleep(false);
+  if (!_installHttp) {
+    setInstallStatus("downloading");
+    WiFi.setSleep(false);
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(kHttpTimeoutMs);
-
-  HTTPClient http;
-  http.useHTTP10(true);
-  http.setConnectTimeout(kHttpConnectTimeoutMs);
-  http.setTimeout(kHttpTimeoutMs);
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  http.setReuse(false);
-  http.setUserAgent(String("SoundPanel7/") + SOUNDPANEL7_VERSION);
-  if (!http.begin(client, _otaUrl)) {
-    setInstallError("ota request init failed");
-    return false;
-  }
-
-  const int code = http.GET();
-  if (code != HTTP_CODE_OK) {
-    String error = "ota http ";
-    error += String(code);
-    if (code < 0) {
-      error += " ";
-      error += http.errorToString(code);
-    }
-    http.end();
-    setInstallError(error);
-    return false;
-  }
-
-  const int totalSize = http.getSize();
-  if (totalSize <= 0) {
-    http.end();
-    setInstallError("ota size missing");
-    return false;
-  }
-
-  _installTotalBytes = (uint32_t)totalSize;
-  _installWrittenBytes = 0;
-  _installProgressPct = 0;
-
-  if (!Update.begin((size_t)totalSize, U_FLASH)) {
-    http.end();
-    setInstallError(String("update begin failed: ") + Update.errorString());
-    return false;
-  }
-
-  mbedtls_sha256_context sha;
-  mbedtls_sha256_init(&sha);
-  mbedtls_sha256_starts(&sha, 0);
-
-  NetworkClient* stream = http.getStreamPtr();
-  uint8_t buffer[4096];
-  size_t writtenTotal = 0;
-  bool streamOk = true;
-  while (writtenTotal < (size_t)totalSize) {
-    const size_t targetRead = min(sizeof(buffer), (size_t)totalSize - writtenTotal);
-    const size_t readLen = stream->readBytes(buffer, targetRead);
-    if (readLen == 0) {
-      streamOk = false;
-      break;
+    _installClient = new WiFiClientSecure();
+    _installHttp = new HTTPClient();
+    if (!_installClient || !_installHttp) {
+      cleanupInstallTransport();
+      finishInstall(false, "not enough memory for ota");
+      return;
     }
 
-    mbedtls_sha256_update(&sha, buffer, readLen);
-    const size_t written = Update.write(buffer, readLen);
-    if (written != readLen) {
-      mbedtls_sha256_free(&sha);
+    _installClient->setInsecure();
+    _installClient->setTimeout(kHttpTimeoutMs);
+
+    _installHttp->setConnectTimeout(kHttpConnectTimeoutMs);
+    _installHttp->setTimeout(kHttpTimeoutMs);
+    _installHttp->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    _installHttp->setReuse(false);
+    _installHttp->setUserAgent(String("SoundPanel7/") + SOUNDPANEL7_VERSION);
+    if (!_installHttp->begin(*_installClient, _otaUrl)) {
+      cleanupInstallTransport();
+      finishInstall(false, "ota request init failed");
+      return;
+    }
+
+    const int code = _installHttp->GET();
+    if (code != HTTP_CODE_OK) {
+      String error = "ota http ";
+      error += String(code);
+      if (code < 0) {
+        error += " ";
+        error += _installHttp->errorToString(code);
+      }
+      cleanupInstallTransport();
+      finishInstall(false, error);
+      return;
+    }
+
+    const int totalSize = _installHttp->getSize();
+    if (totalSize <= 0) {
+      cleanupInstallTransport();
+      finishInstall(false, "ota size missing");
+      return;
+    }
+
+    _installTotalBytes = (uint32_t)totalSize;
+    _installWrittenBytes = 0;
+    _installProgressPct = 0;
+
+    if (!Update.begin((size_t)totalSize, U_FLASH)) {
+      cleanupInstallTransport();
+      finishInstall(false, String("update begin failed: ") + Update.errorString());
+      return;
+    }
+
+    mbedtls_sha256_init(&_installSha);
+    mbedtls_sha256_starts(&_installSha, 0);
+    _installShaActive = true;
+    return;
+  }
+
+  NetworkClient* stream = _installHttp->getStreamPtr();
+  if (!stream) {
+    cleanupInstallTransport();
+    Update.abort();
+    finishInstall(false, "ota stream unavailable");
+    return;
+  }
+
+  const size_t remaining = (size_t)_installTotalBytes - (size_t)_installWrittenBytes;
+  if (remaining == 0) {
+    uint8_t digest[32] = {0};
+    setInstallStatus("verifying");
+    mbedtls_sha256_finish(&_installSha, digest);
+    cleanupInstallTransport();
+
+    const String actualSha = sha256Hex(digest);
+    if (!actualSha.equalsIgnoreCase(String(_otaSha256))) {
       Update.abort();
-      http.end();
-      setInstallError(String("update write failed: ") + Update.errorString());
-      return false;
+      finishInstall(false, "sha256 mismatch");
+      return;
     }
 
-    writtenTotal += written;
-    _installWrittenBytes = (uint32_t)writtenTotal;
-    _installProgressPct = (uint8_t)((writtenTotal * 100U) / (size_t)totalSize);
-    vTaskDelay(pdMS_TO_TICKS(1));
+    if (!Update.end()) {
+      finishInstall(false, String("update finalize failed: ") + Update.errorString());
+      return;
+    }
+
+    _installWrittenBytes = _installTotalBytes;
+    _installProgressPct = 100;
+    setInstallStatus("rebooting");
+    finishInstall(true);
+    return;
   }
 
-  http.end();
+  const int available = stream->available();
+  if (available <= 0) {
+    if (!_installHttp->connected()) {
+      cleanupInstallTransport();
+      Update.abort();
+      finishInstall(false, "ota stream interrupted");
+    }
+    return;
+  }
 
-  if (!streamOk || writtenTotal != (size_t)totalSize) {
-    mbedtls_sha256_free(&sha);
+  uint8_t buffer[4096];
+  const size_t targetRead = min(sizeof(buffer), min(remaining, (size_t)available));
+  const size_t readLen = stream->readBytes(buffer, targetRead);
+  if (readLen == 0) {
+    if (!_installHttp->connected()) {
+      cleanupInstallTransport();
+      Update.abort();
+      finishInstall(false, "ota stream interrupted");
+    }
+    return;
+  }
+
+  mbedtls_sha256_update(&_installSha, buffer, readLen);
+  const size_t written = Update.write(buffer, readLen);
+  if (written != readLen) {
+    cleanupInstallTransport();
     Update.abort();
-    setInstallError("ota stream interrupted");
-    return false;
+    finishInstall(false, String("update write failed: ") + Update.errorString());
+    return;
   }
 
-  uint8_t digest[32] = {0};
-  mbedtls_sha256_finish(&sha, digest);
-  mbedtls_sha256_free(&sha);
-
-  setInstallStatus("verifying");
-  const String actualSha = sha256Hex(digest);
-  if (!actualSha.equalsIgnoreCase(String(_otaSha256))) {
-    Update.abort();
-    setInstallError("sha256 mismatch");
-    return false;
-  }
-
-  if (!Update.end()) {
-    setInstallError(String("update finalize failed: ") + Update.errorString());
-    return false;
-  }
-
-  _installWrittenBytes = _installTotalBytes;
-  _installProgressPct = 100;
-  setInstallStatus("rebooting");
-  return true;
+  _installWrittenBytes += (uint32_t)written;
+  _installProgressPct = (uint8_t)(((uint64_t)_installWrittenBytes * 100ULL) / (uint64_t)_installTotalBytes);
 }
 
 bool ReleaseUpdateManager::fetchManifest(String& payload) {

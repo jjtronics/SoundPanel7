@@ -1,10 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
+#include <HTTPClient.h>
 #include <Preferences.h>
+#include <WiFiClientSecure.h>
+#include <mbedtls/sha256.h>
 
 class NetManager;
-typedef struct tskTaskControlBlock *TaskHandle_t;
 
 class ReleaseUpdateManager {
 public:
@@ -81,14 +83,17 @@ private:
   void setInstallStatus(const char* status);
   void setInstallError(const String& error);
   void finishInstall(bool ok, const String& error = "");
-  bool runInstall();
-  static void installTaskEntry(void* self);
+  void cleanupInstallTransport();
+  void processInstall();
 
   static uint32_t currentUnixTimestamp();
   static int compareVersions(const char* a, const char* b);
   static bool readNextVersionNumber(const char*& cursor, uint32_t& value, bool& hasValue);
 
+  WiFiClientSecure* _installClient = nullptr;
+  HTTPClient* _installHttp = nullptr;
+  mbedtls_sha256_context _installSha = {};
+  bool _installShaActive = false;
   Preferences _prefs;
   bool _prefsReady = false;
-  TaskHandle_t _installTask = nullptr;
 };
