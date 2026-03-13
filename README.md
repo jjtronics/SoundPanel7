@@ -35,7 +35,7 @@
 </p>
 
 <p align="center">
-  <a href="#francais">Francais</a> ·
+  <a href="#francais">Français</a> ·
   <a href="#english">English</a>
 </p>
 
@@ -43,7 +43,9 @@
   FR :
   <a href="#fr-apercu-visuel">Photos</a> ·
   <a href="#fr-interface-web">Web UI</a> ·
-  <a href="#fr-demarrage-rapide">Quick Start</a> ·
+  <a href="#fr-demarrage-rapide">Démarrage</a> ·
+  <a href="#fr-affichage-dashboard">Dashboard</a> ·
+  <a href="#fr-notifications-sortantes">Notifications</a> ·
   <a href="#fr-home-assistant">Home Assistant</a> ·
   <a href="#fr-calibration">Calibration</a>
 </p>
@@ -53,6 +55,8 @@
   <a href="#en-visual-tour">Visual Tour</a> ·
   <a href="#en-web-interface">Web UI</a> ·
   <a href="#en-quick-start">Quick Start</a> ·
+  <a href="#en-dashboard-display">Dashboard</a> ·
+  <a href="#en-outbound-alerting">Alerting</a> ·
   <a href="#en-mqtt-and-home-assistant">Home Assistant</a> ·
   <a href="#en-calibration-workflow">Calibration</a>
 </p>
@@ -61,53 +65,58 @@
 
 <a id="francais" name="francais"></a>
 
-## 🇫🇷 Francais
+## 🇫🇷 Français
 
-### Menu Francais
+### Menu Français
 
 - [Vision](#fr-vision)
-- [Apercu visuel](#fr-apercu-visuel)
+- [Aperçu visuel](#fr-apercu-visuel)
 - [Points forts](#fr-points-forts)
 - [Cas d'usage](#fr-cas-dusage)
-- [Fonctionnalites](#fr-fonctionnalites)
-- [Materiel cible](#fr-materiel-cible)
-- [Demarrage rapide](#fr-demarrage-rapide)
-- [Configuration par defaut](#fr-configuration-par-defaut)
+- [Fonctionnalités](#fr-fonctionnalites)
+- [Matériel cible](#fr-materiel-cible)
+- [Démarrage rapide](#fr-demarrage-rapide)
+- [Configuration par défaut](#fr-configuration-par-defaut)
 - [Interface web](#fr-interface-web)
+- [Affichage du dashboard](#fr-affichage-dashboard)
+- [Sécurité web et PIN](#fr-securite-web-pin)
+- [Wi-Fi multi-AP](#fr-wifi-multi-ap)
+- [Gestion de configuration](#fr-gestion-configuration)
 - [Horloge NTP](#fr-horloge-ntp)
 - [MQTT](#fr-mqtt)
+- [Notifications sortantes](#fr-notifications-sortantes)
 - [Home Assistant](#fr-home-assistant)
 - [OTA](#fr-ota)
 - [Calibration](#fr-calibration)
 - [Architecture](#fr-architecture)
 - [Arborescence](#fr-arborescence)
-- [Etat du projet](#fr-etat-du-projet)
+- [État du projet](#fr-etat-du-projet)
 - [Contribution](#fr-contribution)
 
 <a id="fr-vision"></a>
 
 ### ✨ Vision
 
-SoundPanel 7 est un panneau mural connecte qui rend plusieurs informations visibles en un coup d'oeil :
+SoundPanel 7 est un panneau mural connecté qui rend plusieurs informations visibles en un coup d'œil :
 
 - le niveau sonore ambiant
-- l'heure reseau synchronisee a la seconde
-- l'etat local du panneau, du Wi-Fi et des services
+- l'heure réseau synchronisée à la seconde
+- l'état local du panneau, du Wi-Fi et des services
 
-L'idee de depart etait simple :
-creer un outil de **pedagogie douce** pour rendre le bruit visible sans agressivite.
+L'idée de départ était simple :
+créer un outil de **pédagogie douce** pour rendre le bruit visible sans agressivité.
 
-Le projet a ensuite evolue vers un panneau autonome, lisible de loin,
-utile en open space, en studio, en regie, en podcast, en atelier ou sur un plateau.
+Le projet a ensuite évolué vers un panneau autonome, lisible de loin,
+utile en open space, en studio, en régie, en podcast, en atelier ou sur un plateau.
 
-SoundPanel 7 n'est donc pas seulement un sonometre.
-C'est un **panneau local de supervision** pour le son, le temps, le reseau et les integrations connectees.
+SoundPanel 7 n'est donc pas seulement un sonomètre.
+C'est un **panneau local de supervision** pour le son, le temps, le réseau et les intégrations connectées.
 
 <a id="fr-apercu-visuel"></a>
 
-### 📸 Apercu visuel
+### 📸 Aperçu visuel
 
-Avant les details techniques, voici le projet dans ses contextes reels :
+Avant les détails techniques, voici le projet dans ses contextes réels :
 en labo, en studio, et en usage quotidien.
 
 <p align="center">
@@ -120,7 +129,7 @@ en labo, en studio, et en usage quotidien.
 </p>
 
 <p align="center">
-  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_4.jpg" alt="SoundPanel 7 integre dans un environnement studio" width="49%">
+  <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_4.jpg" alt="SoundPanel 7 intégré dans un environnement studio" width="49%">
   <img src="MEDIAS/HARDWARE/SoundPanel7-STUDIO_1.jpg" alt="SoundPanel 7 en format portrait dans un studio" width="36.7%">
 </p>
 
@@ -128,32 +137,28 @@ en labo, en studio, et en usage quotidien.
 
 ### 🚀 Points forts
 
-- Grand affichage tactile 7" lisible a distance
-- Mesure sonore en temps reel avec **dB instantane**, **Leq** et **Peak**
-- **Grande horloge NTP** avec secondes visibles
-- Interface locale LVGL en **5 pages** : overview, clock, sound, calibration, settings
-- Interface web embarquee avec supervision live et administration
-- Acces web securise : bootstrap du premier compte, sessions, gestion d'utilisateurs
-- Publication **MQTT** avec auto-reconnexion et MQTT Discovery
-- **Home Assistant** via MQTT Discovery ou integration native
-- Mises a jour **OTA**
-- Stockage persistant des reglages avec **export / import / backup / restore**
+- Grand affichage tactile 7" pour le bruit, l'heure et l'état du panneau
+- Mesure sonore en temps réel avec **dB instantané**, **Leq** et **Peak**
+- Grande horloge **NTP** avec secondes visibles, utile en studio comme en diffusion
+- Double interface : écran local **LVGL** + interface web sécurisée
+- Intégrations connectées : **MQTT**, MQTT Discovery, **Home Assistant**, **OTA**
+- Réglages persistants avec export, import, backup et restore
 
 <a id="fr-cas-dusage"></a>
 
 ### 🎯 Cas d'usage
 
-- Open space trop bruyant : rendre le niveau sonore visible sans agressivite
+- Open space trop bruyant : rendre le niveau sonore visible sans agressivité
 - Studio d'enregistrement : garder les niveaux et l'heure sous les yeux
-- Regie ou diffusion : afficher une heure reseau fiable avec secondes
+- Régie ou diffusion : afficher une heure réseau fiable avec secondes
 - Podcast ou voix off : suivre un top horaire ou un timing de prise
-- Soiree a la maison : garder un oeil sur le volume quand les fetards aiment le monter un peu trop fort
-- Atelier ou lieu public : afficher un indicateur simple, comprehensible par tous dans le genre des panneaux LIVE devant les studios d'enregistrement.
-- Domotique personnelle : Remonter les niveaux sonores pour traitement/execution d'actions
+- Soirée à la maison : garder un œil sur le volume quand les fêtards aiment le monter un peu trop fort
+- Atelier ou lieu public : afficher un indicateur simple, compréhensible par tous dans le genre des panneaux LIVE devant les studios d'enregistrement
+- Domotique personnelle : remonter les niveaux sonores pour traitement / exécution d'actions
 
 <a id="fr-fonctionnalites"></a>
 
-### 🧩 Fonctionnalites
+### 🧩 Fonctionnalités
 
 #### 🔊 Monitoring sonore
 
@@ -162,14 +167,14 @@ en labo, en studio, et en usage quotidien.
 - calcul du **Peak**
 - seuils visuels configurables
 - historique glissant configurable
-- mode de reponse **Fast** ou **Slow**
+- mode de réponse **Fast** ou **Slow**
 - maintien du peak configurable
 - calibration micro en **3 ou 5 points**
-- duree de capture de calibration configurable
+- durée de capture de calibration configurable
 
 #### 🕒 Horloge et synchronisation
 
-- horloge grand format affichee en permanence
+- horloge grand format affichée en permanence
 - affichage des **secondes** pour les usages de diffusion, prise et synchro
 - synchronisation automatique via **NTP**
 - configuration du serveur NTP, de la timezone et de l'intervalle de synchro
@@ -177,100 +182,102 @@ en labo, en studio, et en usage quotidien.
 
 #### 🖥️ Interface locale
 
-- pilotage tactile sur ecran 7"
-- lecture immediate des niveaux et de l'heure
-- consultation d'informations systeme
-- extinction de l'ecran et **shutdown** depuis l'interface
+- pilotage tactile sur écran 7"
+- lecture immédiate des niveaux et de l'heure
+- consultation d'informations système
+- extinction de l'écran et **shutdown** depuis l'interface
 - protection par **PIN local** des pages sensibles (Calibration et Paramètres)
 - usage autonome sans navigateur
 
 #### 🌐 Interface web
 
-- page de statut temps reel
-- page d'administration
-- configuration UI, NTP, OTA, MQTT et reseau
-- calibration depuis le navigateur
-- authentification web avec bootstrap du premier compte
-- gestion d'utilisateurs web et sessions
+- supervision temps réel et administration
+- configuration UI, audio, Wi-Fi, NTP, OTA, MQTT et réseau
+- calibration depuis le navigateur et pilotage du mode **LIVE**
+- authentification web avec bootstrap du premier compte, gestion d'utilisateurs et sessions
+- notifications sortantes via webhooks / API : Slack incoming webhook, Telegram Bot API, WhatsApp Cloud API, avec envoi de test
 - flux live **SSE** sur le port `81`
-- export / import de configuration
-- backup / restore de configuration
+- export / import / backup / restore de configuration
 - reset partiel par section : `ui`, `time`, `audio`, `calibration`, `ota`, `mqtt`
-- actions systeme : reboot, shutdown, reset usine
+- actions système : reboot, shutdown, reset usine
 
-#### 📡 Connectivite
+#### 📡 Connectivité
 
 - Wi-Fi via portail de configuration
 - mDNS / Zeroconf : `_soundpanel7._tcp.local.`
 - MQTT
 - MQTT Discovery pour Home Assistant
-- controle du mode **LIVE** via Web UI, API et **MQTT**
-- integration Home Assistant native via Zeroconf/mDNS
+- contrôle du mode **LIVE** via Web UI, API et **MQTT**
+- intégration Home Assistant native via Zeroconf/mDNS
 - OTA via `espota`
 
 #### 🩺 Diagnostic
 
 - uptime
-- temperature MCU
+- température MCU
 - version firmware
 - environnement de build
-- etat OTA / MQTT
+- état OTA / MQTT
 - charge LVGL, timings UI, heap interne / PSRAM
 - nombre d'objets LVGL
 - timestamp du dernier backup
 
 <a id="fr-materiel-cible"></a>
 
-### 🛠️ Materiel cible
+### 🛠️ Matériel cible
 
 #### 🧠 Carte principale
 
 - **Waveshare ESP32-S3-Touch-LCD-7**
-- ecran tactile 7"
+- écran tactile 7"
 - ESP32-S3
 - Wi-Fi
 - Bluetooth
-- retroeclairage pilotable (On/Off)
+- rétroéclairage pilotable (On/Off)
 - ...
 
-#### 🎤 Entree audio
+#### 🎤 Entrée audio
 
-Le firmware est pense pour un **micro analogique** branche sur l'entree capteur.
+Le firmware est pensé pour un **micro analogique** branché sur l'entrée capteur.
 
-Exemples compatibles cites dans le projet :
+Exemples compatibles cités dans le projet :
 
 - `MAX4466`
-- equivalent analogique (Attention à avoir un gain fixe contrairement au MAX9814 par ex)
+- équivalent analogique à **gain fixe**
 
-Par defaut, le projet compile avec un **mode audio mock** pour faciliter le developpement.
+Modèle à ne surtout pas utiliser :
 
-Dans [`platformio.ini`](platformio.ini), le flag suivant est actif par defaut :
+- `MAX9814` : son gain automatique fausse la mesure pour ce projet
+
+Par défaut, le projet compile avec un **mode audio mock** pour faciliter le développement.
+
+Dans [`platformio.ini`](platformio.ini), le flag suivant est actif par défaut :
 
 ```ini
 -DSOUNDPANEL7_MOCK_AUDIO=1
 ```
 
-Si tu branches une vraie entree analogique, verifie ce point avant d'evaluer le comportement du panneau.
+Si tu branches une vraie entrée analogique, vérifie ce point avant d'évaluer le comportement du panneau.
 
 <a id="fr-demarrage-rapide"></a>
 
-### ⚡ Demarrage rapide
+### ⚡ Démarrage rapide
 
-#### 1. Cloner le depot
+#### 1. Cloner le dépôt
 
 ```bash
 git clone https://github.com/jjtronics/SoundPanel7.git
 cd SoundPanel7
 ```
 
-#### 2. Preparer l'environnement
+#### 2. Préparer l'environnement
 
 Le plus simple :
 
 - **VS Code**
 - extension **PlatformIO**
 
-Tu peux aussi utiliser `pio` en ligne de commande si PlatformIO Core est deja installe.
+Tu peux aussi utiliser `pio` en ligne de commande si PlatformIO Core est déjà installé.
 
 #### 3. Compiler
 
@@ -280,37 +287,37 @@ pio run
 
 #### 4. Flasher en USB
 
-L'environnement par defaut est `soundpanel7_usb`.
+L'environnement par défaut est `soundpanel7_usb`.
 
 ```bash
 pio run -e soundpanel7_usb -t upload
 ```
 
-#### 5. Ouvrir le moniteur serie
+#### 5. Ouvrir le moniteur série
 
 ```bash
 pio device monitor -b 115200
 ```
 
-#### 6. Mettre a jour en OTA
+#### 6. Mettre à jour en OTA
 
-Quand l'OTA est configuree sur l'appareil (attention au port série à déclarer dans platformio.ini):
+Quand l'OTA est configurée sur l'appareil (attention au port série à déclarer dans `platformio.ini`) :
 
 ```bash
 pio run -e soundpanel7_ota -t upload
 ```
 
-Pense a ajuster dans [`platformio.ini`](platformio.ini) :
+Pense à ajuster dans [`platformio.ini`](platformio.ini) :
 
-- `upload_port` (Son IP)
+- `upload_port` (son IP)
 - `monitor_port`
-- le mot de passe OTA si utilise
+- le mot de passe OTA si utilisé
 
 Au boot, le firmware initialise successivement :
 
-1. le stockage des reglages
+1. le stockage des réglages
 2. l'affichage et le tactile
-3. le reseau
+3. le réseau
 4. l'OTA
 5. le MQTT
 6. l'interface web
@@ -318,7 +325,7 @@ Au boot, le firmware initialise successivement :
 
 <a id="fr-configuration-par-defaut"></a>
 
-### ⚙️ Configuration par defaut
+### ⚙️ Configuration par défaut
 
 Valeurs actuelles du firmware :
 
@@ -326,30 +333,30 @@ Valeurs actuelles du firmware :
 - serveur NTP : `fr.pool.ntp.org`
 - timezone POSIX : `CET-1CEST,M3.5.0/2,M10.5.0/3`
 - intervalle NTP : `180 min`
-- OTA activee : `oui`
+- OTA activée : `oui`
 - port OTA : `3232`
-- MQTT active : `non`
+- MQTT activé : `non`
 - topic MQTT de base : `soundpanel7`
 - pin analogique : `GPIO6`
-- source audio par defaut : capteur analogique
-- fenetre RMS analogique : `256 samples`
-- reponse audio par defaut : `Fast`
+- source audio par défaut : capteur analogique
+- fenêtre RMS analogique : `256 samples`
+- réponse audio par défaut : `Fast`
 - peak hold : `5000 ms`
-- calibration par defaut : `3 points`, capture `3 s`
+- calibration par défaut : `3 points`, capture `3 s`
 
-Ces reglages sont definis dans [`src/SettingsStore.h`](src/SettingsStore.h).
+Ces réglages sont définis dans [`src/SettingsStore.h`](src/SettingsStore.h).
 
 <a id="fr-interface-web"></a>
 
 ### 🌐 Interface web
 
-Une fois l'appareil connecte au Wi-Fi :
+Une fois l'appareil connecté au Wi-Fi :
 
 - `http://IP_DU_SOUNDPANEL/`
 - `http://soundpanel7.local/` si le mDNS est disponible
 - flux live : `http://IP_DU_SOUNDPANEL:81/api/events`
 
-#### Apercu des dashboards
+#### Aperçu des dashboards
 
 <p align="center">
   <img src="MEDIAS/WEBUI/WebUI-Dashboard-Principal_1.jpg" alt="Dashboard web principal de SoundPanel 7" width="49%">
@@ -357,35 +364,38 @@ Une fois l'appareil connecte au Wi-Fi :
 </p>
 
 <p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Sonometre_3.jpg" alt="Dashboard sonometre de SoundPanel 7" width="49%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Sonometre_3.jpg" alt="Dashboard sonomètre de SoundPanel 7" width="49%">
   <img src="MEDIAS/WEBUI/WebUI-Dashboard-Calibration_4.jpg" alt="Dashboard calibration de SoundPanel 7" width="49%">
 </p>
 
-L'interface permet notamment de regler :
+L'interface permet notamment de régler :
 
-- luminosite
+- luminosité
 - seuils de couleur
-- duree d'historique
-- mode de reponse audio
-- duree des alertes orange / rouge
-- mode LIVE et page d'ouverture par defaut
+- durée d'historique
+- mode de réponse audio
+- durée des alertes orange / rouge
+- mode LIVE et page d'ouverture par défaut
+- contrôle de l'affichage du dashboard local : page affichée, tactile actif/inactif, mode plein écran sans menu du haut
+- paramètres Wi-Fi
 - NTP, timezone, intervalle de synchro et hostname
-- parametres OTA
-- parametres MQTT
+- paramètres OTA
+- paramètres MQTT
+- notifications sortantes : Slack incoming webhook, Telegram Bot API, WhatsApp Cloud API
 - calibration micro
-- PIN local d'acces
+- PIN local d'accès
 - comptes utilisateurs web
-- backup / restore / import / export des reglages
+- backup / restore / import / export des réglages
 
-#### Zone Parametres
+#### Zone Paramètres
 
-Animation complete des reglages :
+Animation complète des réglages :
 
 <p align="center">
-  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des parametres web de SoundPanel 7" width="100%">
+  <img src="MEDIAS/WEBUI/WebUI-Dashboard-Parametres.gif" alt="Animation des paramètres web de SoundPanel 7" width="100%">
 </p>
 
-Endpoints principaux exposes par le firmware :
+Endpoints principaux exposés par le firmware :
 
 ```text
 GET   /api/auth/status
@@ -404,6 +414,8 @@ POST  /api/pin
 POST  /api/ui
 GET   /api/live
 POST  /api/live
+GET   /api/wifi
+POST  /api/wifi
 GET   /api/time
 POST  /api/time
 GET   /api/config/export
@@ -415,6 +427,9 @@ GET   /api/ota
 POST  /api/ota
 GET   /api/mqtt
 POST  /api/mqtt
+GET   /api/notifications
+POST  /api/notifications
+POST  /api/notifications/test
 POST  /api/calibrate
 POST  /api/calibrate/clear
 POST  /api/calibrate/mode
@@ -429,33 +444,109 @@ Le `GET /api/status` renvoie notamment :
 - historique glissant
 - uptime
 - statut Wi-Fi, IP et RSSI
-- etat NTP / heure courante
-- temperature MCU
+- état NTP / heure courante
+- température MCU
 - version firmware et environnement de build
-- etat OTA / MQTT
-- etat LIVE, PIN et calibration
+- état OTA / MQTT
+- état LIVE, PIN et calibration
 - stats runtime LVGL / heap
+
+<a id="fr-affichage-dashboard"></a>
+
+### 🖥️ Affichage du dashboard
+
+L'interface web permet aussi de piloter finement l'affichage du panneau tactile 7" :
+
+- choisir la vue affichée : principal, horloge, LIVE ou sonomètre
+- activer ou désactiver complètement le tactile
+- activer un mode plein écran par vue pour masquer la barre du haut sur l'écran local
+- appliquer ces changements immédiatement sans reflasher le firmware
+
+Ces réglages sont sauvegardés via l'API UI du firmware et restent actifs après redémarrage.
+
+<a id="fr-securite-web-pin"></a>
+
+### 🔐 Sécurité web et PIN
+
+Le projet combine deux niveaux de protection :
+
+- authentification web avec création du premier compte au bootstrap
+- gestion de comptes locaux avec changement de mot de passe et suppression d'utilisateur
+- sessions web pour l'administration et l'accès au flux live
+- code **PIN** local pour protéger les pages sensibles sur le panneau tactile
+
+Endpoints associés :
+
+```text
+GET   /api/auth/status
+POST  /api/auth/login
+POST  /api/auth/logout
+POST  /api/auth/bootstrap
+GET   /api/users
+POST  /api/users/create
+POST  /api/users/password
+POST  /api/users/delete
+POST  /api/pin
+```
+
+<a id="fr-wifi-multi-ap"></a>
+
+### 📡 Wi-Fi multi-AP
+
+Le panneau peut mémoriser jusqu'à **4 réseaux Wi-Fi** pour s'adapter à plusieurs lieux d'usage :
+
+- maison, bureau, studio, partage de connexion, etc.
+- conservation du mot de passe déjà stocké si le champ reste vide
+- prise en charge des réseaux ouverts si aucun mot de passe n'est renseigné
+- état de connexion visible dans l'interface web
+
+Endpoints associés :
+
+```text
+GET   /api/wifi
+POST  /api/wifi
+```
+
+<a id="fr-gestion-configuration"></a>
+
+### 💾 Gestion de configuration
+
+Le firmware intègre une vraie gestion des réglages pour éviter de tout refaire à la main :
+
+- export JSON complet de la configuration
+- import de configuration depuis l'interface web
+- backup local du dernier état connu
+- restore du backup en un clic
+- reset partiel par section : `ui`, `time`, `audio`, `calibration`, `ota`, `mqtt`
+- horodatage du dernier backup visible dans le statut
+
+Endpoints associés :
+
+```text
+GET   /api/config/export
+POST  /api/config/import
+POST  /api/config/backup
+POST  /api/config/restore
+POST  /api/config/reset_partial
+```
 
 <a id="fr-horloge-ntp"></a>
 
 ### 🕒 Horloge NTP
 
-SoundPanel 7 est aussi une **grande horloge reseau**.
+SoundPanel 7 fait aussi office de **grande horloge réseau**.
+Dans un studio, une régie ou un setup podcast, avoir une heure fiable avec les secondes en grand est souvent aussi utile que la mesure sonore.
 
-C'est un vrai usage, pas un gadget.
-Dans un studio, une regie, un espace podcast ou un environnement de diffusion,
-avoir une heure fiable avec les secondes en grand est aussi utile que l'affichage du niveau sonore.
-
-Le firmware gere :
+Le firmware gère :
 
 - la synchronisation NTP automatique
-- le parametrage du serveur NTP
+- le paramétrage du serveur NTP
 - la timezone POSIX
 - l'intervalle de resynchronisation
 - l'affichage local `HH:MM` avec badge secondes
-- l'heure complete cote interface web
+- l'heure complète côté interface web
 
-Par defaut, le serveur NTP configure est `fr.pool.ntp.org`.
+Par défaut, le serveur NTP configuré est `fr.pool.ntp.org`.
 
 <a id="fr-mqtt"></a>
 
@@ -463,7 +554,7 @@ Par defaut, le serveur NTP configure est `fr.pool.ntp.org`.
 
 Le panneau peut publier ses mesures vers un broker MQTT.
 
-Parametres disponibles :
+Paramètres disponibles :
 
 - host
 - port
@@ -473,7 +564,7 @@ Parametres disponibles :
 - intervalle de publication
 - retain
 
-Topics effectivement publies :
+Topics effectivement publiés :
 
 ```text
 soundpanel7/availability
@@ -487,7 +578,7 @@ soundpanel7/wifi/rssi
 soundpanel7/wifi/ip
 ```
 
-Avec **MQTT Discovery**, le firmware publie automatiquement les entites Home Assistant suivantes :
+Avec **MQTT Discovery**, le firmware publie automatiquement les entités Home Assistant suivantes :
 
 - `dB Instant`
 - `Leq`
@@ -496,21 +587,47 @@ Avec **MQTT Discovery**, le firmware publie automatiquement les entites Home Ass
 - `WiFi RSSI`
 - `WiFi IP`
 
+<a id="fr-notifications-sortantes"></a>
+
+### 🚨 Notifications sortantes
+
+Le panneau peut envoyer des alertes vers des services externes lorsqu'un seuil est dépassé ou lors du retour à la normale.
+
+Canaux pris en charge :
+
+- Slack via **incoming webhook**
+- Telegram via **Bot API**
+- WhatsApp via **Cloud API**
+
+Fonctionnalités disponibles :
+
+- notification des alertes `warning` et/ou `critique`
+- notification optionnelle du retour à la normale
+- résumé des cibles actives
+- mémorisation du dernier résultat et du dernier succès
+- envoi de test depuis l'interface web
+
+Endpoints associés :
+
+```text
+GET   /api/notifications
+POST  /api/notifications
+POST  /api/notifications/test
+```
+
 <a id="fr-home-assistant"></a>
 
 ### 🏠 Home Assistant
 
-Deux approches sont proposees.
+Deux approches sont proposées :
 
 #### Option 1 : MQTT Discovery
 
-La plus simple si Home Assistant utilise deja MQTT.
+La plus simple si Home Assistant utilise déjà MQTT : tu actives MQTT sur le SoundPanel 7, tu renseignes le broker, et les entités sont créées automatiquement.
 
-Tu actives MQTT sur le SoundPanel 7, tu renseignes le broker, et les entites sont creees automatiquement.
+#### Option 2 : intégration native Home Assistant
 
-#### Option 2 : integration native Home Assistant
-
-Une integration custom est fournie dans :
+Une intégration custom est fournie dans :
 
 [`custom_components/soundpanel7`](custom_components/soundpanel7)
 
@@ -520,9 +637,9 @@ Le firmware annonce le service :
 _soundpanel7._tcp.local.
 ```
 
-L'integration interroge l'endpoint dedie `/api/ha/status` avec un bearer token Home Assistant.
+L'intégration interroge l'endpoint dédié `/api/ha/status` avec un bearer token Home Assistant.
 
-Capteurs exposes par l'integration native :
+Capteurs exposés par l'intégration native :
 
 - `dB Instant`
 - `Leq`
@@ -533,24 +650,24 @@ Capteurs exposes par l'integration native :
 
 ##### Installation via HACS
 
-Le depot peut maintenant etre ajoute dans **HACS** comme **custom repository**.
+Le dépôt peut maintenant être ajouté dans **HACS** comme **custom repository**.
 
-Pre-requis :
+Pré-requis :
 
-- une release GitHub publiee (ex. `v0.1.0`)
-- HACS installe dans Home Assistant
+- une release GitHub publiée (ex. `v0.1.0`)
+- HACS installé dans Home Assistant
 
-Etapes :
+Étapes :
 
 1. ouvrir `HACS > Integrations`
-2. ouvrir le menu en haut a droite puis `Custom repositories`
+2. ouvrir le menu en haut à droite puis `Custom repositories`
 3. ajouter `https://github.com/jjtronics/SoundPanel7`
-4. choisir la categorie `Integration`
+4. choisir la catégorie `Integration`
 5. rechercher `SoundPanel 7` dans HACS puis l'installer
-6. redemarrer Home Assistant
-7. redemarrer le SoundPanel 7
-8. ouvrir `Parametres > Appareils et services`
-9. attendre la decouverte automatique
+6. redémarrer Home Assistant
+7. redémarrer le SoundPanel 7
+8. ouvrir `Paramètres > Appareils et services`
+9. attendre la découverte automatique
 
 ##### Installation manuelle
 
@@ -569,54 +686,53 @@ cp -R custom_components/soundpanel7 /config/custom_components/
 
 Puis :
 
-1. dans l'interface web du panneau, ouvrir `Parametres > Home Assistant`
-2. generer ou definir un token dedie
-3. copier `custom_components/soundpanel7` dans Home Assistant
-4. redemarrer Home Assistant
-5. redemarrer le SoundPanel 7
-6. ouvrir `Parametres > Appareils et services`
-7. attendre la decouverte automatique
+1. dans l'interface web du panneau, ouvrir `Paramètres > Home Assistant`
+2. générer ou définir un token dédié
+3. redémarrer Home Assistant
+4. redémarrer le SoundPanel 7
+5. ouvrir `Paramètres > Appareils et services`
+6. attendre la découverte automatique
 
 Le flow de configuration demandera ce token.
 
-Si rien n'apparait, verifier en priorite :
+Si rien n'apparaît, vérifier en priorité :
 
-- que le token Home Assistant est bien configure cote panneau
-- que Home Assistant et le panneau sont sur le meme reseau
-- que `manifest.json` est bien present cote Home Assistant
-- que le panneau repond bien sur son interface web
-- que le mDNS n'est pas perturbe par le reseau ou les VLANs
+- que le token Home Assistant est bien configuré côté panneau
+- que Home Assistant et le panneau sont sur le même réseau
+- que `manifest.json` est bien présent côté Home Assistant
+- que le panneau répond bien sur son interface web
+- que le mDNS n'est pas perturbé par le réseau ou les VLANs
 
 <a id="fr-ota"></a>
 
 ### 🚀 OTA
 
-Quand l'OTA est configuree et activee sur l'appareil :
+Une fois l'OTA configurée sur l'appareil, la mise à jour se fait avec :
 
 ```bash
 pio run -e soundpanel7_ota -t upload
 ```
 
-L'environnement OTA de [`platformio.ini`](platformio.ini) repose sur :
+Dans [`platformio.ini`](platformio.ini), l'environnement OTA repose sur :
 
 - `upload_protocol = espota`
-- port par defaut `3232`
+- port par défaut `3232`
 - mot de passe OTA configurable
 
-Pense a ajuster `upload_port` a l'adresse IP reelle de ton appareil.
+Pense à ajuster `upload_port` à l'adresse IP réelle de ton appareil.
 
 <a id="fr-calibration"></a>
 
 ### 🎚️ Calibration
 
-Le systeme de calibration fonctionne en **3 ou 5 points**.
+Le système de calibration fonctionne en **3 ou 5 points**.
 
-Procedure recommandee :
+Procédure recommandée :
 
-1. placer un sonometre de reference a cote du SoundPanel 7
-2. generer ou mesurer un niveau stable
-3. saisir la valeur reelle
-4. capturer les points de reference
+1. placer un sonomètre de référence à côté du SoundPanel 7
+2. générer ou mesurer un niveau stable
+3. saisir la valeur réelle
+4. capturer les points de référence
 
 Valeurs typiques utiles en mode 3 points :
 
@@ -627,32 +743,32 @@ Valeurs typiques utiles en mode 3 points :
 Le firmware permet aussi :
 
 - de choisir le mode `3 points` ou `5 points`
-- de regler la duree de capture
+- de régler la durée de capture
 - d'effacer la calibration
 - de conserver des offsets de secours dans la configuration
 
 Le firmware stocke ensuite les points et corrige la lecture.
 
-#### Validation avec sonometre de reference
+#### Validation avec sonomètre de référence
 
-Une video de demonstration montre le SoundPanel 7 a cote d'un vrai sonometre professionnel,
-pendant une montee progressive de bruit blanc, afin de verifier que les mesures restent coherentes.
+Une vidéo de démonstration montre le SoundPanel 7 à côté d'un vrai sonomètre professionnel,
+pendant une montée progressive de bruit blanc, afin de vérifier que les mesures restent cohérentes.
 
 <p align="center">
   <a href="MEDIAS/HARDWARE/SoundPanel7-APPART_1.mp4">
-    <img src="MEDIAS/HARDWARE/SoundPanel7-APPART_1.jpg" alt="Apercu de la video de validation comparative SoundPanel 7 vs sonometre de reference" width="88%">
+    <img src="MEDIAS/HARDWARE/SoundPanel7-APPART_1.jpg" alt="Aperçu de la vidéo de validation comparative SoundPanel 7 vs sonomètre de référence" width="88%">
   </a>
 </p>
 
 <p align="center">
-  <em>Cliquer sur l'image pour ouvrir la video comparative MP4.</em>
+  <em>Cliquer sur l'image pour ouvrir la vidéo comparative MP4.</em>
 </p>
 
 <a id="fr-architecture"></a>
 
 ### 🧠 Architecture
 
-Le coeur du projet reste volontairement simple :
+Le cœur du projet reste volontairement simple :
 
 ```text
 AudioEngine -> SharedHistory -> UI / Web / MQTT
@@ -677,24 +793,24 @@ Composants principaux :
 ```text
 .
 ├── src/                       Firmware principal
-├── custom_components/         Integration Home Assistant
-├── include/                   Headers partages
+├── custom_components/         Intégration Home Assistant
+├── include/                   Headers partagés
 ├── assets/                    Polices
 └── platformio.ini             Build, flash et environnements
 ```
 
 <a id="fr-etat-du-projet"></a>
 
-### 🔧 Etat du projet
+### 🔧 État du projet
 
-Le projet est deja exploitable, mais reste evolutif :
+Le projet est déjà exploitable, mais reste évolutif :
 
-- la chaine audio depend encore beaucoup du capteur analogique reel
-- le rendu final depend de la calibration
-- certains parametres de `platformio.ini` sont ajustes pour la machine de dev actuelle
-- la documentation hardware et cablage peut encore etre enrichie
+- la chaîne audio dépend encore beaucoup du capteur analogique réel
+- le rendu final dépend de la calibration
+- certains paramètres de `platformio.ini` sont ajustés pour la machine de dev actuelle
+- la documentation hardware et câblage peut encore être enrichie
 
-En clair : c'est un projet serieux, vivant, et deja tres utile.
+En clair : c'est un projet sérieux, vivant, et déjà très utile.
 
 <a id="fr-contribution"></a>
 
@@ -703,12 +819,12 @@ En clair : c'est un projet serieux, vivant, et deja tres utile.
 Les contributions sont bienvenues, surtout sur :
 
 - documentation
-- guide hardware et cablage
+- guide hardware et câblage
 - calibration
 - UX de l'interface
-- integration et fiabilite reseau
+- intégration et fiabilité réseau
 
-Point d'entree recommande :
+Point d'entrée recommandé :
 
 1. compiler
 2. flasher
@@ -733,8 +849,13 @@ Point d'entree recommande :
 - [Quick start](#en-quick-start)
 - [Default configuration](#en-default-configuration)
 - [Web interface](#en-web-interface)
+- [Dashboard display](#en-dashboard-display)
+- [Web security and PIN](#en-web-security-pin)
+- [Wi-Fi multi-AP](#en-wifi-multi-ap)
+- [Configuration management](#en-configuration-management)
 - [NTP clock](#en-ntp-clock)
 - [MQTT and Home Assistant](#en-mqtt-and-home-assistant)
+- [Outbound alerting](#en-outbound-alerting)
 - [OTA updates](#en-ota-updates)
 - [Calibration workflow](#en-calibration-workflow)
 - [Firmware architecture](#en-firmware-architecture)
@@ -789,16 +910,12 @@ lab space, recording studio, and day-to-day use.
 
 ### 🚀 Key features
 
-- Large 7" touchscreen display readable from a distance
+- Large 7" touchscreen for sound, time, and device status at a glance
 - Real-time sound monitoring with **instant dB**, **Leq**, and **Peak**
-- **Large NTP clock** with visible seconds
-- Local LVGL UI with **5 pages**: overview, clock, sound, calibration, settings
-- Embedded web interface with live monitoring and administration
-- Secure web access with first-user bootstrap, sessions, and user management
-- **MQTT** publishing with auto reconnect and Discovery
-- **Home Assistant** through MQTT Discovery or native custom integration
-- **OTA** firmware updates
-- Persistent settings storage with **export / import / backup / restore**
+- Large **NTP** clock with visible seconds for studio and broadcast-style timing
+- Dual interface: local **LVGL** UI plus secure embedded web administration
+- Connected integrations: **MQTT**, Discovery, **Home Assistant**, and **OTA**
+- Persistent settings with export, import, backup, and restore
 
 <a id="en-use-cases"></a>
 
@@ -846,15 +963,13 @@ lab space, recording studio, and day-to-day use.
 
 #### 🌐 Web interface
 
-- real-time status page
-- administration page
-- UI, NTP, OTA, MQTT, and network configuration
-- browser-based calibration
-- web authentication with first-account bootstrap
-- web user management and session handling
+- real-time monitoring and administration
+- UI, audio, Wi-Fi, NTP, OTA, MQTT, and network configuration
+- browser-based calibration and **LIVE** mode control
+- web authentication with first-account bootstrap, user management, and sessions
+- outbound notifications via webhooks / API: Slack incoming webhook, Telegram Bot API, WhatsApp Cloud API, with test delivery
 - live **SSE** stream on port `81`
-- config export / import
-- config backup / restore
+- config export / import / backup / restore
 - partial reset by scope: `ui`, `time`, `audio`, `calibration`, `ota`, `mqtt`
 - system actions: reboot, shutdown, factory reset
 
@@ -900,8 +1015,11 @@ The firmware is designed around an **analog microphone** connected to the sensor
 Examples referenced in the project:
 
 - `MAX4466`
-- `MAX9814`
-- similar analog microphone modules
+- similar analog microphone modules with **fixed gain**
+
+Model to definitely avoid:
+
+- `MAX9814`: its automatic gain control makes it unsuitable for reliable measurement here
 
 By default, the project builds with a **mock audio mode** to make development easier without a real measurement chain.
 
@@ -1030,9 +1148,12 @@ The interface lets you configure:
 - audio response mode
 - orange / red alert hold time
 - LIVE mode and default dashboard page
+- control over the local dashboard display: selected page, touch enabled/disabled, fullscreen mode without the top menu
+- Wi-Fi settings
 - NTP, timezone, sync interval, and hostname
 - OTA settings
 - MQTT settings
+- outbound notifications: Slack incoming webhook, Telegram Bot API, WhatsApp Cloud API
 - microphone calibration
 - local access PIN
 - web user accounts
@@ -1065,6 +1186,8 @@ POST  /api/pin
 POST  /api/ui
 GET   /api/live
 POST  /api/live
+GET   /api/wifi
+POST  /api/wifi
 GET   /api/time
 POST  /api/time
 GET   /api/config/export
@@ -1076,6 +1199,9 @@ GET   /api/ota
 POST  /api/ota
 GET   /api/mqtt
 POST  /api/mqtt
+GET   /api/notifications
+POST  /api/notifications
+POST  /api/notifications/test
 POST  /api/calibrate
 POST  /api/calibrate/clear
 POST  /api/calibrate/mode
@@ -1097,15 +1223,91 @@ POST  /api/factory_reset
 - LIVE, PIN, and calibration state
 - LVGL / heap runtime statistics
 
+<a id="en-dashboard-display"></a>
+
+### 🖥️ Dashboard display
+
+The web interface also lets you control how the 7" local panel is displayed:
+
+- choose the active view: overview, clock, LIVE, or sound meter
+- enable or disable touch input entirely
+- enable fullscreen per view to hide the top bar on the local screen
+- apply changes immediately without reflashing the firmware
+
+These settings are stored through the firmware UI API and persist across reboots.
+
+<a id="en-web-security-pin"></a>
+
+### 🔐 Web security and PIN
+
+The project combines two protection layers:
+
+- web authentication with first-user bootstrap
+- local user management with password changes and user deletion
+- web sessions for administration and access to the live stream
+- local **PIN** protection for sensitive pages on the touchscreen panel
+
+Associated endpoints:
+
+```text
+GET   /api/auth/status
+POST  /api/auth/login
+POST  /api/auth/logout
+POST  /api/auth/bootstrap
+GET   /api/users
+POST  /api/users/create
+POST  /api/users/password
+POST  /api/users/delete
+POST  /api/pin
+```
+
+<a id="en-wifi-multi-ap"></a>
+
+### 📡 Wi-Fi multi-AP
+
+The panel can store up to **4 Wi-Fi networks** so it can move between different environments more easily:
+
+- home, office, studio, phone hotspot, and similar setups
+- keep an already stored password when the field is left empty
+- support open networks when no password is provided
+- show the current connection state in the web interface
+
+Associated endpoints:
+
+```text
+GET   /api/wifi
+POST  /api/wifi
+```
+
+<a id="en-configuration-management"></a>
+
+### 💾 Configuration management
+
+The firmware includes real configuration lifecycle tooling so settings do not have to be rebuilt manually:
+
+- full JSON export of the current configuration
+- configuration import from the web interface
+- local backup of the latest known state
+- one-click backup restore
+- partial reset by scope: `ui`, `time`, `audio`, `calibration`, `ota`, `mqtt`
+- last backup timestamp visible in status
+
+Associated endpoints:
+
+```text
+GET   /api/config/export
+POST  /api/config/import
+POST  /api/config/backup
+POST  /api/config/restore
+POST  /api/config/reset_partial
+```
+
 <a id="en-ntp-clock"></a>
 
 ### 🕒 NTP clock
 
-SoundPanel 7 is also a **large network clock**.
-
-That is not a cosmetic extra.
-In a studio, control room, podcast environment, or broadcast workflow,
-having reliable time with visible seconds is often just as useful as the sound reading itself.
+SoundPanel 7 also works as a **large network clock**.
+In a studio, control room, podcast setup, or broadcast workflow, reliable time with visible seconds is often just as useful as the sound reading itself.
 
 The firmware handles:
 
@@ -1157,12 +1359,39 @@ With **MQTT Discovery**, the firmware publishes these Home Assistant entities au
 - `WiFi RSSI`
 - `WiFi IP`
 
-Home Assistant support is available in two ways.
+<a id="en-outbound-alerting"></a>
+
+### 🚨 Outbound alerting
+
+The panel can send alerts to external services when a threshold is exceeded or when the sound level returns to normal.
+
+Supported channels:
+
+- Slack through an **incoming webhook**
+- Telegram through the **Bot API**
+- WhatsApp through the **Cloud API**
+
+Available capabilities:
+
+- notify on `warning` and/or `critical` alerts
+- optional notification when the level returns to normal
+- summary of active targets
+- last result and last successful delivery tracking
+- test delivery from the web interface
+
+Associated endpoints:
+
+```text
+GET   /api/notifications
+POST  /api/notifications
+POST  /api/notifications/test
+```
+
+Home Assistant support is available in two ways:
 
 #### Option 1: MQTT Discovery
 
-If your Home Assistant setup already relies on MQTT, this is the quickest path.
-Enable MQTT on the panel, configure the broker, and entities will be created automatically.
+If your Home Assistant setup already relies on MQTT, this is the quickest path: enable MQTT on the panel, configure the broker, and entities will be created automatically.
 
 #### Option 2: Native Home Assistant integration
 
@@ -1221,11 +1450,10 @@ After that:
 
 1. in the panel web UI, open `Settings > Home Assistant`
 2. generate or set a dedicated token
-3. copy `custom_components/soundpanel7` into Home Assistant
-4. restart Home Assistant
-5. restart SoundPanel 7
-6. open `Settings > Devices & Services`
-7. wait for auto-discovery
+3. restart Home Assistant
+4. restart SoundPanel 7
+5. open `Settings > Devices & Services`
+6. wait for auto-discovery
 
 The config flow will ask for that token.
 
@@ -1241,13 +1469,13 @@ If the device does not show up, check:
 
 ### 🚀 OTA updates
 
-Once OTA is configured and enabled on the device:
+Once OTA is configured on the device, updates use:
 
 ```bash
 pio run -e soundpanel7_ota -t upload
 ```
 
-The OTA environment in [`platformio.ini`](platformio.ini) uses:
+In [`platformio.ini`](platformio.ini), the OTA environment uses:
 
 - `upload_protocol = espota`
 - default port `3232`
