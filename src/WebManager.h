@@ -1,17 +1,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include <http_parser.h>
-
-// Present the core HTTP types to ESPAsyncWebServer without including the
-// full WebServer header first, which avoids the HTTP_ANY/HTTP_* collisions.
-typedef enum http_method HTTPMethod;
-#define WEBSERVER_H
-#define HTTP_ANY ((HTTPMethod)255)
-#include <ESPAsyncWebServer.h>
-#undef HTTP_ANY
-#undef WEBSERVER_H
-
 #include <WebServer.h>
 #include <esp_display_panel.hpp>
 
@@ -22,6 +11,7 @@ typedef enum http_method HTTPMethod;
 #include "MqttManager.h"
 
 class UiManager;
+class LiveEventServer;
 
 class WebManager {
 public:
@@ -60,11 +50,10 @@ private:
   OtaManager* _ota = nullptr;
   MqttManager* _mqtt = nullptr;
   UiManager* _ui = nullptr;
+  LiveEventServer* _live = nullptr;
 
   bool _started = false;
   WebServer _srv = WebServer(80);
-  AsyncWebServer _liveSrv = AsyncWebServer(81);
-  AsyncEventSource _liveEvents = AsyncEventSource("/api/events");
 
   uint32_t _lastLivePushMs = 0;
   SharedHistory* _history = nullptr;

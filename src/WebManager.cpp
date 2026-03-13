@@ -1,10 +1,10 @@
 #include "WebManager.h"
+#include "LiveEventServer.h"
 #include "JsonHelpers.h"
 #include "lvgl_v8_port.h"
 #include "ui/UiManager.h"
 
 #include <WiFi.h>
-#include <AsyncTCP.h>
 #include <esp_sntp.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
@@ -308,7 +308,7 @@ void WebManager::invalidateSessionToken(const char* token) {
   for (WebSession& session : _sessions) {
     if (session.active && secureEquals(session.sessionToken, token)) {
       session = WebSession{};
-      _liveEvents.close();
+      if (_live) _live->close();
       return;
     }
   }
@@ -323,12 +323,12 @@ void WebManager::invalidateSessionsForUser(const char* username) {
       changed = true;
     }
   }
-  if (changed) _liveEvents.close();
+  if (changed && _live) _live->close();
 }
 
 void WebManager::clearAllSessions() {
   for (WebSession& session : _sessions) session = WebSession{};
-  _liveEvents.close();
+  if (_live) _live->close();
 }
 
 bool WebManager::issueSessionForUser(const char* username, String& liveTokenOut) {
@@ -427,6 +427,7 @@ bool WebManager::begin(SettingsStore* store,
   _ota = ota;
   _mqtt = mqtt;
   _ui = ui;
+  if (!_live) _live = new LiveEventServer(81, "/api/events");
 
   if (!g_bootMs) g_bootMs = millis();
   if (_started) return true;
@@ -436,7 +437,6 @@ bool WebManager::begin(SettingsStore* store,
   routes();
   _srv.begin();
   setupLiveStream();
-  _liveSrv.begin();
   _started = true;
 
   Serial0.println("[WEB] LISTEN on 80");
@@ -513,33 +513,25 @@ void WebManager::loop() {
 }
 
 void WebManager::setupLiveStream() {
-  DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
-  DefaultHeaders::Instance().addHeader("Cache-Control", "no-cache");
-
-  _liveEvents.authorizeConnect([this](AsyncWebServerRequest* request) -> bool {
-    if (!request || !request->hasParam("t")) return false;
-    const AsyncWebParameter* tokenParam = request->getParam("t");
-    if (!tokenParam) return false;
-    return findSessionByLiveToken(tokenParam->value().c_str()) != nullptr;
-  });
-
-  _liveEvents.onConnect([this](AsyncEventSourceClient* client) {
-    if (!client) return;
-    const String payload = statusJson();
-    client->send(payload.c_str(), "metrics", millis(), 1500);
-  });
-  _liveSrv.addHandler(&_liveEvents);
+  if (!_live) return;
+  _live->begin(
+      [this](const String& token) -> bool {
+        return findSessionByLiveToken(token.c_str()) != nullptr;
+      },
+      [this]() -> String {
+        return statusJson();
+      });
 }
 
 void WebManager::pushLiveMetrics(bool force) {
-  if (_liveEvents.count() == 0) return;
+  if (!_live || _live->clientCount() == 0) return;
 
   const uint32_t now = millis();
   if (!force && (now - _lastLivePushMs) < LIVE_PUSH_PERIOD_MS) return;
 
   _lastLivePushMs = now;
   const String payload = liveMetricsJson();
-  _liveEvents.send(payload.c_str(), "metrics", now);
+  _live->sendMetrics(payload, now);
 }
 
 void WebManager::replyText(int code, const String& txt, const char* contentType) {
