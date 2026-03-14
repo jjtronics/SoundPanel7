@@ -32,6 +32,7 @@ static float g_webPeak = 0.0f;
 static constexpr char SP7_SESSION_COOKIE_NAME[] = "sp7_session";
 static constexpr HTTPMethod kSyncHttpGet = static_cast<HTTPMethod>(::HTTP_GET);
 static constexpr HTTPMethod kSyncHttpPost = static_cast<HTTPMethod>(::HTTP_POST);
+static constexpr uint32_t kNotificationHttpConnectTimeoutMs = 5000UL;
 static constexpr uint32_t kNotificationHttpTimeoutMs = 8000UL;
 
 static void appendBoolField(String& json, const char* key, bool value, bool trailingComma = true) {
@@ -2057,29 +2058,37 @@ bool WebManager::postJsonToUrl(const String& url,
   if (!url.length()) return false;
 
   HTTPClient http;
+  http.setConnectTimeout(kNotificationHttpConnectTimeoutMs);
   http.setTimeout(kNotificationHttpTimeoutMs);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setReuse(false);
+  http.setUserAgent(String("SoundPanel7/") + SOUNDPANEL7_VERSION);
 
   bool started = false;
   if (url.startsWith("https://")) {
     WiFiClientSecure client;
     client.setInsecure();
+    client.setTimeout(kNotificationHttpTimeoutMs);
     started = http.begin(client, url);
     if (!started) return false;
     http.addHeader("Content-Type", "application/json");
     if (authorization.length()) http.addHeader("Authorization", authorization);
     statusCodeOut = http.POST((uint8_t*)payload.c_str(), payload.length());
-    responseOut = http.getString();
+    if (statusCodeOut <= 0) responseOut = http.errorToString(statusCodeOut);
+    else responseOut = http.getString();
     http.end();
     return statusCodeOut > 0;
   }
 
   WiFiClient client;
+  client.setTimeout(kNotificationHttpTimeoutMs);
   started = http.begin(client, url);
   if (!started) return false;
   http.addHeader("Content-Type", "application/json");
   if (authorization.length()) http.addHeader("Authorization", authorization);
   statusCodeOut = http.POST((uint8_t*)payload.c_str(), payload.length());
-  responseOut = http.getString();
+  if (statusCodeOut <= 0) responseOut = http.errorToString(statusCodeOut);
+  else responseOut = http.getString();
   http.end();
   return statusCodeOut > 0;
 }
@@ -2102,6 +2111,7 @@ bool WebManager::sendSlackNotification(const String& message, String& summary) {
   String response;
   if (!postJsonToUrl(_s->slackWebhookUrl, payload, "", statusCode, response)) {
     summary = "Slack: echec HTTP";
+    if (response.length()) summary += " (" + trimmedHttpResponse(response) + ")";
     return false;
   }
   if (statusCode >= 200 && statusCode < 300) {
@@ -2136,6 +2146,7 @@ bool WebManager::sendTelegramNotification(const String& message, String& summary
   String response;
   if (!postJsonToUrl(url, payload, "", statusCode, response)) {
     summary = "Telegram: echec HTTP";
+    if (response.length()) summary += " (" + trimmedHttpResponse(response) + ")";
     return false;
   }
   if (statusCode >= 200 && statusCode < 300) {
@@ -2174,6 +2185,7 @@ bool WebManager::sendWhatsappNotification(const String& message, String& summary
   String response;
   if (!postJsonToUrl(url, payload, authorization, statusCode, response)) {
     summary = "WhatsApp: echec HTTP";
+    if (response.length()) summary += " (" + trimmedHttpResponse(response) + ")";
     return false;
   }
   if (statusCode >= 200 && statusCode < 300) {
