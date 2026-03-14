@@ -3,6 +3,8 @@
 #include <Arduino.h>
 
 struct RuntimeStats {
+  uint8_t cpuIdlePct = 100;
+  uint8_t cpuLoadPct = 0;
   uint8_t lvglIdlePct = 100;
   uint8_t lvglLoadPct = 0;
   uint32_t uiWorkLastUs = 0;

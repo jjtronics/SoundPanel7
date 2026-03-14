@@ -9,7 +9,9 @@ bool OtaManager::begin(SettingsV1* settings) {
   _s = settings;
   _started = false;
   _inProgress = false;
+  _rebootPending = false;
   _lastStartAttemptMs = 0;
+  _rebootAtMs = 0;
   _lastLoggedProgressPct = 255;
 
   if (!_s) {
@@ -49,6 +51,7 @@ bool OtaManager::tryStart() {
   WiFi.setSleep(false);
   ArduinoOTA.setHostname(_s->otaHostname);
   ArduinoOTA.setTimeout(15000);
+  ArduinoOTA.setRebootOnSuccess(false);
 
   if (_s->otaPort > 0) {
     ArduinoOTA.setPort(_s->otaPort);
@@ -61,11 +64,14 @@ bool OtaManager::tryStart() {
   ArduinoOTA
     .onStart([this]() {
       _inProgress = true;
+      _rebootPending = false;
+      _rebootAtMs = 0;
       _lastLoggedProgressPct = 255;
       Serial0.println("[OTA] Start");
     })
     .onEnd([this]() {
-      _inProgress = false;
+      _rebootPending = true;
+      _rebootAtMs = millis() + kRebootDelayAfterSuccessMs;
       Serial0.println("\n[OTA] End");
     })
     .onProgress([this](unsigned int progress, unsigned int total) {
@@ -76,6 +82,8 @@ bool OtaManager::tryStart() {
     })
     .onError([this](ota_error_t error) {
       _inProgress = false;
+      _rebootPending = false;
+      _rebootAtMs = 0;
       Serial0.printf("[OTA] Error[%u]\n", (unsigned)error);
     });
 
@@ -92,6 +100,15 @@ bool OtaManager::tryStart() {
 
 void OtaManager::loop() {
   if (!_s || !_s->otaEnabled) return;
+
+  if (_rebootPending) {
+    if ((int32_t)(millis() - _rebootAtMs) >= 0) {
+      Serial0.println("[OTA] Reboot");
+      delay(20);
+      ESP.restart();
+    }
+    return;
+  }
 
   if (!_started) {
     uint32_t now = millis();

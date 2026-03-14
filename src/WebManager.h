@@ -30,7 +30,8 @@ public:
   void updateMetrics(float db, float leq, float peak);
 
 private:
-  static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 150;
+  static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 240;
+  static constexpr uint32_t LIVE_SYSTEM_PUSH_PERIOD_MS = 1000;
   static constexpr uint8_t WEB_SESSION_MAX_COUNT = 6;
   static constexpr uint32_t WEB_SESSION_IDLE_TIMEOUT_MS = 12UL * 60UL * 60UL * 1000UL;
   static constexpr uint8_t WEB_LOGIN_MAX_FAILURES = 5;
@@ -60,6 +61,7 @@ private:
   WebServer _srv = WebServer(80);
 
   uint32_t _lastLivePushMs = 0;
+  uint32_t _lastLiveSystemPushMs = 0;
   SharedHistory* _history = nullptr;
   WebSession _sessions[WEB_SESSION_MAX_COUNT];
   uint8_t _loginFailureCount = 0;
@@ -71,6 +73,8 @@ private:
   void syncHttpAvailability();
   void setupLiveStream();
   void pushLiveMetrics(bool force = false);
+  void pushLiveSystem(bool force = false);
+  bool liveTrafficPaused() const;
   void addCommonSecurityHeaders(bool noStore = true);
 
   void replyText(int code, const String& txt, const char* contentType = "text/plain");
@@ -86,6 +90,7 @@ private:
   bool requireWebAuth();
   bool requireHomeAssistantToken();
   String statusJson() const;
+  String systemSummaryJson() const;
   String homeAssistantStatusJson() const;
   String liveMetricsJson() const;
   bool pinConfigured() const;
@@ -111,6 +116,7 @@ private:
 
   void handleRoot();
   void handleStatus();
+  void handleSystemSummary();
   void handleAuthStatus();
   void handleAuthLogin();
   void handleAuthLogout();

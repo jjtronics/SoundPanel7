@@ -10,9 +10,11 @@ public:
   ~LiveEventServer();
 
   void begin(std::function<bool(const String&)> authorizeToken,
-             std::function<String()> initialPayloadFactory);
+             std::function<String()> initialPayloadFactory,
+             std::function<String()> initialSystemPayloadFactory = nullptr);
   void close();
   size_t clientCount() const;
+  void sendEvent(const char* eventName, const String& payload, uint32_t eventId);
   void sendMetrics(const String& payload, uint32_t eventId);
 
 private:

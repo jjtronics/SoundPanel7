@@ -2,6 +2,8 @@
 #include <esp_display_panel.hpp>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
+#include <esp_timer.h>
+#include <freertos/idf_additions.h>
 #include <lvgl.h>
 
 #include "AppRuntimeStats.h"
@@ -37,6 +39,7 @@ static ReleaseUpdateManager g_releaseUpdate;
 
 static MqttManager g_mqtt;
 static constexpr bool kAudioDebugLogEnabled = false;
+static constexpr uint32_t kAudioUpdatePeriodMs = 80;
 static constexpr uint32_t kLvglSpikeThresholdUs = 30000;
 static constexpr uint32_t kLvglSpikeLogIntervalMs = 1500;
 
@@ -83,6 +86,33 @@ static lv_obj_tree_walk_res_t countLvglObjectsCb(lv_obj_t* obj, void* user_data)
 }
 
 static void sampleRuntimeStats() {
+  static bool runtimeStatsInitialized = false;
+  static configRUN_TIME_COUNTER_TYPE prevRunTimeCounter = 0;
+  static configRUN_TIME_COUNTER_TYPE prevIdleCounters[configNUMBER_OF_CORES] = {0};
+  const configRUN_TIME_COUNTER_TYPE runTimeCounter = portGET_RUN_TIME_COUNTER_VALUE();
+  configRUN_TIME_COUNTER_TYPE idleDeltaSum = 0;
+
+  for (BaseType_t core = 0; core < configNUMBER_OF_CORES; ++core) {
+    const configRUN_TIME_COUNTER_TYPE idleCounter = ulTaskGetIdleRunTimeCounterForCore(core);
+    if (runtimeStatsInitialized) {
+      idleDeltaSum += (idleCounter - prevIdleCounters[core]);
+    }
+    prevIdleCounters[core] = idleCounter;
+  }
+
+  const configRUN_TIME_COUNTER_TYPE runTimeDelta = runTimeCounter - prevRunTimeCounter;
+  prevRunTimeCounter = runTimeCounter;
+  if (!runtimeStatsInitialized) {
+    runtimeStatsInitialized = true;
+  } else if (runTimeDelta > 0) {
+    const uint64_t totalWindow = (uint64_t)runTimeDelta * (uint64_t)configNUMBER_OF_CORES;
+    const uint64_t idlePct = totalWindow > 0
+      ? ((uint64_t)idleDeltaSum * 100ULL) / totalWindow
+      : 100ULL;
+    g_runtimeStats.cpuIdlePct = (uint8_t)min<uint64_t>(idlePct, 100ULL);
+    g_runtimeStats.cpuLoadPct = 100U - g_runtimeStats.cpuIdlePct;
+  }
+
   g_runtimeStats.lvglIdlePct = lv_timer_get_idle();
   g_runtimeStats.lvglLoadPct = 100U - g_runtimeStats.lvglIdlePct;
   g_runtimeStats.heapInternalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -98,6 +128,19 @@ static void sampleRuntimeStats() {
   lv_obj_t* sys = lv_layer_sys();
   if (sys) lv_obj_tree_walk(sys, countLvglObjectsCb, &count);
   g_runtimeStats.lvObjCount = count;
+}
+
+static bool dueOnFixedPeriod(uint32_t& anchorMs, uint32_t periodMs, uint32_t nowMs) {
+  if (anchorMs == 0) {
+    anchorMs = nowMs;
+    return true;
+  }
+  if ((uint32_t)(nowMs - anchorMs) < periodMs) return false;
+
+  do {
+    anchorMs += periodMs;
+  } while ((uint32_t)(nowMs - anchorMs) >= periodMs);
+  return true;
 }
 
 void setup() {
@@ -150,16 +193,17 @@ void setup() {
 
 void loop() {
   static uint32_t lastLvglSpikeLogMs = 0;
-  g_net.loop();
   g_ota.loop();
-  g_releaseUpdate.loop();
   if (g_ota.inProgress()) {
     // OTA is timing-sensitive on the ESP32. Keep the loop as quiet as possible
     // so the upload stream and flash writes are not disturbed by UI, audio, MQTT,
-    // or web activity.
+    // or web activity. Let WebManager run once so it can drop live SSE clients.
+    g_web.loop();
     delay(1);
     return;
   }
+  g_net.loop();
+  g_releaseUpdate.loop();
   if (g_releaseUpdate.installInProgress()) {
     g_web.loop();
     delay(1);
@@ -168,12 +212,10 @@ void loop() {
   g_mqtt.loop();
   g_web.loop();
 
-  static uint32_t lastDb = 0;
+  static uint32_t audioTickAnchorMs = 0;
   uint32_t now = millis();
 
-  if (now - lastDb >= 80) {
-    lastDb = now;
-
+  if (dueOnFixedPeriod(audioTickAnchorMs, kAudioUpdatePeriodMs, now)) {
     g_audio.update(&g_settings);
     const AudioMetrics& m = g_audio.metrics();
     g_history.update(m.dbInstant, now);

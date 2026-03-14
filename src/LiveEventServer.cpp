@@ -19,7 +19,8 @@ LiveEventServer::~LiveEventServer() {
 }
 
 void LiveEventServer::begin(std::function<bool(const String&)> authorizeToken,
-                            std::function<String()> initialPayloadFactory) {
+                            std::function<String()> initialPayloadFactory,
+                            std::function<String()> initialSystemPayloadFactory) {
   if (!_impl) return;
 
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
@@ -34,10 +35,15 @@ void LiveEventServer::begin(std::function<bool(const String&)> authorizeToken,
       });
 
   _impl->events.onConnect(
-      [initialPayloadFactory](AsyncEventSourceClient* client) {
+      [initialPayloadFactory, initialSystemPayloadFactory](AsyncEventSourceClient* client) {
         if (!client || !initialPayloadFactory) return;
         const String payload = initialPayloadFactory();
-        client->send(payload.c_str(), "metrics", millis(), 1500);
+        const uint32_t eventId = millis();
+        client->send(payload.c_str(), "metrics", eventId, 500);
+        if (initialSystemPayloadFactory) {
+          const String systemPayload = initialSystemPayloadFactory();
+          client->send(systemPayload.c_str(), "system", eventId + 1, 500);
+        }
       });
 
   _impl->server.addHandler(&_impl->events);
@@ -52,6 +58,11 @@ size_t LiveEventServer::clientCount() const {
   return _impl ? _impl->events.count() : 0;
 }
 
+void LiveEventServer::sendEvent(const char* eventName, const String& payload, uint32_t eventId) {
+  if (!_impl) return;
+  _impl->events.send(payload.c_str(), eventName ? eventName : "message", eventId);
+}
+
 void LiveEventServer::sendMetrics(const String& payload, uint32_t eventId) {
-  if (_impl) _impl->events.send(payload.c_str(), "metrics", eventId);
+  sendEvent("metrics", payload, eventId);
 }

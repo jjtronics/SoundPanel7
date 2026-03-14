@@ -207,6 +207,8 @@ static void appendAudioMetricsJson(String& json, const AudioMetrics& am) {
 }
 
 static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
+  json += "\"cpuIdlePct\":"; json += String(stats.cpuIdlePct); json += ",";
+  json += "\"cpuLoadPct\":"; json += String(stats.cpuLoadPct); json += ",";
   json += "\"lvglIdlePct\":"; json += String(stats.lvglIdlePct); json += ",";
   json += "\"lvglLoadPct\":"; json += String(stats.lvglLoadPct); json += ",";
   json += "\"lvglUiWorkUs\":"; json += String(stats.uiWorkLastUs); json += ",";
@@ -569,6 +571,23 @@ bool WebManager::begin(SettingsStore* store,
   return true;
 }
 
+static bool dueOnFixedPeriod(uint32_t& anchorMs, uint32_t periodMs, uint32_t nowMs, bool force = false) {
+  if (force) {
+    anchorMs = nowMs;
+    return true;
+  }
+  if (anchorMs == 0) {
+    anchorMs = nowMs;
+    return true;
+  }
+  if ((uint32_t)(nowMs - anchorMs) < periodMs) return false;
+
+  do {
+    anchorMs += periodMs;
+  } while ((uint32_t)(nowMs - anchorMs) >= periodMs);
+  return true;
+}
+
 void WebManager::updateMetrics(float dbInstant, float leq, float peak) {
   g_webDbInstant = dbInstant;
   g_webLeq = leq;
@@ -594,6 +613,7 @@ void WebManager::routes() {
   _srv.on("/api/homeassistant", kSyncHttpGet, [this]() { handleHomeAssistantGet(); });
   _srv.on("/api/homeassistant", kSyncHttpPost, [this]() { handleHomeAssistantSave(); });
   _srv.on("/api/status", kSyncHttpGet, [this]() { handleStatus(); });
+  _srv.on("/api/system", kSyncHttpGet, [this]() { handleSystemSummary(); });
 
   _srv.on("/api/pin", kSyncHttpPost, [this]() { handlePinSave(); });
 
@@ -637,6 +657,13 @@ void WebManager::routes() {
 
 void WebManager::loop() {
   if (!_started) return;
+  if (liveTrafficPaused()) {
+    stopHttpServer();
+    if (_live && _live->clientCount() > 0) {
+      _live->close();
+    }
+    return;
+  }
   processPendingNotification();
   syncHttpAvailability();
   if (!_httpListening) return;
@@ -735,7 +762,7 @@ void WebManager::startHttpServer() {
 
 void WebManager::stopHttpServer() {
   if (!_httpListening) return;
-  Serial0.println("[WEB] WiFi portal active, stopping main HTTP server");
+  Serial0.println("[WEB] stopping main HTTP server");
   _srv.stop();
   _httpListening = false;
 }
@@ -753,6 +780,7 @@ void WebManager::setupLiveStream() {
   if (!_live) return;
   _live->begin(
       [this](const String& token) -> bool {
+        if (liveTrafficPaused()) return false;
         return findSessionByLiveToken(token.c_str()) != nullptr;
       },
       [this]() -> String {
@@ -761,14 +789,28 @@ void WebManager::setupLiveStream() {
 }
 
 void WebManager::pushLiveMetrics(bool force) {
+  if (liveTrafficPaused()) return;
   if (!_live || _live->clientCount() == 0) return;
 
   const uint32_t now = millis();
-  if (!force && (now - _lastLivePushMs) < LIVE_PUSH_PERIOD_MS) return;
-
-  _lastLivePushMs = now;
+  if (!dueOnFixedPeriod(_lastLivePushMs, LIVE_PUSH_PERIOD_MS, now, force)) return;
   const String payload = liveMetricsJson();
   _live->sendMetrics(payload, now);
+}
+
+void WebManager::pushLiveSystem(bool force) {
+  if (liveTrafficPaused()) return;
+  if (!_live || _live->clientCount() == 0) return;
+
+  const uint32_t now = millis();
+  if (!dueOnFixedPeriod(_lastLiveSystemPushMs, LIVE_SYSTEM_PUSH_PERIOD_MS, now, force)) return;
+  const String payload = systemSummaryJson();
+  _live->sendEvent("system", payload, now);
+}
+
+bool WebManager::liveTrafficPaused() const {
+  return (_ota && _ota->inProgress())
+      || (_releaseUpdate && _releaseUpdate->installInProgress());
 }
 
 void WebManager::replyText(int code, const String& txt, const char* contentType) {
@@ -877,6 +919,44 @@ String WebManager::statusJson() const {
   return json;
 }
 
+String WebManager::systemSummaryJson() const {
+  const bool wifiConnected = WiFi.isConnected();
+  const String ip = wifiConnected ? WiFi.localIP().toString() : String("");
+  const String ssid = wifiConnected ? WiFi.SSID() : String("");
+  const int rssi = wifiConnected ? WiFi.RSSI() : 0;
+  const uint32_t up = (millis() - g_bootMs) / 1000;
+  const uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
+  const float mcuTempC = temperatureRead();
+  const bool mcuTempOk = !isnan(mcuTempC);
+
+  struct tm ti;
+  const bool hasTime = getLocalTime(&ti, 0);
+  char tbuf[32] = {0};
+  if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
+
+  String json;
+  json.reserve(640);
+  json += "{";
+  appendWifiJson(json, wifiConnected, ip, rssi, ssid);
+  json += "\"uptime_s\":"; json += String(up); json += ",";
+  json += "\"backupTs\":"; json += String(backupTs); json += ",";
+  appendTimeJson(json, hasTime, tbuf);
+  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
+  json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
+  json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
+  json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
+  json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
+  json += "\"mqttConnected\":"; json += (_mqtt && _mqtt->connected() ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "mqttLastError", (_mqtt && _mqtt->lastError()) ? _mqtt->lastError() : "");
+  sp7json::appendEscapedField(json, "activePage", g_runtimeStats.activePage);
+  appendRuntimeStatsJson(json, g_runtimeStats);
+  if (json.endsWith(",")) {
+    json.remove(json.length() - 1);
+  }
+  json += "}";
+  return json;
+}
+
 String WebManager::homeAssistantStatusJson() const {
   const bool wifiConnected = WiFi.isConnected();
   const String hostname = (_s && _s->hostname[0] != '\0') ? String(_s->hostname) : String("soundpanel7");
@@ -901,48 +981,19 @@ String WebManager::homeAssistantStatusJson() const {
 }
 
 String WebManager::liveMetricsJson() const {
-  const bool wifiConnected = WiFi.isConnected();
-  String ip = wifiConnected ? WiFi.localIP().toString() : String("");
-  String ssid = wifiConnected ? WiFi.SSID() : String("");
-  int rssi = wifiConnected ? WiFi.RSSI() : 0;
-  uint32_t up = (millis() - g_bootMs) / 1000;
-  uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
-  const float mcuTempC = temperatureRead();
-  const bool mcuTempOk = !isnan(mcuTempC);
   struct tm ti;
-  bool hasTime = getLocalTime(&ti, 0);
+  const bool hasTime = getLocalTime(&ti, 0);
   char tbuf[32] = {0};
   if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
+  const uint32_t sentMs = millis();
   const AudioMetrics& am = g_audio.metrics();
 
   String json;
-  json.reserve(960);
+  json.reserve(320);
   json += "{";
+  json += "\"sent_ms\":"; json += String(sentMs); json += ",";
   appendAudioMetricsJson(json, am);
-  appendUiStateJson(json, _s, _history, false);
-  appendPinStateJson(json, pinConfigured());
-  appendWifiJson(json, wifiConnected, ip, rssi, ssid);
-  json += "\"uptime_s\":"; json += String(up); json += ",";
-  json += "\"backupTs\":"; json += String(backupTs); json += ",";
   appendTimeJson(json, hasTime, tbuf);
-  appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
-  appendRuntimeStatsJson(json, g_runtimeStats);
-  json += "\"releaseUpdateChecked\":";
-  json += (_releaseUpdate && _releaseUpdate->hasChecked() ? "true" : "false");
-  json += ",";
-  json += "\"releaseUpdateOk\":";
-  json += (_releaseUpdate && _releaseUpdate->lastCheckOk() ? "true" : "false");
-  json += ",";
-  json += "\"releaseUpdateAvailable\":";
-  json += (_releaseUpdate && _releaseUpdate->updateAvailable() ? "true" : "false");
-  json += ",";
-  sp7json::appendEscapedField(json, "releaseLatestVersion",
-                              (_releaseUpdate && _releaseUpdate->latestVersion()[0]) ? _releaseUpdate->latestVersion() : "");
-  json += "\"releaseInstallInProgress\":";
-  json += (_releaseUpdate && _releaseUpdate->installInProgress() ? "true" : "false");
-  json += ",";
-  json += "\"releaseInstallProgressPct\":";
-  json += String(_releaseUpdate ? _releaseUpdate->installProgressPct() : 0U);
   json += "}";
   return json;
 }
@@ -1340,6 +1391,11 @@ void WebManager::handleHomeAssistantStatus() {
 void WebManager::handleStatus() {
   if (!requireWebAuth()) return;
   replyJson(200, statusJson());
+}
+
+void WebManager::handleSystemSummary() {
+  if (!requireWebAuth()) return;
+  replyJson(200, systemSummaryJson());
 }
 
 void WebManager::handlePinSave() {
@@ -2534,7 +2590,7 @@ void WebManager::handleNotificationsTest() {
 }
 
 void WebManager::handleRoot() {
-  const char* html =
+  static const char html[] PROGMEM =
 R"HTML(
 <!doctype html>
 <html lang="fr">
@@ -2744,12 +2800,291 @@ R"HTML(
     .histAxisMid{
       position:absolute;left:50%;transform:translateX(-50%);
     }
-    .settingsPage{display:grid;grid-template-columns:minmax(0,1.2fr) 400px;gap:16px}
-    .settingsMain,.settingsRail{display:flex;flex-direction:column;gap:14px}
+    .settingsPage{
+      display:grid;grid-template-columns:minmax(0,1.18fr) 360px;grid-template-areas:"main rail";
+      gap:16px;align-items:start
+    }
+    .settingsMain,.settingsRail{display:flex;flex-direction:column;gap:16px}
+    .settingsMain{grid-area:main}
+    .settingsRail{grid-area:rail;position:sticky;top:16px}
+    .settingsMain{gap:20px}
     .settingsHero{
       background:
         radial-gradient(circle at top right, rgba(122,30,44,.34), transparent 34%),
         linear-gradient(135deg, #131d2b 0%, #111824 58%, #0f1621 100%);
+    }
+    .settingsMega{
+      overflow:hidden;
+      background:
+        radial-gradient(circle at top right, rgba(255,255,255,.05), transparent 28%),
+        linear-gradient(180deg, #121b27 0%, #101722 100%);
+    }
+    .settingsMegaWarm{
+      background:
+        radial-gradient(circle at top right, rgba(240,162,2,.13), transparent 30%),
+        radial-gradient(circle at top left, rgba(122,30,44,.18), transparent 24%),
+        linear-gradient(180deg, #131d29 0%, #101722 100%);
+    }
+    .settingsMegaCool{
+      background:
+        radial-gradient(circle at top right, rgba(72,149,239,.15), transparent 30%),
+        radial-gradient(circle at bottom left, rgba(35,197,82,.08), transparent 28%),
+        linear-gradient(180deg, #111a27 0%, #101722 100%);
+    }
+    .settingsMegaNeutral{
+      background:
+        radial-gradient(circle at top right, rgba(122,30,44,.14), transparent 30%),
+        linear-gradient(180deg, #121b27 0%, #101722 100%);
+    }
+    .settingsMegaGrid{
+      display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;margin-top:14px;
+    }
+    .settingsColumn{
+      display:flex;flex-direction:column;gap:18px;min-width:0;
+    }
+    .settingsColumn .settingsSubsection{
+      padding:16px 16px 0;
+      border:1px solid rgba(255,255,255,.04);
+      border-radius:18px;
+      background:rgba(10,16,24,.34);
+    }
+    .settingsColumn .settingsSubsection + .settingsSubsection{
+      margin-top:0;padding-top:16px;border-top:1px solid rgba(255,255,255,.04);
+    }
+    .settingsGroup{
+      display:flex;flex-direction:column;gap:14px;
+    }
+    .settingsGroupHead{
+      display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap;
+      padding:2px 4px 0;
+    }
+    .settingsGroupIntro{
+      display:flex;flex-direction:column;gap:6px;
+    }
+    .settingsGroupTitle{
+      margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em;
+    }
+    .settingsGroupLead{
+      max-width:60ch;font-size:13px;line-height:1.5;color:var(--muted);
+    }
+    .settingsGroupTag{
+      display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.03);
+      color:#d8e0e8;font-size:12px;font-weight:700;
+    }
+    .settingsDeck{
+      display:grid;grid-template-columns:1fr 1fr;gap:14px;
+    }
+    .cardSpan2{grid-column:1 / -1}
+    .settingsSubsection{
+      display:flex;flex-direction:column;gap:12px;
+    }
+    .settingsSubsection + .settingsSubsection{
+      margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,255,255,.05);
+    }
+    .settingsSubhead{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
+    }
+    .settingsSubtitle{
+      margin:0;font-size:18px;font-weight:800;letter-spacing:-.02em;
+    }
+    .settingsSublead{
+      font-size:12px;line-height:1.45;color:var(--muted);max-width:56ch;
+    }
+    .settingsNav{
+      background:
+        radial-gradient(circle at top right, rgba(35,197,82,.14), transparent 34%),
+        linear-gradient(180deg, #131d2b 0%, #101722 100%);
+    }
+    .settingsJumpList{
+      display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px;
+    }
+    .settingsJumpLink{
+      display:flex;justify-content:space-between;align-items:center;gap:10px;
+      min-height:72px;padding:12px 14px;border-radius:16px;text-decoration:none;color:var(--txt);
+      border:1px solid rgba(255,255,255,.04);background:var(--panel3);
+      transition:.18s ease;
+    }
+    .settingsJumpLink:hover{
+      border-color:rgba(255,255,255,.08);transform:translateY(-1px);
+      background:#182231;
+    }
+    .settingsJumpMain{
+      display:flex;flex-direction:column;gap:4px;min-width:0;
+    }
+    .settingsJumpTitle{font-size:14px;font-weight:800}
+    .settingsJumpMeta{font-size:12px;color:var(--muted);line-height:1.4}
+    .settingsJumpArrow{color:#93a4b6;font-size:16px;font-weight:800}
+    .settingsHeroPrime{
+      padding-bottom:22px;
+      background:
+        radial-gradient(circle at top right, rgba(122,30,44,.26), transparent 34%),
+        radial-gradient(circle at bottom left, rgba(35,197,82,.08), transparent 28%),
+        linear-gradient(135deg, #131d2b 0%, #111824 58%, #0f1621 100%);
+    }
+    .settingsHeroPrime .sectionLead{max-width:64ch}
+    .settingsTopline{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
+      margin-top:18px;
+    }
+    .settingsPillStrip{
+      display:flex;flex-wrap:wrap;gap:10px;
+    }
+    .settingsPillMetric{
+      min-width:136px;
+      padding:11px 13px;
+      border-radius:16px;
+      background:rgba(7,11,17,.34);
+      border:1px solid rgba(255,255,255,.06);
+    }
+    .settingsPillMetric .k{
+      font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#93a4b6;
+    }
+    .settingsPillMetric .v{
+      margin-top:6px;font-size:16px;font-weight:800;line-height:1.25;color:#edf3f8;
+    }
+    .settingsHeroCallout{
+      max-width:320px;
+      padding:14px 16px;
+      border-radius:18px;
+      background:rgba(7,11,17,.36);
+      border:1px solid rgba(255,255,255,.06);
+      color:#d8e0e8;
+      font-size:13px;
+      line-height:1.5;
+    }
+    .settingsSnapshotGrid{
+      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:18px;
+    }
+    .settingsSnapshot{
+      min-width:0;
+      padding:12px 0 0;
+      border-top:1px solid rgba(255,255,255,.08);
+    }
+    .settingsSnapshot .k{
+      font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#93a4b6;
+    }
+    .settingsSnapshot .v{
+      margin-top:7px;
+      font-size:15px;
+      line-height:1.4;
+      font-weight:700;
+      color:#edf3f8;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    .settingsSection{
+      padding:22px;
+      border-radius:28px;
+      border:1px solid rgba(255,255,255,.05);
+      overflow:hidden;
+    }
+    .settingsSectionWarm{
+      background:
+        radial-gradient(circle at top right, rgba(240,162,2,.12), transparent 30%),
+        radial-gradient(circle at left, rgba(122,30,44,.16), transparent 24%),
+        linear-gradient(180deg, #121b28 0%, #101722 100%);
+    }
+    .settingsSectionCool{
+      background:
+        radial-gradient(circle at top right, rgba(72,149,239,.14), transparent 32%),
+        radial-gradient(circle at bottom left, rgba(35,197,82,.08), transparent 28%),
+        linear-gradient(180deg, #111a27 0%, #101722 100%);
+    }
+    .settingsSectionNeutral{
+      background:
+        radial-gradient(circle at top right, rgba(122,30,44,.11), transparent 30%),
+        linear-gradient(180deg, #121b27 0%, #101722 100%);
+    }
+    .settingsSectionHeader{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
+    }
+    .settingsSectionStamp{
+      display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03);
+      color:#d8e0e8;font-size:12px;font-weight:700;
+    }
+    .settingsSectionGrid{
+      display:grid;grid-template-columns:minmax(0,1.14fr) minmax(0,.86fr);gap:16px;margin-top:18px;
+    }
+    .settingsLane{
+      display:grid;gap:16px;min-width:0;
+    }
+    #settings-controls .settingsSectionGrid{
+      grid-template-columns:1fr;
+    }
+    #settings-network .settingsSectionGrid,
+    #settings-maintenance .settingsSectionGrid{
+      grid-template-columns:1fr;
+    }
+    #settings-security .settingsSurface{
+      display:grid;
+      grid-template-columns:minmax(260px,320px) minmax(0,1fr);
+      gap:18px;
+      align-items:start;
+    }
+    #settings-security .settingsSurfaceHeader{
+      grid-column:1 / -1;
+    }
+    #settings-pin{
+      grid-column:1;
+    }
+    #settings-users{
+      grid-column:1 / -1;
+    }
+    .settingsSurface{
+      min-width:0;
+      padding:18px;
+      border-radius:22px;
+      background:rgba(8,12,18,.34);
+      border:1px solid rgba(255,255,255,.05);
+      backdrop-filter:blur(6px);
+    }
+    .settingsSurfaceHeader{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
+    }
+    .settingsSurfaceTitle{
+      margin:0;font-size:20px;font-weight:800;letter-spacing:-.02em;
+    }
+    .settingsSurfaceLead{
+      margin-top:6px;font-size:12px;line-height:1.5;color:var(--muted);max-width:58ch;
+    }
+    .settingsOverviewBlock{
+      margin-top:18px;
+      padding-top:18px;
+      border-top:1px solid rgba(255,255,255,.07);
+    }
+    .settingsSurfaceStat{
+      display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:999px;
+      border:1px solid rgba(255,255,255,.05);background:rgba(255,255,255,.03);
+      color:#d8e0e8;font-size:12px;font-weight:700;
+    }
+    .settingsSurfaceBlock{
+      padding-top:16px;
+    }
+    .settingsSurfaceBlock + .settingsSurfaceBlock{
+      margin-top:16px;
+      border-top:1px solid rgba(255,255,255,.07);
+    }
+    .settingsSurfaceBlock .settingsSubhead{
+      margin-bottom:10px;
+    }
+    .settingsSurfaceBlock .settingsSubtitle{
+      font-size:17px;
+    }
+    .settingsSurfaceBlock .statusList.compact{
+      margin-top:10px;
+    }
+    .settingsNavSlim{
+      background:
+        radial-gradient(circle at top right, rgba(35,197,82,.12), transparent 34%),
+        linear-gradient(180deg, #131d2b 0%, #101722 100%);
+    }
+    .settingsNavSlim .sectionHead{
+      margin-bottom:10px;
+    }
+    .settingsNavSlim .hint{
+      max-width:28ch;
     }
     .sectionHead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
     .sectionKicker{
@@ -2850,6 +3185,24 @@ R"HTML(
     .releaseCard .btnRow{
       margin-top:14px;
     }
+    #settings-updates .statusList{
+      grid-template-columns:1fr;
+    }
+    #settings-updates .statusItem{
+      min-width:0;
+    }
+    #settings-updates .statusItem .v,
+    #settings-updates .hint{
+      min-width:0;
+      white-space:normal;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    #settings-updates .statusItem .v{
+      font-size:15px;
+      line-height:1.35;
+      letter-spacing:0;
+    }
     .settingsSplit{display:grid;grid-template-columns:1fr 1fr;gap:14px}
     .actionsCard .btnRow{margin-top:10px}
     .liveActionWrap{display:grid;gap:10px}
@@ -2941,12 +3294,34 @@ R"HTML(
       display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;
       background:var(--panel3);border-radius:16px;padding:12px 14px;
     }
-    .userRowName{font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis}
-    .userRowMeta{font-size:12px;color:var(--muted)}
+    .userRow > :first-child{min-width:0}
+    .userRowName{
+      font-size:15px;font-weight:800;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+    }
+    .userRowMeta{
+      font-size:12px;color:var(--muted);
+      overflow-wrap:anywhere;word-break:break-word;
+    }
+    #settings-users{min-width:0}
+    #settings-users .settingsSplit{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+    #settings-users .settingsSplit > div{min-width:0}
+    #settings-users .btnRow .btn{min-width:0}
+    #settings-users select,
+    #settings-users input{min-width:0}
     @media (max-width:1024px){
       .gridOverview{grid-template-columns:1fr}
       .rightCol{grid-template-columns:1fr 1fr;grid-template-rows:none}
-      .settingsPage{grid-template-columns:1fr}
+      .settingsPage{grid-template-columns:1fr;grid-template-areas:"rail" "main"}
+      .settingsRail{position:static}
+      .settingsJumpList{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .settingsMegaGrid{grid-template-columns:1fr}
+      .settingsSectionGrid{grid-template-columns:1fr}
+      #settings-security .settingsSurface{grid-template-columns:1fr}
+      #settings-security .settingsSurfaceHeader,
+      #settings-pin,
+      #settings-users{grid-column:auto}
+      .settingsSnapshotGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
     }
     @media (max-width:760px){
       .topInner{grid-template-columns:1fr;justify-items:start}
@@ -2955,9 +3330,19 @@ R"HTML(
       .soundMetrics{grid-template-columns:1fr}
       .statusList{grid-template-columns:1fr}
       .settingsSplit{grid-template-columns:1fr}
+      .settingsDeck{grid-template-columns:1fr}
+      .settingsJumpList{grid-template-columns:1fr}
+      .settingsColumn .settingsSubsection{padding:14px 14px 0}
+      .settingsSection{padding:18px}
+      .settingsSurface{padding:15px}
+      .settingsSnapshotGrid{grid-template-columns:1fr}
+      .settingsTopline{flex-direction:column}
+      .settingsPillMetric{min-width:0;flex:1 1 140px}
+      .cardSpan2{grid-column:auto}
       .grid2{grid-template-columns:1fr}
       .calRow{grid-template-columns:1fr 34px 74px 34px 110px}
       .userRow{grid-template-columns:1fr}
+      .userRow .btn{width:100%}
       .clockHeroDate{position:static;margin-top:6px}
       .clockHeroRow{justify-content:flex-start;flex-wrap:wrap}
       .alertBadge{left:auto;right:18px;top:18px}
@@ -3236,722 +3621,835 @@ R"HTML(
       <section class="page" data-page="settings">
         <div class="settingsPage">
           <div class="settingsMain">
-            <article class="card settingsHero">
+            <article class="card settingsHero settingsHeroPrime" id="settings-overview">
               <div class="sectionHead">
                 <div>
                   <div class="sectionKicker">Vue Systeme</div>
-                  <h2 class="sectionTitle">Parametres & supervision</h2>
-                  <div class="sectionLead">Les reglages frequents restent au centre. La connectivite, l'OTA et le diagnostic sont ranges a droite pour garder une lecture claire.</div>
+                  <h2 class="sectionTitle">Parametres, sans patchwork</h2>
                 </div>
               </div>
-              <div class="statusList compact" style="margin-top:16px">
-                <div class="statusItem">
-                  <div class="k">Etat systeme</div>
-                  <div class="healthBadge bad" id="settingsSystemBadge">--</div>
+              <div class="settingsTopline">
+                <div class="settingsPillStrip">
+                  <div class="settingsPillMetric">
+                    <div class="k">Etat systeme</div>
+                    <div class="v"><span class="healthBadge bad" id="settingsSystemBadge">--</span></div>
+                  </div>
+                  <div class="settingsPillMetric">
+                    <div class="k">Version</div>
+                    <div class="v mono" id="settingsVersion">--</div>
+                  </div>
+                  <div class="settingsPillMetric">
+                    <div class="k">IP / RSSI</div>
+                    <div class="v mono" id="settingsIp">--</div>
+                  </div>
+                  <div class="settingsPillMetric">
+                    <div class="k">Heure</div>
+                    <div class="v mono" id="settingsTime">--</div>
+                  </div>
                 </div>
-                <div class="statusItem">
-                  <div class="k">IP / RSSI</div>
-                  <div class="v mono" id="settingsIp">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Heure</div>
-                  <div class="v mono" id="settingsTime">--</div>
-                </div>
-                <div class="statusItem">
+              </div>
+              <div class="settingsSnapshotGrid">
+                <div class="settingsSnapshot">
                   <div class="k">Uptime</div>
                   <div class="v mono" id="settingsUptime">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">Historique</div>
                   <div class="v mono" id="settingsHistory">--</div>
                 </div>
-                <div class="statusItem">
-                  <div class="k">Version</div>
-                  <div class="v mono" id="settingsVersion">--</div>
-                </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">Date de build</div>
                   <div class="v mono" id="settingsBuildDate">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">Env compile</div>
                   <div class="v mono" id="settingsBuildEnv">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">Temp MCU</div>
                   <div class="v mono" id="settingsMcuTemp">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
+                  <div class="k">Charge CPU</div>
+                  <div class="v mono" id="settingsCpu">--</div>
+                </div>
+                <div class="settingsSnapshot">
                   <div class="k">Etat OTA / MQTT</div>
                   <div class="v mono" id="settingsOtaMqtt">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">Ecran actif</div>
                   <div class="v mono" id="settingsActivePage">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">LVGL load / idle</div>
                   <div class="v mono" id="settingsLvglLoad">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">UI / handler</div>
                   <div class="v mono" id="settingsLvglTiming">--</div>
                 </div>
-                <div class="statusItem">
+                <div class="settingsSnapshot">
                   <div class="k">Heap / objets</div>
                   <div class="v mono" id="settingsLvglHeap">--</div>
                 </div>
               </div>
+              <div class="settingsOverviewBlock">
+                <div class="settingsSubhead">
+                  <div>
+                    <h3 class="settingsSubtitle">Audio brut</h3>
+                  </div>
+                </div>
+                <div class="statusList compact">
+                  <div class="statusItem">
+                    <div class="k">rawRms</div>
+                    <div class="v mono" id="rawRmsAdv">--</div>
+                  </div>
+                  <div class="statusItem">
+                    <div class="k">pseudo dB</div>
+                    <div class="v mono" id="rawPseudoDbAdv">--</div>
+                  </div>
+                  <div class="statusItem">
+                    <div class="k">ADC Mean</div>
+                    <div class="v mono" id="rawAdcMeanAdv">--</div>
+                  </div>
+                  <div class="statusItem">
+                    <div class="k">ADC Last</div>
+                    <div class="v mono" id="rawAdcLastAdv">--</div>
+                  </div>
+                </div>
+              </div>
             </article>
 
-            <article class="card settingsCardSoft">
-              <div class="sectionHead">
+            <article class="card settingsSection settingsSectionWarm" id="settings-controls">
+              <div class="settingsSectionHeader">
                 <div>
-                  <div class="sectionKicker">Reglages Rapides</div>
-                  <h2 class="sectionTitle">Interface & seuils</h2>
+                  <div class="sectionKicker">Exploitation</div>
+                  <h3 class="settingsGroupTitle">Faire vivre le panneau au quotidien</h3>
+                </div>
+                <div class="settingsSectionStamp">Pilotage quotidien</div>
+              </div>
+              <div class="settingsSectionGrid">
+                <div class="settingsLane">
+                  <section class="settingsSurface">
+                    <div class="settingsSurfaceHeader">
+                      <div>
+                        <h3 class="settingsSurfaceTitle">Mesure & affichage</h3>
+                        <div class="settingsSurfaceLead">Les reglages qui changent directement la perception du sonometre et l'experience sur l'ecran tactile.</div>
+                      </div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-ui">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Seuils, historique et reponse</h3>
+                          <div class="settingsSublead">La zone qui regle le comportement du sonometre avant toute integration externe.</div>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label>Seuil vert max <span class="mono" id="gVal">--</span>dB</label>
+                        <input id="g" type="range" min="0" max="100" value="55"/>
+                      </div>
+                      <div class="field">
+                        <label>Seuil orange max <span class="mono" id="oVal">--</span>dB</label>
+                        <input id="o" type="range" min="0" max="100" value="70"/>
+                      </div>
+                      <div class="field">
+                        <label>Historique <span class="mono" id="hVal">--</span> min</label>
+                        <input id="hist" type="range" min="1" max="60" value="5"/>
+                      </div>
+                      <div class="settingsSplit">
+                        <div class="field">
+                          <label>Reponse sonometre</label>
+                          <div class="choiceRow">
+                            <button class="btn choice" id="modeFast" data-mode="0">Fast</button>
+                            <button class="btn choice" id="modeSlow" data-mode="1">Slow</button>
+                          </div>
+                          <div class="hint">Fast reste reactif. Slow stabilise l'affichage.</div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Delai warning (orange)</label>
+                            <input id="warnHoldSec" type="number" min="0" max="60" step="1" value="3"/>
+                          </div>
+                          <div class="field">
+                            <label>Delai critique (rouge)</label>
+                            <input id="critHoldSec" type="number" min="0" max="60" step="1" value="2"/>
+                          </div>
+                          <div class="field">
+                            <label>Delai tampon calibration (s)</label>
+                            <input id="calCaptureSec" type="number" min="1" max="30" step="1" value="3"/>
+                            <div class="hint">Duree de capture utilisee pour chaque point de calibration.</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveUi">Sauver UI</button>
+                      </div>
+                      <div class="toast" id="uiToast"></div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-display">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Ecran tactile & diffusion LIVE</h3>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <div class="switchRow">
+                              <div class="switchText">
+                                <label>Backlight</label>
+                                <div class="switchState mono" id="blVal">--</div>
+                              </div>
+                              <button class="switch" id="bl" type="button" aria-label="Activer ou couper le backlight" aria-pressed="true">
+                                <span class="switchTrack"></span>
+                              </button>
+                            </div>
+                          </div>
+                          <div class="field">
+                            <label>Vue a afficher</label>
+                            <select id="dashboardPageAdv">
+                              <option value="0">Principal</option>
+                              <option value="1">Horloge</option>
+                              <option value="2">LIVE</option>
+                              <option value="3">Sonometre</option>
+                            </select>
+                            <div class="hint">Change immediatement l'ecran affiche sur le panneau tactile.</div>
+                          </div>
+                          <div class="field">
+                            <div class="switchRow">
+                              <div class="switchText">
+                                <label>Tactile actif</label>
+                                <div class="switchState mono" id="touchEnabledAdvVal">--</div>
+                              </div>
+                              <button class="switch" id="touchEnabledAdv" type="button" aria-label="Activer ou desactiver l'ecran tactile" aria-pressed="true">
+                                <span class="switchTrack"></span>
+                                <span class="switchThumb"></span>
+                              </button>
+                            </div>
+                            <div class="hint">Coupe toutes les interactions tactiles du panneau 7 pouces jusqu'a reactivation depuis l'interface web.</div>
+                          </div>
+                          <div class="field">
+                            <label>Mode plein ecran tactile</label>
+                            <div class="choiceRow">
+                              <button class="btn choice" id="dashboardFsOverview" data-dashboard-fullscreen="0" type="button" aria-pressed="false">Principal</button>
+                              <button class="btn choice" id="dashboardFsClock" data-dashboard-fullscreen="1" type="button" aria-pressed="false">Horloge</button>
+                              <button class="btn choice" id="dashboardFsLive" data-dashboard-fullscreen="2" type="button" aria-pressed="false">LIVE</button>
+                              <button class="btn choice" id="dashboardFsSound" data-dashboard-fullscreen="3" type="button" aria-pressed="false">Sonometre</button>
+                            </div>
+                            <div class="hint">Masque la barre du haut uniquement sur l'ecran tactile 7 pouces pour les vues selectionnees.</div>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="liveActionWrap">
+                            <button class="btn liveAction" id="liveActionBtn" aria-pressed="false">LIVE</button>
+                            <div class="liveActionMeta">
+                              <div>Flag broadcast tactile, API et MQTT</div>
+                              <div class="liveActionState" id="liveActionState">OFF AIR</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveDashboardPageAdv">Appliquer sur l'ecran</button>
+                      </div>
+                      <div class="toast" id="dashboardPageToast"></div>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="settingsLane" id="settings-security">
+                  <section class="settingsSurface">
+                    <div class="settingsSurfaceHeader">
+                      <div>
+                        <h3 class="settingsSurfaceTitle">Acces & securite</h3>
+                      </div>
+                      <div class="settingsSurfaceStat mono" id="usersSummary">0 / 4 utilisateurs</div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-pin">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Verrou PIN</h3>
+                          <div class="settingsSublead">Protege Calibration et Parametres sur le tactile et sur l'interface web.</div>
+                        </div>
+                        <div class="pill pinBadge mono" id="pinStatusAdv">PIN tactile: --</div>
+                      </div>
+                      <div class="field">
+                        <label>Code PIN numerique</label>
+                        <input id="accessPinAdv" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="4 a 8 chiffres"/>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="savePinAdv">Sauver PIN</button>
+                        <button class="btn" id="clearPinAdv">Desactiver PIN</button>
+                      </div>
+                      <div class="toast" id="toastPinAdv"></div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-users">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Comptes web</h3>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>Nouveau login</label>
+                            <input id="newWebUsername" type="text" autocomplete="off" placeholder="admin"/>
+                          </div>
+                          <div class="field">
+                            <label>Mot de passe</label>
+                            <input id="newWebPassword" type="password" autocomplete="new-password" placeholder="Creer un mot de passe robuste"/>
+                          </div>
+                          <div class="btnRow">
+                            <button class="btn accent" id="createWebUserBtn">Creer utilisateur</button>
+                            <button class="btn" id="logoutBtn">Deconnexion</button>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Utilisateur a mettre a jour</label>
+                            <select id="manageWebUserSelect"></select>
+                          </div>
+                          <div class="field">
+                            <label>Nouveau mot de passe</label>
+                            <input id="manageWebPassword" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe"/>
+                          </div>
+                          <div class="btnRow">
+                            <button class="btn" id="updateWebPasswordBtn">Changer mot de passe</button>
+                            <button class="btn danger" id="deleteWebUserBtn">Supprimer utilisateur</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="userList" id="usersList"></div>
+                      <div class="toast" id="usersToast"></div>
+                    </div>
+                  </section>
                 </div>
               </div>
-
-              <div class="field">
-                <div class="switchRow">
-                  <div class="switchText">
-                    <label>Backlight</label>
-                    <div class="switchState mono" id="blVal">--</div>
-                  </div>
-                  <button class="switch" id="bl" type="button" aria-label="Activer ou couper le backlight" aria-pressed="true">
-                    <span class="switchTrack"></span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="field">
-                <label>Seuil vert max <span class="mono" id="gVal">--</span>dB</label>
-                <input id="g" type="range" min="0" max="100" value="55"/>
-              </div>
-
-              <div class="field">
-                <label>Seuil orange max <span class="mono" id="oVal">--</span>dB</label>
-                <input id="o" type="range" min="0" max="100" value="70"/>
-              </div>
-
-              <div class="field">
-                <label>Historique <span class="mono" id="hVal">--</span> min</label>
-                <input id="hist" type="range" min="1" max="60" value="5"/>
-              </div>
-
-              <div class="settingsSplit">
-                <div class="field">
-                  <label>Reponse sonometre</label>
-                  <div class="choiceRow">
-                    <button class="btn choice" id="modeFast" data-mode="0">Fast</button>
-                    <button class="btn choice" id="modeSlow" data-mode="1">Slow</button>
-                  </div>
-                  <div class="hint">Fast reste reactif. Slow stabilise l'affichage.</div>
-                </div>
-
-                <div>
-                  <div class="field">
-                    <label>Delai warning (orange)</label>
-                    <input id="warnHoldSec" type="number" min="0" max="60" step="1" value="3"/>
-                  </div>
-                  <div class="field">
-                    <label>Delai critique (rouge)</label>
-                    <input id="critHoldSec" type="number" min="0" max="60" step="1" value="2"/>
-                  </div>
-                  <div class="field">
-                    <label>Delai tampon calibration (s)</label>
-                    <input id="calCaptureSec" type="number" min="1" max="30" step="1" value="3"/>
-                    <div class="hint">Duree de capture utilisee pour chaque point de calibration.</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="btnRow">
-                <button class="btn accent" id="saveUi">Sauver UI</button>
-              </div>
-              <div class="toast" id="uiToast"></div>
             </article>
 
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
+            <article class="card settingsSection settingsSectionCool" id="settings-network">
+              <div class="settingsSectionHeader">
                 <div>
-                  <div class="sectionKicker">Ecran Tactile</div>
-                  <h2 class="sectionTitle">Dashboard affiche</h2>
+                  <div class="sectionKicker">Connexion & alertes</div>
+                  <h3 class="settingsGroupTitle">Relier le panneau au reste du monde</h3>
+                </div>
+                <div class="settingsSectionStamp">Connectivite vivante</div>
+              </div>
+              <div class="settingsSectionGrid">
+                <div class="settingsLane">
+                  <section class="settingsSurface">
+                    <div class="settingsSurfaceBlock" id="settings-time">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Heure, NTP & timezone</h3>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>NTP Server</label>
+                            <input id="ntpServerAdv" type="text" placeholder="fr.pool.ntp.org"/>
+                          </div>
+                          <div class="field">
+                            <label>Sync NTP (minutes)</label>
+                            <input id="ntpSyncMinAdv" type="number" min="1" max="1440" step="1" value="180"/>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>TZ (POSIX)</label>
+                            <input id="tzAdv" type="text" placeholder="CET-1CEST,M3.5.0/2,M10.5.0/3"/>
+                          </div>
+                          <div class="field">
+                            <label>Hostname</label>
+                            <input id="hostnameAdv" type="text" placeholder="soundpanel7"/>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveTimeAdv">Sauver heure</button>
+                      </div>
+                      <div class="toast" id="toastTimeAdv"></div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-wifi">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Wi-Fi multi-AP</h3>
+                          <div class="settingsSublead mono" id="wifiSummaryAdv">Connexion: --</div>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>Reseau 1 SSID</label>
+                            <input id="wifiSsid1" type="text" maxlength="32" placeholder="Maison"/>
+                          </div>
+                          <div class="field">
+                            <label>Reseau 1 mot de passe</label>
+                            <input id="wifiPassword1" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                          </div>
+                          <div class="field">
+                            <label>Reseau 2 SSID</label>
+                            <input id="wifiSsid2" type="text" maxlength="32" placeholder="Maison-5G"/>
+                          </div>
+                          <div class="field">
+                            <label>Reseau 2 mot de passe</label>
+                            <input id="wifiPassword2" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Reseau 3 SSID</label>
+                            <input id="wifiSsid3" type="text" maxlength="32" placeholder="Partage smartphone"/>
+                          </div>
+                          <div class="field">
+                            <label>Reseau 3 mot de passe</label>
+                            <input id="wifiPassword3" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                          </div>
+                          <div class="field">
+                            <label>Reseau 4 SSID</label>
+                            <input id="wifiSsid4" type="text" maxlength="32" placeholder="Bureau"/>
+                          </div>
+                          <div class="field">
+                            <label>Reseau 4 mot de passe</label>
+                            <input id="wifiPassword4" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="hint">Laisse le mot de passe vide pour un reseau ouvert. Si tu ne modifies pas un champ mot de passe deja configure, il est conserve.</div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveWifiAdv">Sauver Wi-Fi</button>
+                      </div>
+                      <div class="toast" id="toastWifiAdv"></div>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="settingsLane">
+                  <section class="settingsSurface">
+                    <div class="settingsSurfaceHeader">
+                      <div>
+                        <h3 class="settingsSurfaceTitle">Integrations & alertes</h3>
+                      </div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-homeassistant">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Home Assistant</h3>
+                          <div class="settingsSublead">Token dedie pour l'integration HTTP native.</div>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label>Bearer token Home Assistant</label>
+                        <input id="homeAssistantTokenAdv" type="text" autocomplete="off" maxlength="64" placeholder="genere ou colle un token"/>
+                      </div>
+                      <div class="hint mono" id="homeAssistantStatusAdv">Token: --</div>
+                      <div class="hint mono" id="homeAssistantPathAdv">Endpoint: /api/ha/status</div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveHomeAssistantAdv">Sauver token</button>
+                        <button class="btn" id="generateHomeAssistantTokenBtn">Generer</button>
+                        <button class="btn danger" id="clearHomeAssistantTokenBtn">Revoquer</button>
+                      </div>
+                      <div class="toast" id="toastHomeAssistantAdv"></div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-mqtt">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">MQTT</h3>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>Activer MQTT</label>
+                            <select id="mqttEnabledAdv">
+                              <option value="1">Oui</option>
+                              <option value="0">Non</option>
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label>Broker / Host</label>
+                            <input id="mqttHostAdv" type="text" placeholder="192.168.1.10"/>
+                          </div>
+                          <div class="field">
+                            <label>Port</label>
+                            <input id="mqttPortAdv" type="number" min="1" max="65535" placeholder="1883"/>
+                          </div>
+                          <div class="field">
+                            <label>Username</label>
+                            <input id="mqttUsernameAdv" type="text" placeholder="laisser vide si non utilise"/>
+                          </div>
+                          <div class="field">
+                            <label>Password</label>
+                            <input id="mqttPasswordAdv" type="password" placeholder="laisser vide si non utilise"/>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Client ID</label>
+                            <input id="mqttClientIdAdv" type="text" placeholder="soundpanel7"/>
+                          </div>
+                          <div class="field">
+                            <label>Base topic</label>
+                            <input id="mqttBaseTopicAdv" type="text" placeholder="soundpanel7"/>
+                          </div>
+                          <div class="field">
+                            <label>Publish period (ms)</label>
+                            <input id="mqttPublishPeriodMsAdv" type="number" min="250" max="60000" placeholder="1000"/>
+                          </div>
+                          <div class="field">
+                            <label>Retain</label>
+                            <select id="mqttRetainAdv">
+                              <option value="0">Non</option>
+                              <option value="1">Oui</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveMqttAdv">Sauver MQTT</button>
+                      </div>
+                      <div class="toast" id="toastMqttAdv"></div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-notifications">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Slack, Telegram & WhatsApp</h3>
+                          <div class="settingsSublead">Les differents cannaux d'alerting</div>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>Notifier des le niveau warning</label>
+                            <select id="notifyWarningAdv">
+                              <option value="0">Non, critique seulement</option>
+                              <option value="1">Oui, warning + critique</option>
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label>Notifier le retour a la normale</label>
+                            <select id="notifyRecoveryAdv">
+                              <option value="1">Oui</option>
+                              <option value="0">Non</option>
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label>Etat courant</label>
+                            <div class="pill mono" id="notificationsCurrentStateAdv">--</div>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Cibles actives</label>
+                            <div class="hint mono" id="notificationsSummaryAdv">--</div>
+                          </div>
+                          <div class="field">
+                            <label>Dernier resultat</label>
+                            <div class="hint mono" id="notificationsLastResultAdv">Aucun envoi.</div>
+                          </div>
+                          <div class="field">
+                            <label>Dernier succes</label>
+                            <div class="hint mono" id="notificationsLastSuccessAdv">--</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>Slack actif</label>
+                            <select id="slackEnabledAdv">
+                              <option value="0">Non</option>
+                              <option value="1">Oui</option>
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label>Slack incoming webhook</label>
+                            <input id="slackWebhookUrlAdv" type="password" placeholder="https://hooks.slack.com/services/..."/>
+                            <div class="hint">Laisse vide pour conserver l'URL deja stockee.</div>
+                          </div>
+                          <div class="field">
+                            <label>Room / channel Slack</label>
+                            <input id="slackChannelAdv" type="text" placeholder="#jeedom"/>
+                            <div class="hint">Option legacy. Les webhooks Slack modernes gardent souvent le canal defini cote Slack.</div>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Telegram actif</label>
+                            <select id="telegramEnabledAdv">
+                              <option value="0">Non</option>
+                              <option value="1">Oui</option>
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label>Telegram chat ID</label>
+                            <input id="telegramChatIdAdv" type="text" placeholder="-1001234567890"/>
+                          </div>
+                          <div class="field">
+                            <label>Telegram bot token</label>
+                            <input id="telegramBotTokenAdv" type="password" placeholder="123456:ABCDEF..."/>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <label>WhatsApp actif</label>
+                            <select id="whatsappEnabledAdv">
+                              <option value="0">Non</option>
+                              <option value="1">Oui</option>
+                            </select>
+                          </div>
+                          <div class="field">
+                            <label>Meta Graph API version</label>
+                            <input id="whatsappApiVersionAdv" type="text" placeholder="v22.0"/>
+                          </div>
+                          <div class="field">
+                            <label>Phone Number ID</label>
+                            <input id="whatsappPhoneIdAdv" type="text" placeholder="123456789012345"/>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="field">
+                            <label>Destinataire WhatsApp</label>
+                            <input id="whatsappRecipientAdv" type="text" placeholder="33612345678"/>
+                          </div>
+                          <div class="field">
+                            <label>Access token Meta</label>
+                            <input id="whatsappAccessTokenAdv" type="password" placeholder="EAA..."/>
+                            <div class="hint">Selon la politique Meta, certains envois WhatsApp peuvent necessiter des templates approuves.</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveNotificationsAdv">Sauver alertes</button>
+                        <button class="btn" id="testNotificationsAdv">Envoyer un test</button>
+                      </div>
+                      <div class="toast" id="toastNotificationsAdv"></div>
+                    </div>
+                  </section>
                 </div>
               </div>
-              <div class="field">
-                <label>Vue a afficher</label>
-                <select id="dashboardPageAdv">
-                  <option value="0">Principal</option>
-                  <option value="1">Horloge</option>
-                  <option value="2">LIVE</option>
-                  <option value="3">Sonometre</option>
-                </select>
-                <div class="hint">Change immediatement l'ecran affiche sur le panneau tactile.</div>
-              </div>
-              <div class="field">
-                <div class="switchRow">
-                  <div class="switchText">
-                    <label>Tactile actif</label>
-                    <div class="switchState mono" id="touchEnabledAdvVal">--</div>
-                  </div>
-                  <button class="switch" id="touchEnabledAdv" type="button" aria-label="Activer ou desactiver l'ecran tactile" aria-pressed="true">
-                    <span class="switchTrack"></span>
-                    <span class="switchThumb"></span>
-                  </button>
-                </div>
-                <div class="hint">Coupe toutes les interactions tactiles du panneau 7 pouces jusqu'a reactivation depuis l'interface web.</div>
-              </div>
-              <div class="field">
-                <label>Mode plein ecran tactile</label>
-                <div class="choiceRow">
-                  <button class="btn choice" id="dashboardFsOverview" data-dashboard-fullscreen="0" type="button" aria-pressed="false">Principal</button>
-                  <button class="btn choice" id="dashboardFsClock" data-dashboard-fullscreen="1" type="button" aria-pressed="false">Horloge</button>
-                  <button class="btn choice" id="dashboardFsLive" data-dashboard-fullscreen="2" type="button" aria-pressed="false">LIVE</button>
-                  <button class="btn choice" id="dashboardFsSound" data-dashboard-fullscreen="3" type="button" aria-pressed="false">Sonometre</button>
-                </div>
-                <div class="hint">Masque la barre du haut uniquement sur l'ecran tactile 7 pouces pour les vues selectionnees.</div>
-              </div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveDashboardPageAdv">Appliquer sur l'ecran</button>
-              </div>
-              <div class="toast" id="dashboardPageToast"></div>
             </article>
 
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
+            <article class="card settingsSection settingsSectionNeutral" id="settings-maintenance">
+              <div class="settingsSectionHeader">
                 <div>
-                  <div class="sectionKicker">Protection</div>
-                  <h2 class="sectionTitle">Verrou PIN</h2>
+                  <div class="sectionKicker">Maintenance</div>
+                  <h3 class="settingsGroupTitle">Mettre a jour, sauvegarder, intervenir</h3>
+                  <div class="settingsGroupLead">Le dernier panneau est reserve aux operations sensibles: firmware, sauvegarde, service local et diagnostic.</div>
                 </div>
+                <div class="settingsSectionStamp">Cycle de vie</div>
               </div>
-              <div class="pill pinBadge mono" id="pinStatusAdv">PIN tactile: --</div>
-              <div class="field">
-                <label>Code PIN numerique</label>
-                <input id="accessPinAdv" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="4 a 8 chiffres"/>
-                <div class="hint">Protege Calibration et Parametres sur le tactile et sur l'interface web.</div>
-              </div>
-              <div class="btnRow">
-                <button class="btn accent" id="savePinAdv">Sauver PIN</button>
-                <button class="btn" id="clearPinAdv">Desactiver PIN</button>
-              </div>
-              <div class="toast" id="toastPinAdv"></div>
-            </article>
+              <div class="settingsSectionGrid">
+                <div class="settingsLane">
+                  <section class="settingsSurface">
+                    <div class="settingsSurfaceHeader">
+                      <div>
+                        <h3 class="settingsSurfaceTitle">Mises a jour</h3>
+                      </div>
+                    </div>
 
-            <article class="card settingsCardFlat">
-              <div class="usersCardHeader">
-                <div>
-                  <div class="sectionKicker">Securite Web</div>
-                  <h2 class="sectionTitle">Gestion des utilisateurs</h2>
-                  <div class="hint">Comptes locaux pour l'acces web. Tous les utilisateurs ont un acces administrateur au dashboard.</div>
-                </div>
-                <div class="pill mono" id="usersSummary">0 / 4 utilisateurs</div>
-              </div>
+                    <div class="settingsSurfaceBlock" id="settings-updates">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">GitHub Releases</h3>
+                        </div>
+                      </div>
+                      <div class="statusList compact">
+                        <div class="statusItem">
+                          <div class="k">Firmware actuel</div>
+                          <div class="v mono" id="releaseCurrentVersion">--</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Dernier check</div>
+                          <div class="v mono" id="releaseLastCheck">Jamais</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Etat</div>
+                          <div class="v" id="releaseState">En attente</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Derniere version</div>
+                          <div class="v mono" id="releaseLatestVersion">--</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Publiee le</div>
+                          <div class="v mono" id="releasePublishedAt">--</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Manifest</div>
+                          <div class="v mono" id="releaseManifestUrl">--</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Installation</div>
+                          <div class="v mono" id="releaseInstallState">Inactive</div>
+                        </div>
+                        <div class="statusItem">
+                          <div class="k">Progression</div>
+                          <div class="v mono" id="releaseInstallProgress">0%</div>
+                        </div>
+                      </div>
+                      <div class="hint" id="releaseHint">Check manuel du dernier firmware publie sur GitHub.</div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="checkReleaseBtn">Verifier les mises a jour</button>
+                        <button class="btn" id="installReleaseBtn" disabled>Installer</button>
+                      </div>
+                      <div class="toast" id="toastReleaseAdv"></div>
+                    </div>
 
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>Nouveau login</label>
-                    <input id="newWebUsername" type="text" autocomplete="off" placeholder="admin"/>
-                  </div>
-                  <div class="field">
-                    <label>Mot de passe</label>
-                    <input id="newWebPassword" type="password" autocomplete="new-password" placeholder="Creer un mot de passe robuste"/>
-                  </div>
-                  <div class="btnRow">
-                    <button class="btn accent" id="createWebUserBtn">Creer utilisateur</button>
-                    <button class="btn" id="logoutBtn">Deconnexion</button>
-                  </div>
-                </div>
-
-                <div>
-                  <div class="field">
-                    <label>Utilisateur a mettre a jour</label>
-                    <select id="manageWebUserSelect"></select>
-                  </div>
-                  <div class="field">
-                    <label>Nouveau mot de passe</label>
-                    <input id="manageWebPassword" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe"/>
-                  </div>
-                  <div class="btnRow">
-                    <button class="btn" id="updateWebPasswordBtn">Changer mot de passe</button>
-                    <button class="btn danger" id="deleteWebUserBtn">Supprimer utilisateur</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="userList" id="usersList"></div>
-              <div class="toast" id="usersToast"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Integration Native</div>
-                  <h2 class="sectionTitle">Home Assistant</h2>
-                  <div class="hint">Token dedie pour l'integration HTTP native. A renseigner ensuite dans Home Assistant.</div>
-                </div>
-              </div>
-              <div class="field">
-                <label>Bearer token Home Assistant</label>
-                <input id="homeAssistantTokenAdv" type="text" autocomplete="off" maxlength="64" placeholder="genere ou colle un token"/>
-              </div>
-              <div class="hint mono" id="homeAssistantStatusAdv">Token: --</div>
-              <div class="hint mono" id="homeAssistantPathAdv">Endpoint: /api/ha/status</div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveHomeAssistantAdv">Sauver token</button>
-                <button class="btn" id="generateHomeAssistantTokenBtn">Generer</button>
-                <button class="btn danger" id="clearHomeAssistantTokenBtn">Revoquer</button>
-              </div>
-              <div class="toast" id="toastHomeAssistantAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Temps Reseau</div>
-                  <h2 class="sectionTitle">Heure, NTP & timezone</h2>
-                </div>
-              </div>
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>NTP Server</label>
-                    <input id="ntpServerAdv" type="text" placeholder="fr.pool.ntp.org"/>
-                  </div>
-                  <div class="field">
-                    <label>Sync NTP (minutes)</label>
-                    <input id="ntpSyncMinAdv" type="number" min="1" max="1440" step="1" value="180"/>
-                  </div>
-                </div>
-                <div>
-                  <div class="field">
-                    <label>TZ (POSIX)</label>
-                    <input id="tzAdv" type="text" placeholder="CET-1CEST,M3.5.0/2,M10.5.0/3"/>
-                  </div>
-                  <div class="field">
-                    <label>Hostname</label>
-                    <input id="hostnameAdv" type="text" placeholder="soundpanel7"/>
-                  </div>
-                </div>
-              </div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveTimeAdv">Sauver heure</button>
-              </div>
-              <div class="toast" id="toastTimeAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Reseau</div>
-                  <h2 class="sectionTitle">Wi-Fi multi-AP</h2>
-                </div>
-              </div>
-              <div class="hint mono" id="wifiSummaryAdv">Connexion: --</div>
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>Reseau 1 SSID</label>
-                    <input id="wifiSsid1" type="text" maxlength="32" placeholder="Maison"/>
-                  </div>
-                  <div class="field">
-                    <label>Reseau 1 mot de passe</label>
-                    <input id="wifiPassword1" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
-                  </div>
-                  <div class="field">
-                    <label>Reseau 2 SSID</label>
-                    <input id="wifiSsid2" type="text" maxlength="32" placeholder="Maison-5G"/>
-                  </div>
-                  <div class="field">
-                    <label>Reseau 2 mot de passe</label>
-                    <input id="wifiPassword2" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
-                  </div>
-                </div>
-                <div>
-                  <div class="field">
-                    <label>Reseau 3 SSID</label>
-                    <input id="wifiSsid3" type="text" maxlength="32" placeholder="Partage smartphone"/>
-                  </div>
-                  <div class="field">
-                    <label>Reseau 3 mot de passe</label>
-                    <input id="wifiPassword3" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
-                  </div>
-                  <div class="field">
-                    <label>Reseau 4 SSID</label>
-                    <input id="wifiSsid4" type="text" maxlength="32" placeholder="Bureau"/>
-                  </div>
-                  <div class="field">
-                    <label>Reseau 4 mot de passe</label>
-                    <input id="wifiPassword4" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
-                  </div>
-                </div>
-              </div>
-              <div class="hint">Laisse le mot de passe vide pour un reseau ouvert. Si tu ne modifies pas un champ mot de passe deja configure, il est conserve.</div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveWifiAdv">Sauver Wi-Fi</button>
-              </div>
-              <div class="toast" id="toastWifiAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Publication</div>
-                  <h2 class="sectionTitle">MQTT</h2>
-                </div>
-              </div>
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>Activer MQTT</label>
-                    <select id="mqttEnabledAdv">
-                      <option value="1">Oui</option>
-                      <option value="0">Non</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>Broker / Host</label>
-                    <input id="mqttHostAdv" type="text" placeholder="192.168.1.10"/>
-                  </div>
-                  <div class="field">
-                    <label>Port</label>
-                    <input id="mqttPortAdv" type="number" min="1" max="65535" placeholder="1883"/>
-                  </div>
-                  <div class="field">
-                    <label>Username</label>
-                    <input id="mqttUsernameAdv" type="text" placeholder="laisser vide si non utilise"/>
-                  </div>
-                  <div class="field">
-                    <label>Password</label>
-                    <input id="mqttPasswordAdv" type="password" placeholder="laisser vide si non utilise"/>
-                  </div>
-                </div>
-                <div>
-                  <div class="field">
-                    <label>Client ID</label>
-                    <input id="mqttClientIdAdv" type="text" placeholder="soundpanel7"/>
-                  </div>
-                  <div class="field">
-                    <label>Base topic</label>
-                    <input id="mqttBaseTopicAdv" type="text" placeholder="soundpanel7"/>
-                  </div>
-                  <div class="field">
-                    <label>Publish period (ms)</label>
-                    <input id="mqttPublishPeriodMsAdv" type="number" min="250" max="60000" placeholder="1000"/>
-                  </div>
-                  <div class="field">
-                    <label>Retain</label>
-                    <select id="mqttRetainAdv">
-                      <option value="0">Non</option>
-                      <option value="1">Oui</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveMqttAdv">Sauver MQTT</button>
-              </div>
-              <div class="toast" id="toastMqttAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Alertes Sortantes</div>
-                  <h2 class="sectionTitle">Slack, Telegram & WhatsApp</h2>
-                  <div class="hint">Envoi lors d'une alerte warning / critique ou au retour a la normale. Slack utilise un incoming webhook, Telegram le Bot API, WhatsApp le Cloud API Meta.</div>
-                </div>
-              </div>
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>Notifier des le niveau warning</label>
-                    <select id="notifyWarningAdv">
-                      <option value="0">Non, critique seulement</option>
-                      <option value="1">Oui, warning + critique</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>Notifier le retour a la normale</label>
-                    <select id="notifyRecoveryAdv">
-                      <option value="1">Oui</option>
-                      <option value="0">Non</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>Etat courant</label>
-                    <div class="pill mono" id="notificationsCurrentStateAdv">--</div>
-                  </div>
-                </div>
-                <div>
-                  <div class="field">
-                    <label>Cibles actives</label>
-                    <div class="hint mono" id="notificationsSummaryAdv">--</div>
-                  </div>
-                  <div class="field">
-                    <label>Dernier resultat</label>
-                    <div class="hint mono" id="notificationsLastResultAdv">Aucun envoi.</div>
-                  </div>
-                  <div class="field">
-                    <label>Dernier succes</label>
-                    <div class="hint mono" id="notificationsLastSuccessAdv">--</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>Slack actif</label>
-                    <select id="slackEnabledAdv">
-                      <option value="0">Non</option>
-                      <option value="1">Oui</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>Slack incoming webhook</label>
-                    <input id="slackWebhookUrlAdv" type="password" placeholder="https://hooks.slack.com/services/..."/>
-                    <div class="hint">Laisse vide pour conserver l'URL deja stockee.</div>
-                  </div>
-                  <div class="field">
-                    <label>Room / channel Slack</label>
-                    <input id="slackChannelAdv" type="text" placeholder="#jeedom"/>
-                    <div class="hint">Option legacy. Les webhooks Slack modernes gardent souvent le canal defini cote Slack.</div>
-                  </div>
+                    <div class="settingsSurfaceBlock" id="settings-ota">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">OTA locale</h3>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label>Activer OTA</label>
+                        <select id="otaEnabledAdv">
+                          <option value="1">Oui</option>
+                          <option value="0">Non</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label>Hostname OTA</label>
+                        <input id="otaHostnameAdv" type="text" placeholder="soundpanel7"/>
+                      </div>
+                      <div class="field">
+                        <label>Port OTA</label>
+                        <input id="otaPortAdv" type="number" min="1" max="65535" placeholder="3232"/>
+                      </div>
+                      <div class="field">
+                        <label>Mot de passe OTA</label>
+                        <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveOtaAdv">Sauver OTA</button>
+                      </div>
+                      <div class="toast" id="toastOtaAdv"></div>
+                    </div>
+                  </section>
                 </div>
 
-                <div>
-                  <div class="field">
-                    <label>Telegram actif</label>
-                    <select id="telegramEnabledAdv">
-                      <option value="0">Non</option>
-                      <option value="1">Oui</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>Telegram chat ID</label>
-                    <input id="telegramChatIdAdv" type="text" placeholder="-1001234567890"/>
-                  </div>
-                  <div class="field">
-                    <label>Telegram bot token</label>
-                    <input id="telegramBotTokenAdv" type="password" placeholder="123456:ABCDEF..."/>
-                  </div>
+                <div class="settingsLane">
+                  <section class="settingsSurface">
+                    <div class="settingsSurfaceHeader">
+                      <div>
+                        <h3 class="settingsSurfaceTitle">Sauvegarde & service</h3>
+                      </div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Sauvegarde & configuration</h3>
+                        </div>
+                      </div>
+                      <div class="field">
+                        <label>JSON config</label>
+                        <textarea id="configJsonBox" placeholder='{"type":"soundpanel7-config", ...}'></textarea>
+                      </div>
+                      <div class="field">
+                        <label>Importer depuis un fichier JSON</label>
+                        <input id="configFile" type="file" accept=".json,application/json"/>
+                      </div>
+                      <div class="hint">Export JSON: version safe sans secrets par defaut. L'export complet en clair est volontairement marque comme dangereux. Le backup local conserve une copie chiffree restaurable sur l'appareil.</div>
+                      <div class="btnRow">
+                        <button class="btn" id="exportConfigBtn">Exporter JSON</button>
+                        <button class="btn warn" id="exportFullConfigBtn">Exporter complet dangereux</button>
+                        <button class="btn accent" id="importConfigBtn">Importer JSON</button>
+                      </div>
+                      <div class="field">
+                        <label>Reset partiel</label>
+                        <select id="configResetScope">
+                          <option value="ui">UI</option>
+                          <option value="security">Securite web + HA</option>
+                          <option value="time">Heure / hostname</option>
+                          <option value="wifi">Wi-Fi</option>
+                          <option value="audio">Audio</option>
+                          <option value="calibration">Calibration</option>
+                          <option value="ota">OTA</option>
+                          <option value="mqtt">MQTT</option>
+                          <option value="notifications">Notifications</option>
+                        </select>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn" id="backupConfigBtn">Backup</button>
+                        <button class="btn" id="restoreConfigBtn">Restore</button>
+                        <button class="btn danger" id="partialResetBtn">Reset partiel</button>
+                      </div>
+                      <div class="hint mono" id="backupInfo">Dernier backup: --</div>
+                      <div class="toast" id="configToast"></div>
+                    </div>
+
+                    <div class="settingsSurfaceBlock">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Actions systeme</h3>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn" id="rebootBtn">Reboot</button>
+                        <button class="btn" id="shutdownBtn">Shutdown</button>
+                        <button class="btn danger" id="factoryResetBtn">Factory reset</button>
+                      </div>
+                      <div class="toast" id="actionsToast"></div>
+                    </div>
+
+                  </section>
                 </div>
               </div>
-
-              <div class="settingsSplit">
-                <div>
-                  <div class="field">
-                    <label>WhatsApp actif</label>
-                    <select id="whatsappEnabledAdv">
-                      <option value="0">Non</option>
-                      <option value="1">Oui</option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label>Meta Graph API version</label>
-                    <input id="whatsappApiVersionAdv" type="text" placeholder="v22.0"/>
-                  </div>
-                  <div class="field">
-                    <label>Phone Number ID</label>
-                    <input id="whatsappPhoneIdAdv" type="text" placeholder="123456789012345"/>
-                  </div>
-                </div>
-
-                <div>
-                  <div class="field">
-                    <label>Destinataire WhatsApp</label>
-                    <input id="whatsappRecipientAdv" type="text" placeholder="33612345678"/>
-                  </div>
-                  <div class="field">
-                    <label>Access token Meta</label>
-                    <input id="whatsappAccessTokenAdv" type="password" placeholder="EAA..."/>
-                    <div class="hint">Selon la politique Meta, certains envois WhatsApp peuvent necessiter des templates approuves.</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="btnRow">
-                <button class="btn accent" id="saveNotificationsAdv">Sauver alertes</button>
-                <button class="btn" id="testNotificationsAdv">Envoyer un test</button>
-              </div>
-              <div class="toast" id="toastNotificationsAdv"></div>
             </article>
           </div>
 
           <div class="settingsRail">
-            <article class="card settingsCardSoft">
+            <article class="card settingsNav settingsNavSlim">
               <div class="sectionHead">
                 <div>
-                  <div class="sectionKicker">Sauvegarde</div>
-                  <h2 class="sectionTitle">Configuration JSON</h2>
+                  <div class="sectionKicker">Sommaire</div>
+                  <h2 class="sectionTitle">Acces rapide</h2>
+                  <div class="hint">Le rail sert de carte mentale. Tu sais ou tu vas avant meme de scroller.</div>
                 </div>
               </div>
-              <div class="field">
-                <label>JSON config</label>
-                <textarea id="configJsonBox" placeholder='{"type":"soundpanel7-config", ...}'></textarea>
-              </div>
-              <div class="field">
-                <label>Importer depuis un fichier JSON</label>
-                <input id="configFile" type="file" accept=".json,application/json"/>
-              </div>
-              <div class="hint">Export JSON: version safe sans secrets par defaut. L'export complet en clair est volontairement marque comme dangereux. Le backup local conserve une copie chiffrée restaurable sur l'appareil.</div>
-              <div class="btnRow">
-                <button class="btn" id="exportConfigBtn">Exporter JSON</button>
-                <button class="btn warn" id="exportFullConfigBtn">Exporter complet dangereux</button>
-                <button class="btn accent" id="importConfigBtn">Importer JSON</button>
-              </div>
-              <div class="field">
-                <label>Reset partiel</label>
-                <select id="configResetScope">
-                  <option value="ui">UI</option>
-                  <option value="security">Securite web + HA</option>
-                  <option value="time">Heure / hostname</option>
-                  <option value="wifi">Wi-Fi</option>
-                  <option value="audio">Audio</option>
-                  <option value="calibration">Calibration</option>
-                  <option value="ota">OTA</option>
-                  <option value="mqtt">MQTT</option>
-                  <option value="notifications">Notifications</option>
-                </select>
-              </div>
-              <div class="btnRow">
-                <button class="btn" id="backupConfigBtn">Backup</button>
-                <button class="btn" id="restoreConfigBtn">Restore</button>
-                <button class="btn danger" id="partialResetBtn">Reset partiel</button>
-              </div>
-              <div class="hint mono" id="backupInfo">Dernier backup: --</div>
-              <div class="toast" id="configToast"></div>
-            </article>
-
-            <article class="card actionsCard settingsCardSoft">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Maintenance</div>
-                  <h2 class="sectionTitle">Actions systeme</h2>
-                </div>
-              </div>
-              <div class="liveActionWrap">
-                <button class="btn liveAction" id="liveActionBtn" aria-pressed="false">LIVE</button>
-                <div class="liveActionMeta">
-                  <div>Flag broadcast tactile, API et MQTT</div>
-                  <div class="liveActionState" id="liveActionState">OFF AIR</div>
-                </div>
-              </div>
-              <div class="btnRow">
-                <button class="btn" id="rebootBtn">Reboot</button>
-                <button class="btn" id="shutdownBtn">Shutdown</button>
-                <button class="btn danger" id="factoryResetBtn">Factory reset</button>
-              </div>
-              <div class="toast" id="actionsToast"></div>
-            </article>
-
-            <article class="card settingsCardFlat releaseCard">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Mise A Jour</div>
-                  <h2 class="sectionTitle">GitHub Releases</h2>
-                </div>
-              </div>
-              <div class="statusList compact">
-                <div class="statusItem">
-                  <div class="k">Firmware actuel</div>
-                  <div class="v mono" id="releaseCurrentVersion">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Dernier check</div>
-                  <div class="v mono" id="releaseLastCheck">Jamais</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Etat</div>
-                  <div class="v" id="releaseState">En attente</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Derniere version</div>
-                  <div class="v mono" id="releaseLatestVersion">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Publiee le</div>
-                  <div class="v mono" id="releasePublishedAt">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Manifest</div>
-                  <div class="v mono" id="releaseManifestUrl">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Installation</div>
-                  <div class="v mono" id="releaseInstallState">Inactive</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">Progression</div>
-                  <div class="v mono" id="releaseInstallProgress">0%</div>
-                </div>
-              </div>
-              <div class="hint" id="releaseHint">Check manuel du dernier firmware publie sur GitHub.</div>
-              <div class="btnRow">
-                <button class="btn accent" id="checkReleaseBtn">Verifier les mises a jour</button>
-                <button class="btn" id="installReleaseBtn" disabled>Installer</button>
-              </div>
-              <div class="toast" id="toastReleaseAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Mise A Jour</div>
-                  <h2 class="sectionTitle">OTA</h2>
-                </div>
-              </div>
-              <div class="field">
-                <label>Activer OTA</label>
-                <select id="otaEnabledAdv">
-                  <option value="1">Oui</option>
-                  <option value="0">Non</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>Hostname OTA</label>
-                <input id="otaHostnameAdv" type="text" placeholder="soundpanel7"/>
-              </div>
-              <div class="field">
-                <label>Port OTA</label>
-                <input id="otaPortAdv" type="number" min="1" max="65535" placeholder="3232"/>
-              </div>
-              <div class="field">
-                <label>Mot de passe OTA</label>
-                <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
-              </div>
-              <div class="btnRow">
-                <button class="btn accent" id="saveOtaAdv">Sauver OTA</button>
-              </div>
-              <div class="toast" id="toastOtaAdv"></div>
-            </article>
-
-            <article class="card settingsCardFlat">
-              <div class="sectionHead">
-                <div>
-                  <div class="sectionKicker">Diagnostic</div>
-                  <h2 class="sectionTitle">Audio brut</h2>
-                </div>
-              </div>
-              <div class="statusList compact">
-                <div class="statusItem">
-                  <div class="k">rawRms</div>
-                  <div class="v mono" id="rawRmsAdv">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">pseudo dB</div>
-                  <div class="v mono" id="rawPseudoDbAdv">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">ADC Mean</div>
-                  <div class="v mono" id="rawAdcMeanAdv">--</div>
-                </div>
-                <div class="statusItem">
-                  <div class="k">ADC Last</div>
-                  <div class="v mono" id="rawAdcLastAdv">--</div>
-                </div>
+              <div class="settingsJumpList">
+                <a class="settingsJumpLink" href="#settings-overview">
+                  <div class="settingsJumpMain">
+                    <div class="settingsJumpTitle">Vue systeme</div>
+                    <div class="settingsJumpMeta">Cockpit global, version, charge, uptime, moteur UI</div>
+                  </div>
+                  <div class="settingsJumpArrow">+</div>
+                </a>
+                <a class="settingsJumpLink" href="#settings-controls">
+                  <div class="settingsJumpMain">
+                    <div class="settingsJumpTitle">Exploitation</div>
+                    <div class="settingsJumpMeta">Seuils, LIVE, ecran tactile, PIN et comptes web</div>
+                  </div>
+                  <div class="settingsJumpArrow">+</div>
+                </a>
+                <a class="settingsJumpLink" href="#settings-network">
+                  <div class="settingsJumpMain">
+                    <div class="settingsJumpTitle">Connexion & alertes</div>
+                    <div class="settingsJumpMeta">Heure, Wi-Fi, Home Assistant, MQTT, Slack, Telegram, WhatsApp</div>
+                  </div>
+                  <div class="settingsJumpArrow">+</div>
+                </a>
+                <a class="settingsJumpLink" href="#settings-maintenance">
+                  <div class="settingsJumpMain">
+                    <div class="settingsJumpTitle">Maintenance</div>
+                    <div class="settingsJumpMeta">Releases, OTA, sauvegarde, reset, diagnostic et service local</div>
+                  </div>
+                  <div class="settingsJumpArrow">+</div>
+                </a>
               </div>
             </article>
           </div>
@@ -3979,15 +4477,24 @@ R"HTML(
     historyCapacity: 96,
     historySamplePeriodMs: 3000,
     lastHistorySampleClientMs: 0,
+    lastLiveEventMs: 0,
+    rawAudioSeededFromStatus: false,
+    rawAudioLiveStarted: false,
     clockBaseMs: 0,
     clockSyncClientMs: 0,
+    clockRenderedMs: 0,
     currentPage: "overview",
+    settingsPanelsLoaded: false,
+    settingsPanelsLoading: false,
+    lastSettingsSummaryRenderMs: 0,
+    lastBackgroundStatusRefreshMs: 0,
     events: null,
     reconnectTimer: null,
     releaseInstallPollTimer: null,
     releaseInstallPollPending: false,
     hasLiveFeed: false,
     lastContactMs: 0,
+    lastStatusContactMs: 0,
     orangeSinceMs: 0,
     redSinceMs: 0,
     liveEnabled: false,
@@ -4004,17 +4511,18 @@ R"HTML(
   };
 
   const gaugeViews = [
-    { gauge: $("overviewGauge"), db: $("overviewDb"), dot: $("overviewDot"), card: $("overviewSoundCard") },
-    { gauge: $("soundGauge"), db: $("soundDb"), dot: $("soundDot"), card: $("soundCard") },
+    { page: "overview", gauge: $("overviewGauge"), db: $("overviewDb"), dot: $("overviewDot"), card: $("overviewSoundCard") },
+    { page: "sound", gauge: $("soundGauge"), db: $("soundDb"), dot: $("soundDot"), card: $("soundCard") },
   ];
 
   const metricViews = [
-    { leq: $("overviewLeq"), peak: $("overviewPeak") },
-    { leq: $("soundLeq"), peak: $("soundPeak") },
+    { page: "overview", leq: $("overviewLeq"), peak: $("overviewPeak") },
+    { page: "sound", leq: $("soundLeq"), peak: $("soundPeak") },
   ];
 
   const historyViews = [
     {
+      page: "overview",
       meta: $("overviewHistMeta"),
       alert: $("overviewAlertTime"),
       bars: $("overviewHistBars"),
@@ -4023,6 +4531,7 @@ R"HTML(
       right: $("overviewHistRight"),
     },
     {
+      page: "sound",
       meta: $("soundHistMeta"),
       alert: $("soundAlertTime"),
       bars: $("soundHistBars"),
@@ -4166,20 +4675,36 @@ R"HTML(
     return ((clamped - histDbMin) / (histDbMax - histDbMin)) * 100;
   }
 
-  function syncClock(serverTime) {
+  function syncClock(serverTime, source = "status") {
     if (!serverTime) {
+      if (state.clockBaseMs) return;
       state.clockBaseMs = 0;
       state.clockSyncClientMs = 0;
+      state.clockRenderedMs = 0;
       renderClock();
       return;
     }
 
     const parsed = Date.parse(serverTime.replace(" ", "T"));
     if (Number.isNaN(parsed)) {
+      if (state.clockBaseMs) return;
       state.clockBaseMs = 0;
       state.clockSyncClientMs = 0;
+      state.clockRenderedMs = 0;
       renderClock();
       return;
+    }
+
+    if (state.clockBaseMs && state.clockSyncClientMs) {
+      const predictedMs = state.clockBaseMs + (Date.now() - state.clockSyncClientMs);
+      const driftMs = parsed - predictedMs;
+      // This UI clock must be monotonic. No source is allowed to move it
+      // backwards because that is visibly unacceptable on a broadcast clock.
+      if (driftMs <= 0) return;
+
+      // Ignore tiny forward nudges from second-resolution timestamps; the local
+      // renderer is already smoother than the network cadence.
+      if (driftMs < 250) return;
     }
 
     state.clockBaseMs = parsed;
@@ -4196,10 +4721,16 @@ R"HTML(
       $("clockMain").textContent = "--:--";
       $("clockSec").textContent = "--";
       $("settingsTime").textContent = "NTP...";
+      state.clockRenderedMs = 0;
       return;
     }
 
-    const nowMs = state.clockBaseMs + (Date.now() - state.clockSyncClientMs);
+    let nowMs = state.clockBaseMs + (Date.now() - state.clockSyncClientMs);
+    if (state.clockRenderedMs && nowMs < state.clockRenderedMs) {
+      nowMs = state.clockRenderedMs;
+    }
+    state.clockRenderedMs = nowMs;
+
     const d = new Date(nowMs);
     const date = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
     const hhmm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -4291,6 +4822,12 @@ R"HTML(
       el.classList.toggle("active", el.dataset.page === page);
     });
     applyPinState();
+    if (page === "settings") {
+      ensureSettingsPanelsLoaded();
+      if (state.status) updateStatusSummary(state.status, true);
+      refreshSystemSummary(true);
+    }
+    refreshActiveLiveViews();
   }
 
   function formatRedSeconds(redSeconds, historyMinutes) {
@@ -4308,6 +4845,14 @@ R"HTML(
       view.mid.textContent = `-${mid}m`;
       view.right.textContent = "0";
     });
+  }
+
+  function isLiveViewVisible(page) {
+    return state.currentPage === page;
+  }
+
+  function isDashboardLivePage(page = state.currentPage) {
+    return page === "overview" || page === "sound";
   }
 
   function drawHistory() {
@@ -4329,6 +4874,7 @@ R"HTML(
     const alertText = formatRedSeconds(redSeconds, state.historyMinutes);
 
     historyViews.forEach((view) => {
+      if (!isLiveViewVisible(view.page)) return;
       view.bars.innerHTML = html;
       view.alert.textContent = alertText;
     });
@@ -4427,6 +4973,7 @@ R"HTML(
     const color = zoneColor(db, greenMax, orangeMax);
 
     gaugeViews.forEach((view) => {
+      if (!isLiveViewVisible(view.page)) return;
       view.gauge.style.setProperty("--pct", pct);
       view.gauge.style.setProperty("--gaugeColor", color);
       view.dot.style.background = color;
@@ -4436,9 +4983,34 @@ R"HTML(
 
   function updateMetrics(leq, peak) {
     metricViews.forEach((view) => {
+      if (!isLiveViewVisible(view.page)) return;
       view.leq.textContent = leq.toFixed(1);
       view.peak.textContent = peak.toFixed(1);
     });
+  }
+
+  function applyRawAudio(st) {
+    $("rawRmsAdv").textContent = Number(st.rawRms ?? 0).toFixed(2);
+    $("rawPseudoDbAdv").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
+    $("rawAdcMeanAdv").textContent = String(st.rawAdcMean ?? "--");
+    $("rawAdcLastAdv").textContent = String(st.rawAdcLast ?? "--");
+  }
+
+  function refreshActiveLiveViews() {
+    if (!state.status) return;
+    if (!isDashboardLivePage()) return;
+    const db = Number(state.status.db ?? 0);
+    const leq = Number(state.status.leq ?? 0);
+    const peak = Number(state.status.peak ?? 0);
+    const greenMax = Number(state.status.greenMax ?? 55);
+    const orangeMax = Number(state.status.orangeMax ?? 70);
+    const warningHoldSec = Number(state.status.warningHoldSec ?? 3);
+    const criticalHoldSec = Number(state.status.criticalHoldSec ?? 2);
+
+    updateGauge(db, greenMax, orangeMax);
+    updateMetrics(leq, peak);
+    updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
+    drawHistory();
   }
 
   function applyLiveActionState() {
@@ -4448,7 +5020,21 @@ R"HTML(
     $("liveActionState").textContent = active ? "ON AIR" : "OFF AIR";
   }
 
-  function updateStatusSummary(st) {
+  function applySystemPayload(st) {
+    state.status = { ...(state.status || {}), ...st };
+    const merged = state.status;
+
+    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "", "status");
+    if (state.currentPage !== "settings") return;
+
+    updateStatusSummary(merged, true);
+  }
+
+  function updateStatusSummary(st, force = false) {
+    if (state.currentPage !== "settings") return;
+    const now = Date.now();
+    if (!force && state.lastSettingsSummaryRenderMs && (now - state.lastSettingsSummaryRenderMs) < 4500) return;
+    state.lastSettingsSummaryRenderMs = now;
     const setMetricTone = (id, tone) => {
       const el = $(id);
       el.classList.remove("metricOk", "metricWarn", "metricBad");
@@ -4470,6 +5056,7 @@ R"HTML(
     };
     const kb = (value) => `${Math.round(Number(value || 0) / 1024)}k`;
     const usToMs = (value) => `${(Number(value || 0) / 1000).toFixed(1)} ms`;
+    const cpuLoadPct = Number(st.cpuLoadPct ?? 0);
     const lvglLoadPct = Number(st.lvglLoadPct ?? 0);
     const lvglIdlePct = Number(st.lvglIdlePct ?? 100);
     const lvglUiWorkUs = Number(st.lvglUiWorkUs ?? 0);
@@ -4488,6 +5075,7 @@ R"HTML(
     $("settingsBuildDate").textContent = st.buildDate || "--";
     $("settingsBuildEnv").textContent = st.buildEnv || "--";
     $("settingsMcuTemp").textContent = st.mcuTempOk ? `${Number(st.mcuTempC ?? 0).toFixed(1)} C` : "--";
+    $("settingsCpu").textContent = `${cpuLoadPct}%`;
     const otaState = st.otaEnabled
       ? (st.otaStarted ? "actif" : "configure")
       : "off";
@@ -4515,20 +5103,19 @@ R"HTML(
     setMetricTone("settingsLvglLoad", loadTone(lvglLoadPct));
     setMetricTone("settingsLvglTiming", worstTone(timingTone(lvglUiWorkUs / 1000), timingTone(lvglHandlerUs / 1000)));
     setMetricTone("settingsLvglHeap", heapTone(heapInternalFree, heapInternalMin, lvglObjCount));
-    $("rawRmsAdv").textContent = Number(st.rawRms ?? 0).toFixed(2);
-    $("rawPseudoDbAdv").textContent = Number(st.rawPseudoDb ?? 0).toFixed(1);
-    $("rawAdcMeanAdv").textContent = String(st.rawAdcMean ?? "--");
-    $("rawAdcLastAdv").textContent = String(st.rawAdcLast ?? "--");
     $("backupInfo").textContent = `Dernier backup: ${formatBackupDate(st.backupTs)}`;
 
-    const systemBadge = $("settingsSystemBadge");
-    systemBadge.textContent = "En ligne";
-    systemBadge.classList.add("ok");
-    systemBadge.classList.remove("bad");
   }
 
-  function setSystemBadgeOnline() {
-    state.lastContactMs = Date.now();
+  function setSystemBadgeOnline(source = "live") {
+    const now = Date.now();
+    if (source === "status") {
+      state.lastStatusContactMs = now;
+      if (state.hasLiveFeed) return;
+      state.lastContactMs = now;
+    } else {
+      state.lastContactMs = now;
+    }
     const systemBadge = $("settingsSystemBadge");
     systemBadge.textContent = "En ligne";
     systemBadge.classList.add("ok");
@@ -4544,10 +5131,55 @@ R"HTML(
 
   function checkSystemHeartbeat() {
     if (!state.authenticated) return;
-    const maxSilenceMs = 4000;
-    if (!state.lastContactMs || (Date.now() - state.lastContactMs) > maxSilenceMs) {
+    const now = Date.now();
+    const maxSilenceMs = state.hasLiveFeed ? 3000 : 12000;
+    const lastSeenMs = state.hasLiveFeed
+      ? state.lastContactMs
+      : Math.max(Number(state.lastContactMs || 0), Number(state.lastStatusContactMs || 0));
+    if (!lastSeenMs || (now - lastSeenMs) > maxSilenceMs) {
       setSystemBadgeError();
     }
+  }
+
+  function applyLivePayload(st) {
+    const liveEventMs = Number(st.sent_ms ?? 0);
+    if (liveEventMs > 0) {
+      // If the device rebooted and millis restarted near zero, accept the new stream.
+      if (state.lastLiveEventMs > 60000 && liveEventMs < 5000) {
+        state.lastLiveEventMs = 0;
+      }
+      if (state.lastLiveEventMs && liveEventMs <= state.lastLiveEventMs) {
+        return;
+      }
+      state.lastLiveEventMs = liveEventMs;
+    }
+
+    state.status = { ...(state.status || {}), ...st };
+    state.rawAudioLiveStarted = true;
+    const merged = state.status;
+
+    const db = Number(st.db ?? merged.db ?? 0);
+    const leq = Number(st.leq ?? merged.leq ?? 0);
+    const peak = Number(st.peak ?? merged.peak ?? 0);
+    const greenMax = Number(merged.greenMax ?? 55);
+    const orangeMax = Number(merged.orangeMax ?? 70);
+    const warningHoldSec = Number(merged.warningHoldSec ?? 3);
+    const criticalHoldSec = Number(merged.criticalHoldSec ?? 2);
+    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "", "live");
+    applyRawAudio(merged);
+
+    $("calLiveMic").textContent = merged.analogOk === false
+      ? "Micro live: indisponible"
+      : `Micro live: ${db.toFixed(1)} dB`;
+
+    if (!isDashboardLivePage()) {
+      return;
+    }
+
+    updateGauge(db, greenMax, orangeMax);
+    updateMetrics(leq, peak);
+    updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
+    appendHistory(db);
   }
 
   function applyStatus(st, options = {}) {
@@ -4579,12 +5211,17 @@ R"HTML(
     const warningHoldSec = Number(merged.warningHoldSec ?? 3);
     const criticalHoldSec = Number(merged.criticalHoldSec ?? 2);
 
+    if (!state.rawAudioLiveStarted && ("rawRms" in merged || "rawPseudoDb" in merged || "rawAdcMean" in merged || "rawAdcLast" in merged)) {
+      applyRawAudio(merged);
+      state.rawAudioSeededFromStatus = true;
+    }
+
     updateGauge(db, greenMax, orangeMax);
     updateMetrics(leq, peak);
     applyLiveActionState();
     updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
 
-    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "");
+    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "", "status");
     updateStatusSummary(merged);
     if ("releaseUpdateChecked" in st || "releaseInstallStatus" in st) {
       applyReleaseStatus(merged);
@@ -4804,6 +5441,12 @@ R"HTML(
     state.currentUser = auth.currentUser || "";
     state.liveToken = auth.liveToken || "";
     state.userCount = Number(auth.userCount || 0);
+    if (!state.authenticated) {
+      state.settingsPanelsLoaded = false;
+      state.settingsPanelsLoading = false;
+      state.rawAudioSeededFromStatus = false;
+      state.rawAudioLiveStarted = false;
+    }
     renderAuthState();
     if (state.authenticated && state.liveToken) connectLiveFeed();
     return auth;
@@ -4829,14 +5472,29 @@ R"HTML(
       state.bootstrapRequired ? "Creation du compte..." : "Connexion...",
       () => apiPost(state.bootstrapRequired ? "/api/auth/bootstrap" : "/api/auth/login", { username, password }),
       state.bootstrapRequired ? "Compte cree." : "Connexion reussie.",
-      async () => {
+      (result) => {
         $("authPassword").value = "";
         if (state.events) {
           state.events.close();
           state.events = null;
         }
-        await loadAuthStatus();
-        await refreshSettingsPanels();
+        state.settingsPanelsLoaded = false;
+        state.settingsPanelsLoading = false;
+        state.rawAudioSeededFromStatus = false;
+        state.rawAudioLiveStarted = false;
+        state.authenticated = true;
+        state.bootstrapRequired = false;
+        state.currentUser = result?.currentUser || username;
+        state.liveToken = result?.liveToken || "";
+        renderAuthState();
+        if (state.liveToken) connectLiveFeed();
+        setTimeout(() => {
+          refreshStatus();
+          loadAuthStatus();
+          if (state.currentPage === "settings") {
+            ensureSettingsPanelsLoaded();
+          }
+        }, 0);
       }
     );
   }
@@ -4853,6 +5511,8 @@ R"HTML(
       state.users = [];
       state.hasLiveFeed = false;
       state.historyInitialized = false;
+      state.rawAudioSeededFromStatus = false;
+      state.rawAudioLiveStarted = false;
       renderAuthState();
       await loadAuthStatus();
     });
@@ -4921,6 +5581,8 @@ R"HTML(
           state.currentUser = "";
           state.liveToken = "";
           state.users = [];
+          state.rawAudioSeededFromStatus = false;
+          state.rawAudioLiveStarted = false;
           renderAuthState();
           await loadAuthStatus();
           return;
@@ -4949,6 +5611,8 @@ R"HTML(
           state.currentUser = "";
           state.liveToken = "";
           state.users = [];
+          state.rawAudioSeededFromStatus = false;
+          state.rawAudioLiveStarted = false;
           renderAuthState();
           await loadAuthStatus();
           return;
@@ -4960,15 +5624,34 @@ R"HTML(
 
   async function refreshStatus(force = true) {
     if (!state.authenticated) return;
+    const backgroundRefresh = !force;
+    const now = Date.now();
+    if (backgroundRefresh) {
+      if (state.currentPage !== "settings") return;
+      if (state.settingsPanelsLoading) return;
+      if (state.hasLiveFeed && (now - state.lastBackgroundStatusRefreshMs) < 20000) return;
+      state.lastBackgroundStatusRefreshMs = now;
+    }
     try {
       const st = await apiGet("/api/status");
-      setSystemBadgeOnline();
+      setSystemBadgeOnline("status");
       applyStatus(st, {
         skipAppendHistory: true,
         useHistorySnapshot: !state.historyInitialized
       });
     } catch (err) {
-      setSystemBadgeError();
+      // Let the heartbeat decide when the system is truly stale.
+    }
+  }
+
+  async function refreshSystemSummary(force = false) {
+    if (!state.authenticated) return;
+    if (!force && state.currentPage !== "settings") return;
+    try {
+      const st = await apiGet("/api/system");
+      setSystemBadgeOnline("status");
+      applySystemPayload(st);
+    } catch (err) {
     }
   }
 
@@ -4977,7 +5660,7 @@ R"HTML(
     state.reconnectTimer = setTimeout(() => {
       state.reconnectTimer = null;
       connectLiveFeed();
-    }, 1500);
+    }, 500);
   }
 
   function connectLiveFeed() {
@@ -4990,26 +5673,29 @@ R"HTML(
     const baseUrl = `${location.protocol}//${location.hostname}:81/api/events`;
     const url = `${baseUrl}?t=${encodeURIComponent(state.liveToken)}`;
     state.events = new EventSource(url);
+    state.events.onopen = () => {
+      state.hasLiveFeed = true;
+      setSystemBadgeOnline("live");
+    };
     state.events.addEventListener("metrics", (ev) => {
       try {
         const payload = JSON.parse(ev.data);
         state.hasLiveFeed = true;
-        setSystemBadgeOnline();
-        applyStatus(payload);
+        setSystemBadgeOnline("live");
+        applyLivePayload(payload);
       } catch (err) {
         state.hasLiveFeed = false;
-        setSystemBadgeError();
         refreshStatus();
       }
     });
     state.events.onerror = () => {
       state.hasLiveFeed = false;
-      setSystemBadgeError();
-      if (state.events) {
+      if (!state.events) return;
+      if (state.events.readyState === EventSource.CLOSED) {
         state.events.close();
         state.events = null;
+        scheduleReconnect();
       }
-      scheduleReconnect();
     };
   }
 
@@ -5094,19 +5780,30 @@ R"HTML(
 
   async function refreshSettingsPanels() {
     if (!state.authenticated) return;
-    state.uiDirty = false;
-    state.dashboardDisplayDirty = false;
-    state.calRefsDirty = [false, false, false, false, false];
-    await refreshStatus();
-    clearProtectedSettingsFields();
-    await loadUsers();
-    await loadHomeAssistantSettings();
-    await loadTimeSettings();
-    await loadWifiSettings();
-    await loadOtaSettings();
-    await loadReleaseStatus();
-    await loadMqttSettings();
-    await loadNotificationSettings();
+    state.settingsPanelsLoading = true;
+    try {
+      state.uiDirty = false;
+      state.dashboardDisplayDirty = false;
+      state.calRefsDirty = [false, false, false, false, false];
+      await refreshStatus();
+      clearProtectedSettingsFields();
+      await loadUsers();
+      await loadHomeAssistantSettings();
+      await loadTimeSettings();
+      await loadWifiSettings();
+      await loadOtaSettings();
+      await loadReleaseStatus();
+      await loadMqttSettings();
+      await loadNotificationSettings();
+      state.settingsPanelsLoaded = true;
+    } finally {
+      state.settingsPanelsLoading = false;
+    }
+  }
+
+  async function ensureSettingsPanelsLoaded() {
+    if (!state.authenticated || state.settingsPanelsLoaded || state.settingsPanelsLoading) return;
+    await refreshSettingsPanels();
   }
 
   async function toggleBacklight() {
@@ -5728,10 +6425,10 @@ R"HTML(
       const response = await apiPost("/api/live", { enabled: nextEnabled });
       state.liveEnabled = Boolean(response.enabled);
       applyLiveActionState();
-      setToast("actionsToast", state.liveEnabled ? "LIVE active." : "LIVE coupe.");
+      setToast("dashboardPageToast", state.liveEnabled ? "LIVE active." : "LIVE coupe.");
     } catch (err) {
       applyLiveActionState();
-      setToastError("actionsToast", err);
+      setToastError("dashboardPageToast", err);
     }
   }
 
@@ -5897,9 +6594,10 @@ R"HTML(
     renderAuthState();
     await loadAuthStatus();
     if (state.authenticated) {
-      await refreshSettingsPanels();
+      await refreshStatus();
     }
     setInterval(() => refreshStatus(false), 5000);
+    setInterval(() => refreshSystemSummary(false), 1000);
     setInterval(checkSystemHeartbeat, 1000);
     setInterval(renderClock, 1000);
   }
@@ -5911,5 +6609,5 @@ R"HTML(
 )HTML";
 
   addCommonSecurityHeaders();
-  _srv.send(200, "text/html; charset=utf-8", html);
+  _srv.send_P(200, PSTR("text/html; charset=utf-8"), html, sizeof(html) - 1);
 }
