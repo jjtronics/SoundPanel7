@@ -194,6 +194,7 @@ en labo, en studio, et en usage quotidien.
 - supervision temps réel et administration
 - configuration UI, audio, Wi-Fi, NTP, OTA, MQTT et réseau
 - calibration depuis le navigateur et pilotage du mode **LIVE**
+- vérification et installation des releases firmware GitHub directement depuis l'interface web
 - authentification web avec bootstrap du premier compte, gestion d'utilisateurs et sessions
 - notifications sortantes via webhooks / API : Slack incoming webhook, Telegram Bot API, WhatsApp Cloud API, avec envoi de test
 - flux live **SSE** sur le port `81`
@@ -447,6 +448,9 @@ POST  /api/config/restore
 POST  /api/config/reset_partial
 GET   /api/ota
 POST  /api/ota
+GET   /api/release
+POST  /api/release/check
+POST  /api/release/install
 GET   /api/mqtt
 POST  /api/mqtt
 GET   /api/notifications
@@ -729,7 +733,14 @@ Si rien n'apparaît, vérifier en priorité :
 
 ### 🚀 OTA
 
-Une fois l'OTA configurée sur l'appareil, la mise à jour se fait avec :
+Le projet gère maintenant **deux modes OTA complémentaires** :
+
+- **OTA réseau classique** depuis PlatformIO / `espota`
+- **OTA GitHub intégrée** directement depuis l'interface web de la tablette
+
+#### OTA réseau via PlatformIO
+
+Une fois l'OTA classique configurée sur l'appareil, la mise à jour se fait avec :
 
 ```bash
 pio run -e soundpanel7_ota -t upload
@@ -750,6 +761,31 @@ pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
 ```
 
 L'OTA `espota` suppose que le poste de build et l'appareil sont sur le même réseau joignable.
+
+#### OTA GitHub depuis l'interface web
+
+Le firmware sait aussi :
+
+- vérifier la dernière release publiée sur GitHub
+- comparer cette release avec la version courante du firmware
+- télécharger `firmware.bin` directement depuis les assets de release
+- vérifier le `SHA-256` avant application
+- écrire l'image dans la partition OTA inactive puis redémarrer automatiquement
+
+Le point d'entrée utilisé par l'appareil est :
+
+```text
+https://github.com/jjtronics/SoundPanel7/releases/latest/download/release-manifest.json
+```
+
+Flux recommandé :
+
+1. publier une release GitHub
+2. ouvrir `Paramètres > GitHub Releases` sur la tablette
+3. cliquer `Vérifier les mises à jour`
+4. cliquer `Installer`
+
+À partir de [`v0.2.7`](https://github.com/jjtronics/SoundPanel7/releases/tag/v0.2.7), le flux OTA GitHub embarqué est considéré comme fiable pour une mise à jour complète directement depuis l'appareil.
 
 <a id="fr-calibration"></a>
 
@@ -814,6 +850,7 @@ Composants principaux :
 - [`src/WebManager.cpp`](src/WebManager.cpp) : HTTP, admin, live view, API
 - [`src/MqttManager.cpp`](src/MqttManager.cpp) : MQTT et discovery
 - [`src/OtaManager.cpp`](src/OtaManager.cpp) : OTA
+- [`src/ReleaseUpdateManager.cpp`](src/ReleaseUpdateManager.cpp) : vérification / installation des releases GitHub
 - [`src/SettingsStore.cpp`](src/SettingsStore.cpp) : persistance NVS
 
 <a id="fr-arborescence"></a>
@@ -996,6 +1033,7 @@ lab space, recording studio, and day-to-day use.
 - real-time monitoring and administration
 - UI, audio, Wi-Fi, NTP, OTA, MQTT, and network configuration
 - browser-based calibration and **LIVE** mode control
+- GitHub firmware release check and install directly from the web UI
 - web authentication with first-account bootstrap, user management, and sessions
 - outbound notifications via webhooks / API: Slack incoming webhook, Telegram Bot API, WhatsApp Cloud API, with test delivery
 - live **SSE** stream on port `81`
@@ -1249,6 +1287,9 @@ POST  /api/config/restore
 POST  /api/config/reset_partial
 GET   /api/ota
 POST  /api/ota
+GET   /api/release
+POST  /api/release/check
+POST  /api/release/install
 GET   /api/mqtt
 POST  /api/mqtt
 GET   /api/notifications
@@ -1521,7 +1562,14 @@ If the device does not show up, check:
 
 ### 🚀 OTA updates
 
-Once OTA is configured on the device, updates use:
+The project now supports **two complementary OTA flows**:
+
+- classic network OTA through PlatformIO / `espota`
+- built-in **GitHub OTA** directly from the tablet web UI
+
+#### Network OTA through PlatformIO
+
+Once classic OTA is configured on the device, updates use:
 
 ```bash
 pio run -e soundpanel7_ota -t upload
@@ -1542,6 +1590,31 @@ pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
 ```
 
 `espota` assumes the build machine and the device are on the same reachable network.
+
+#### GitHub OTA from the web interface
+
+The firmware can also:
+
+- check the latest published GitHub release
+- compare it with the currently running firmware version
+- download `firmware.bin` directly from the release assets
+- verify the `SHA-256` before applying the update
+- write the image to the inactive OTA partition and reboot automatically
+
+The device uses this stable manifest entry point:
+
+```text
+https://github.com/jjtronics/SoundPanel7/releases/latest/download/release-manifest.json
+```
+
+Recommended flow:
+
+1. publish a GitHub release
+2. open `Settings > GitHub Releases` on the tablet
+3. click `Check for updates`
+4. click `Install`
+
+Starting with [`v0.2.7`](https://github.com/jjtronics/SoundPanel7/releases/tag/v0.2.7), the built-in GitHub OTA flow is considered reliable for full end-to-end device updates.
 
 <a id="en-calibration-workflow"></a>
 
@@ -1606,6 +1679,7 @@ Main components:
 - [`src/WebManager.cpp`](src/WebManager.cpp): HTTP, admin, live view, API
 - [`src/MqttManager.cpp`](src/MqttManager.cpp): MQTT publishing and discovery
 - [`src/OtaManager.cpp`](src/OtaManager.cpp): OTA updates
+- [`src/ReleaseUpdateManager.cpp`](src/ReleaseUpdateManager.cpp): GitHub release check and install flow
 - [`src/SettingsStore.cpp`](src/SettingsStore.cpp): NVS persistence
 
 <a id="en-project-layout"></a>
