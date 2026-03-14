@@ -35,6 +35,41 @@ static constexpr HTTPMethod kSyncHttpPost = static_cast<HTTPMethod>(::HTTP_POST)
 static constexpr uint32_t kNotificationHttpConnectTimeoutMs = 5000UL;
 static constexpr uint32_t kNotificationHttpTimeoutMs = 8000UL;
 
+struct NotificationVisualStyle {
+  const char* emoji;
+  const char* title;
+  const char* slackColor;
+  const char* slackIconEmoji;
+};
+
+static NotificationVisualStyle notificationVisualStyle(uint8_t alertState, bool isTest) {
+  if (isTest) return {"🧪", "Test de notification", "#1E88E5", ":test_tube:"};
+  if (alertState == 2) return {"🚨", "Alerte critique", "#E53935", ":rotating_light:"};
+  if (alertState == 1) return {"⚠️", "Alerte warning", "#FB8C00", ":warning:"};
+  return {"✅", "Retour a la normale", "#43A047", ":white_check_mark:"};
+}
+
+static String formatAlertDuration(uint32_t durationMs) {
+  uint32_t totalSeconds = durationMs / 1000UL;
+  const uint32_t hours = totalSeconds / 3600UL;
+  totalSeconds %= 3600UL;
+  const uint32_t minutes = totalSeconds / 60UL;
+  const uint32_t seconds = totalSeconds % 60UL;
+
+  String out;
+  if (hours > 0) {
+    out += String(hours);
+    out += " h ";
+  }
+  if (minutes > 0 || hours > 0) {
+    out += String(minutes);
+    out += " min ";
+  }
+  out += String(seconds);
+  out += " s";
+  return out;
+}
+
 static void appendBoolField(String& json, const char* key, bool value, bool trailingComma = true) {
   json += "\"";
   json += key;
@@ -628,6 +663,7 @@ void WebManager::updateAlertState(float dbInstant, float leq, float peak) {
   if (nextAlertState == previousAlertState) return;
 
   if (nextAlertState > previousAlertState) {
+    if (previousAlertState == 0 && _activeAlertStartedMs == 0) _activeAlertStartedMs = now;
     if (nextAlertState == 2) {
       enqueueNotification(2, false, dbInstant, leq, peak);
     } else if (_s->notifyOnWarning == ALERT_NOTIFY_LEVEL_WARNING) {
@@ -637,17 +673,20 @@ void WebManager::updateAlertState(float dbInstant, float leq, float peak) {
   }
 
   if (nextAlertState == 0 && previousAlertState > 0 && _s->notifyOnRecovery && _lastNotifiedAlertState > 0) {
-    enqueueNotification(0, false, dbInstant, leq, peak);
+    const uint32_t durationMs = _activeAlertStartedMs != 0 ? (now - _activeAlertStartedMs) : 0;
+    enqueueNotification(0, false, dbInstant, leq, peak, durationMs);
   }
+  if (nextAlertState == 0) _activeAlertStartedMs = 0;
 }
 
-void WebManager::enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak) {
+void WebManager::enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak, uint32_t durationMs) {
   _notificationPending = true;
   _notificationPendingTest = isTest;
   _pendingNotificationState = alertState;
   _pendingNotificationDb = dbInstant;
   _pendingNotificationLeq = leq;
   _pendingNotificationPeak = peak;
+  _pendingNotificationDurationMs = durationMs;
 }
 
 void WebManager::processPendingNotification() {
@@ -658,11 +697,13 @@ void WebManager::processPendingNotification() {
   const float dbInstant = _pendingNotificationDb;
   const float leq = _pendingNotificationLeq;
   const float peak = _pendingNotificationPeak;
+  const uint32_t durationMs = _pendingNotificationDurationMs;
 
   _notificationPending = false;
   _notificationPendingTest = false;
+  _pendingNotificationDurationMs = 0;
 
-  dispatchNotification(alertState, isTest, dbInstant, leq, peak, !isTest);
+  dispatchNotification(alertState, isTest, dbInstant, leq, peak, durationMs, !isTest);
 }
 
 void WebManager::startHttpServer() {
@@ -2002,9 +2043,12 @@ void WebManager::handleMqttSave() {
   replyOkJsonRebootRecommended();
 }
 
-String WebManager::buildNotificationMessage(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak) const {
+String WebManager::buildNotificationMessage(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak, uint32_t durationMs) const {
   const String hostname = (_s && _s->hostname[0] != '\0') ? String(_s->hostname) : String("soundpanel7");
-  const String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("offline");
+  const NotificationVisualStyle style = notificationVisualStyle(alertState, isTest);
+  const float triggerThreshold = (alertState == 2) ? (_s ? _s->th.orangeMax : DEFAULT_ORANGE_MAX)
+                                                   : (_s ? _s->th.greenMax : DEFAULT_GREEN_MAX);
+  const char* triggerLabel = (alertState == 2) ? "Seuil rouge" : "Seuil warning";
 
   struct tm ti;
   char tbuf[32] = {0};
@@ -2012,38 +2056,53 @@ String WebManager::buildNotificationMessage(uint8_t alertState, bool isTest, flo
   if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
 
   String message;
-  message.reserve(320);
-  message += "SoundPanel 7 ";
+  message.reserve(512);
+  message += style.emoji;
+  message += " SoundPanel 7";
+  message += "\n";
+  message += "• ";
+  message += style.title;
+  message += " - ";
+  message += String(dbInstant, 1);
+  message += " dB";
+  if (!isTest && alertState > 0) {
+    message += "\n";
+    message += "• ";
+    message += triggerLabel;
+    message += ": > ";
+    message += String(triggerThreshold, 0);
+    message += " dB";
+  } else if (!isTest && alertState == 0 && durationMs > 0) {
+    message += "\n";
+    message += "• Duree alerte: ";
+    message += formatAlertDuration(durationMs);
+  }
+  message += "\n";
+  message += "• Equipement: ";
   message += hostname;
   message += "\n";
-  if (isTest) {
-    message += "Notification de test";
-  } else if (alertState == 2) {
-    message += "Alerte critique";
-  } else if (alertState == 1) {
-    message += "Alerte warning";
-  } else {
-    message += "Retour a la normale";
-  }
+  message += "\n📊 Mesures";
+  message += "\n• dB instantane: ";
+  message += String(dbInstant, 1);
+  message += " dB";
+  message += "\n• Leq: ";
+  message += String(leq, 1);
+  message += " dB";
+  message += "\n• Peak: ";
+  message += String(peak, 1);
+  message += " dB";
+  message += "\n\n🎯 Seuils";
+  message += "\n• Vert <= ";
+  message += String(_s ? _s->th.greenMax : DEFAULT_GREEN_MAX);
+  message += " dB";
+  message += "\n• Orange <= ";
+  message += String(_s ? _s->th.orangeMax : DEFAULT_ORANGE_MAX);
+  message += " dB";
   if (hasTime) {
-    message += "\n";
+    message += "\n\n🕒 Horodatage";
+    message += "\n• ";
     message += tbuf;
   }
-  message += "\n";
-  message += "dB ";
-  message += String(dbInstant, 1);
-  message += " | Leq ";
-  message += String(leq, 1);
-  message += " | Peak ";
-  message += String(peak, 1);
-  message += "\n";
-  message += "Seuils <= ";
-  message += String(_s ? _s->th.greenMax : DEFAULT_GREEN_MAX);
-  message += " / <= ";
-  message += String(_s ? _s->th.orangeMax : DEFAULT_ORANGE_MAX);
-  message += "\n";
-  message += "IP ";
-  message += ip;
   return message;
 }
 
@@ -2093,33 +2152,61 @@ bool WebManager::postJsonToUrl(const String& url,
   return statusCodeOut > 0;
 }
 
-bool WebManager::sendSlackNotification(const String& message, String& summary) {
+bool WebManager::sendSlackNotification(uint8_t alertState, bool isTest, const String& message, String& summary) {
   if (!_s || !_s->slackEnabled) return true;
   if (!_s->slackWebhookUrl[0]) {
     summary = "Slack: webhook manquant";
     return false;
   }
 
-  String payload = String("{\"text\":\"") + sp7json::escape(message.c_str()) + "\"";
+  const NotificationVisualStyle style = notificationVisualStyle(alertState, isTest);
+  const int firstBreak = message.indexOf('\n');
+  const String preview = firstBreak >= 0 ? message.substring(0, firstBreak) : message;
+
+  String payloadRich;
+  payloadRich.reserve(256 + (message.length() * 2));
+  payloadRich += "{\"text\":\"";
+  payloadRich += sp7json::escape(preview.c_str());
+  payloadRich += "\",\"attachments\":[{\"color\":\"";
+  payloadRich += style.slackColor;
+  payloadRich += "\",\"text\":\"";
+  payloadRich += sp7json::escape(message.c_str());
+  payloadRich += "\"}]";
   if (_s->slackChannel[0]) {
-    payload += ",\"channel\":\"";
-    payload += sp7json::escape(_s->slackChannel);
-    payload += "\"";
+    payloadRich += ",\"channel\":\"";
+    payloadRich += sp7json::escape(_s->slackChannel);
+    payloadRich += "\"";
   }
-  payload += "}";
+  payloadRich += "}";
+
+  String payloadPlain = String("{\"text\":\"") + sp7json::escape(message.c_str()) + "\"";
+  if (_s->slackChannel[0]) {
+    payloadPlain += ",\"channel\":\"";
+    payloadPlain += sp7json::escape(_s->slackChannel);
+    payloadPlain += "\"";
+  }
+  payloadPlain += "}";
+
   int statusCode = -1;
   String response;
-  if (!postJsonToUrl(_s->slackWebhookUrl, payload, "", statusCode, response)) {
-    summary = "Slack: echec HTTP";
-    if (response.length()) summary += " (" + trimmedHttpResponse(response) + ")";
-    return false;
-  }
-  if (statusCode >= 200 && statusCode < 300) {
-    summary = "Slack OK";
+  if (postJsonToUrl(_s->slackWebhookUrl, payloadRich, "", statusCode, response) && statusCode >= 200 && statusCode < 300) {
+    summary = "Slack OK (barre couleur)";
     return true;
   }
 
-  summary = "Slack " + String(statusCode) + " " + trimmedHttpResponse(response);
+  int fallbackStatusCode = -1;
+  String fallbackResponse;
+  if (!postJsonToUrl(_s->slackWebhookUrl, payloadPlain, "", fallbackStatusCode, fallbackResponse)) {
+    summary = "Slack: echec HTTP";
+    if (fallbackResponse.length()) summary += " (" + trimmedHttpResponse(fallbackResponse) + ")";
+    return false;
+  }
+  if (fallbackStatusCode >= 200 && fallbackStatusCode < 300) {
+    summary = "Slack OK (sans barre couleur)";
+    return true;
+  }
+
+  summary = "Slack " + String(fallbackStatusCode) + " " + trimmedHttpResponse(fallbackResponse);
   return false;
 }
 
@@ -2202,6 +2289,7 @@ bool WebManager::dispatchNotification(uint8_t alertState,
                                       float dbInstant,
                                       float leq,
                                       float peak,
+                                      uint32_t durationMs,
                                       bool updateAlertTracking) {
   if (!_s) return false;
 
@@ -2224,7 +2312,7 @@ bool WebManager::dispatchNotification(uint8_t alertState,
     return false;
   }
 
-  const String message = buildNotificationMessage(alertState, isTest, dbInstant, leq, peak);
+  const String message = buildNotificationMessage(alertState, isTest, dbInstant, leq, peak, durationMs);
 
   bool overallOk = true;
   bool attempted = false;
@@ -2233,7 +2321,7 @@ bool WebManager::dispatchNotification(uint8_t alertState,
   if (slackActive) {
     String result;
     attempted = true;
-    if (!sendSlackNotification(message, result)) overallOk = false;
+    if (!sendSlackNotification(alertState, isTest, message, result)) overallOk = false;
     if (summary.length()) summary += " | ";
     summary += result;
   }
@@ -2403,7 +2491,7 @@ void WebManager::handleNotificationsTest() {
   if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
 
-  if (!dispatchNotification(_alertState, true, g_webDbInstant, g_webLeq, g_webPeak, false)) {
+  if (!dispatchNotification(_alertState, true, g_webDbInstant, g_webLeq, g_webPeak, 0, false)) {
     replyErrorJson(502, _notificationLastResult.length() ? _notificationLastResult : String("notification failed"));
     return;
   }

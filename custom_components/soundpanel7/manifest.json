@@ -8,7 +8,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/jjtronics/SoundPanel7/issues",
   "requirements": [],
-  "version": "0.2.8",
+  "version": "0.2.9",
   "zeroconf": [
     {
       "type": "_soundpanel7._tcp.local."

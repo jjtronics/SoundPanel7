@@ -162,15 +162,16 @@ private:
   void handleNotificationsTest();
 
   void updateAlertState(float dbInstant, float leq, float peak);
-  void enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak);
+  void enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak, uint32_t durationMs = 0);
   void processPendingNotification();
   bool dispatchNotification(uint8_t alertState,
                             bool isTest,
                             float dbInstant,
                             float leq,
                             float peak,
+                            uint32_t durationMs,
                             bool updateAlertTracking);
-  bool sendSlackNotification(const String& message, String& summary);
+  bool sendSlackNotification(uint8_t alertState, bool isTest, const String& message, String& summary);
   bool sendTelegramNotification(const String& message, String& summary);
   bool sendWhatsappNotification(const String& message, String& summary);
   bool postJsonToUrl(const String& url,
@@ -178,12 +179,13 @@ private:
                      const String& authorization,
                      int& statusCodeOut,
                      String& responseOut);
-  String buildNotificationMessage(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak) const;
+  String buildNotificationMessage(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak, uint32_t durationMs) const;
   String notificationsJson(bool includeSecrets = false) const;
   static const char* alertStateName(uint8_t alertState);
 
   uint32_t _orangeZoneSinceMs = 0;
   uint32_t _redZoneSinceMs = 0;
+  uint32_t _activeAlertStartedMs = 0;
   uint8_t _alertState = 0;
   uint8_t _lastNotifiedAlertState = 0;
   bool _notificationPending = false;
@@ -192,6 +194,7 @@ private:
   float _pendingNotificationDb = 0.0f;
   float _pendingNotificationLeq = 0.0f;
   float _pendingNotificationPeak = 0.0f;
+  uint32_t _pendingNotificationDurationMs = 0;
   uint32_t _notificationLastAttemptTs = 0;
   uint32_t _notificationLastSuccessTs = 0;
   bool _notificationLastOk = false;
