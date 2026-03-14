@@ -39,7 +39,7 @@ jobs:
         run: pip install platformio
 
       - name: Build firmware
-        run: pio run -e soundpanel7_usb
+        run: pio run -e soundpanel7_ota
 
       - name: Generate release manifest
         env:
@@ -50,26 +50,26 @@ jobs:
             --tag "${TAG_NAME}" \
             --repository "${REPOSITORY}" \
             --published-at "${{ github.event.release.published_at }}" \
-            --build-dir .pio/build/soundpanel7_usb \
-            --output .pio/build/soundpanel7_usb/release-manifest.json
+            --build-dir .pio/build/soundpanel7_ota \
+            --output .pio/build/soundpanel7_ota/release-manifest.json
 
       - name: Upload release workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: soundpanel7_${{ github.event.release.tag_name }}
           path: |
-            .pio/build/soundpanel7_usb/firmware.bin
-            .pio/build/soundpanel7_usb/bootloader.bin
-            .pio/build/soundpanel7_usb/partitions.bin
-            .pio/build/soundpanel7_usb/release-manifest.json
+            .pio/build/soundpanel7_ota/firmware.bin
+            .pio/build/soundpanel7_ota/bootloader.bin
+            .pio/build/soundpanel7_ota/partitions.bin
+            .pio/build/soundpanel7_ota/release-manifest.json
 
       - name: Attach binaries to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
-            .pio/build/soundpanel7_usb/firmware.bin#soundpanel7_usb-firmware.bin \
-            .pio/build/soundpanel7_usb/bootloader.bin#soundpanel7_usb-bootloader.bin \
-            .pio/build/soundpanel7_usb/partitions.bin#soundpanel7_usb-partitions.bin \
-            .pio/build/soundpanel7_usb/release-manifest.json#release-manifest.json \
+            .pio/build/soundpanel7_ota/firmware.bin#soundpanel7_ota-firmware.bin \
+            .pio/build/soundpanel7_ota/bootloader.bin#soundpanel7_ota-bootloader.bin \
+            .pio/build/soundpanel7_ota/partitions.bin#soundpanel7_ota-partitions.bin \
+            .pio/build/soundpanel7_ota/release-manifest.json#release-manifest.json \
             --clobber
