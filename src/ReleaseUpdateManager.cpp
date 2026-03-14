@@ -362,6 +362,26 @@ void ReleaseUpdateManager::processInstall() {
 }
 
 bool ReleaseUpdateManager::fetchManifest(String& payload) {
+  String error;
+  if (fetchUrl(String(manifestUrl()), payload, _lastHttpCode, error)) {
+    return true;
+  }
+
+  const String primaryError = error;
+  const int primaryCode = _lastHttpCode;
+
+  if (fetchManifestViaLatestReleaseApi(payload, _lastHttpCode, error)) {
+    return true;
+  }
+
+  if (primaryCode != 0) {
+    error = primaryError + " / fallback " + error;
+  }
+  setError(error);
+  return false;
+}
+
+bool ReleaseUpdateManager::fetchUrl(const String& url, String& payload, int& httpCode, String& error) {
   WiFiClientSecure client;
   client.setInsecure();
 
@@ -372,15 +392,16 @@ bool ReleaseUpdateManager::fetchManifest(String& payload) {
   http.setReuse(false);
   http.setUserAgent(String("SoundPanel7/") + SOUNDPANEL7_VERSION);
 
-  if (!http.begin(client, manifestUrl())) {
-    setError("manifest request init failed");
+  if (!http.begin(client, url)) {
+    httpCode = 0;
+    error = "manifest request init failed";
     return false;
   }
 
   const int code = http.GET();
-  _lastHttpCode = code;
+  httpCode = code;
   if (code != HTTP_CODE_OK) {
-    String error = "manifest http ";
+    error = "manifest http ";
     error += String(code);
     if (code < 0) {
       error += " ";
@@ -395,11 +416,29 @@ bool ReleaseUpdateManager::fetchManifest(String& payload) {
   http.end();
 
   if (payload.length() == 0) {
-    setError("empty manifest");
+    error = "empty manifest";
     return false;
   }
 
   return true;
+}
+
+bool ReleaseUpdateManager::fetchManifestViaLatestReleaseApi(String& payload, int& httpCode, String& error) {
+  String releasePayload;
+  if (!fetchUrl(String(SOUNDPANEL7_RELEASE_LATEST_API_URL), releasePayload, httpCode, error)) {
+    return false;
+  }
+
+  const String tag = sp7json::parseString(releasePayload, "tag_name", "", false);
+  if (tag.isEmpty()) {
+    error = "latest release missing tag_name";
+    httpCode = 0;
+    return false;
+  }
+
+  const String fallbackManifestUrl =
+      String("https://github.com/jjtronics/SoundPanel7/releases/download/") + tag + "/release-manifest.json";
+  return fetchUrl(fallbackManifestUrl, payload, httpCode, error);
 }
 
 bool ReleaseUpdateManager::parseManifest(const String& payload) {

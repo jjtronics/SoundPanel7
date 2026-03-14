@@ -120,8 +120,23 @@ static void appendReleaseUpdateJson(String& json, const ReleaseUpdateManager* re
   json += "\"releaseUpdateCheckedAt\":";
   json += String(releaseUpdate ? releaseUpdate->lastCheckUnix() : 0U);
   json += ",";
+  json += "\"releaseHttpCode\":";
+  json += String(releaseUpdate ? releaseUpdate->lastHttpCode() : 0);
+  json += ",";
+  sp7json::appendEscapedField(json, "releaseManifestUrl",
+                              (releaseUpdate && releaseUpdate->manifestUrl()) ? releaseUpdate->manifestUrl() : "");
+  sp7json::appendEscapedField(json, "releaseCurrentVersion",
+                              (releaseUpdate && releaseUpdate->currentVersion()) ? releaseUpdate->currentVersion() : "");
   sp7json::appendEscapedField(json, "releaseLatestVersion",
                               (releaseUpdate && releaseUpdate->latestVersion()[0]) ? releaseUpdate->latestVersion() : "");
+  sp7json::appendEscapedField(json, "releasePublishedAt",
+                              (releaseUpdate && releaseUpdate->publishedAt()[0]) ? releaseUpdate->publishedAt() : "");
+  sp7json::appendEscapedField(json, "releaseReleaseUrl",
+                              (releaseUpdate && releaseUpdate->releaseUrl()[0]) ? releaseUpdate->releaseUrl() : "");
+  sp7json::appendEscapedField(json, "releaseOtaUrl",
+                              (releaseUpdate && releaseUpdate->otaUrl()[0]) ? releaseUpdate->otaUrl() : "");
+  sp7json::appendEscapedField(json, "releaseOtaSha256",
+                              (releaseUpdate && releaseUpdate->otaSha256()[0]) ? releaseUpdate->otaSha256() : "");
   json += "\"releaseInstallInProgress\":";
   json += (releaseUpdate && releaseUpdate->installInProgress() ? "true" : "false");
   json += ",";
@@ -741,7 +756,7 @@ void WebManager::setupLiveStream() {
         return findSessionByLiveToken(token.c_str()) != nullptr;
       },
       [this]() -> String {
-        return statusJson();
+        return liveMetricsJson();
       });
 }
 
@@ -890,6 +905,8 @@ String WebManager::liveMetricsJson() const {
   String ip = wifiConnected ? WiFi.localIP().toString() : String("");
   String ssid = wifiConnected ? WiFi.SSID() : String("");
   int rssi = wifiConnected ? WiFi.RSSI() : 0;
+  uint32_t up = (millis() - g_bootMs) / 1000;
+  uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
   const float mcuTempC = temperatureRead();
   const bool mcuTempOk = !isnan(mcuTempC);
   struct tm ti;
@@ -905,10 +922,27 @@ String WebManager::liveMetricsJson() const {
   appendUiStateJson(json, _s, _history, false);
   appendPinStateJson(json, pinConfigured());
   appendWifiJson(json, wifiConnected, ip, rssi, ssid);
+  json += "\"uptime_s\":"; json += String(up); json += ",";
+  json += "\"backupTs\":"; json += String(backupTs); json += ",";
+  appendTimeJson(json, hasTime, tbuf);
   appendDeviceJson(json, mcuTempC, mcuTempOk, _ota, _mqtt);
   appendRuntimeStatsJson(json, g_runtimeStats);
-  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
-  json += "\"time\":\""; json += (hasTime ? String(tbuf) : String("")); json += "\"";
+  json += "\"releaseUpdateChecked\":";
+  json += (_releaseUpdate && _releaseUpdate->hasChecked() ? "true" : "false");
+  json += ",";
+  json += "\"releaseUpdateOk\":";
+  json += (_releaseUpdate && _releaseUpdate->lastCheckOk() ? "true" : "false");
+  json += ",";
+  json += "\"releaseUpdateAvailable\":";
+  json += (_releaseUpdate && _releaseUpdate->updateAvailable() ? "true" : "false");
+  json += ",";
+  sp7json::appendEscapedField(json, "releaseLatestVersion",
+                              (_releaseUpdate && _releaseUpdate->latestVersion()[0]) ? _releaseUpdate->latestVersion() : "");
+  json += "\"releaseInstallInProgress\":";
+  json += (_releaseUpdate && _releaseUpdate->installInProgress() ? "true" : "false");
+  json += ",";
+  json += "\"releaseInstallProgressPct\":";
+  json += String(_releaseUpdate ? _releaseUpdate->installProgressPct() : 0U);
   json += "}";
   return json;
 }
@@ -4924,7 +4958,7 @@ R"HTML(
       });
   }
 
-  async function refreshStatus() {
+  async function refreshStatus(force = true) {
     if (!state.authenticated) return;
     try {
       const st = await apiGet("/api/status");
@@ -5340,11 +5374,11 @@ R"HTML(
     const available = Boolean(release && (release.available ?? release.releaseUpdateAvailable));
     const latestVersion = String((release && (release.latestVersion ?? release.releaseLatestVersion)) || "");
     const error = String((release && (release.error ?? release.releaseLastError)) || "");
-    const httpCode = Number((release && release.httpCode) || 0);
-    const manifestUrl = String((release && release.manifestUrl) || "");
-    const currentVersion = String((release && release.currentVersion) || (state.status && state.status.version) || "--");
-    const publishedAt = String((release && release.publishedAt) || "");
-    const otaUrl = String((release && release.otaUrl) || "");
+    const httpCode = Number((release && (release.httpCode ?? release.releaseHttpCode)) || 0);
+    const manifestUrl = String((release && (release.manifestUrl ?? release.releaseManifestUrl)) || "");
+    const currentVersion = String((release && (release.currentVersion ?? release.releaseCurrentVersion)) || (state.status && state.status.version) || "--");
+    const publishedAt = String((release && (release.publishedAt ?? release.releasePublishedAt)) || "");
+    const otaUrl = String((release && (release.otaUrl ?? release.releaseOtaUrl)) || "");
     const installing = Boolean(release && (release.installing ?? release.releaseInstallInProgress));
     const installFinished = Boolean(release && (release.installFinished ?? release.releaseInstallFinished));
     const installSucceeded = Boolean(release && (release.installSucceeded ?? release.releaseInstallSucceeded));
@@ -5865,7 +5899,7 @@ R"HTML(
     if (state.authenticated) {
       await refreshSettingsPanels();
     }
-    setInterval(refreshStatus, 2500);
+    setInterval(() => refreshStatus(false), 5000);
     setInterval(checkSystemHeartbeat, 1000);
     setInterval(renderClock, 1000);
   }

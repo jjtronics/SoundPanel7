@@ -30,7 +30,7 @@ public:
   void updateMetrics(float db, float leq, float peak);
 
 private:
-  static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 100;
+  static constexpr uint32_t LIVE_PUSH_PERIOD_MS = 150;
   static constexpr uint8_t WEB_SESSION_MAX_COUNT = 6;
   static constexpr uint32_t WEB_SESSION_IDLE_TIMEOUT_MS = 12UL * 60UL * 60UL * 1000UL;
   static constexpr uint8_t WEB_LOGIN_MAX_FAILURES = 5;
