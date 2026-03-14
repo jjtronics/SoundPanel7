@@ -293,14 +293,6 @@ void ReleaseUpdateManager::processInstall() {
     return;
   }
 
-  NetworkClient* stream = _installHttp->getStreamPtr();
-  if (!stream) {
-    cleanupInstallTransport();
-    Update.abort();
-    finishInstall(false, "ota stream unavailable");
-    return;
-  }
-
   const size_t remaining = (size_t)_installTotalBytes - (size_t)_installWrittenBytes;
   if (remaining == 0) {
     uint8_t digest[32] = {0};
@@ -324,6 +316,14 @@ void ReleaseUpdateManager::processInstall() {
     _installProgressPct = 100;
     setInstallStatus("rebooting");
     finishInstall(true);
+    return;
+  }
+
+  NetworkClient* stream = _installHttp->getStreamPtr();
+  if (!stream) {
+    cleanupInstallTransport();
+    Update.abort();
+    finishInstall(false, "ota stream unavailable");
     return;
   }
 
