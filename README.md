@@ -75,6 +75,7 @@
 - [Cas d'usage](#fr-cas-dusage)
 - [Fonctionnalités](#fr-fonctionnalites)
 - [Matériel cible](#fr-materiel-cible)
+- [Achat de l'ESP](#fr-achat-esp)
 - [Démarrage rapide](#fr-demarrage-rapide)
 - [Configuration par défaut](#fr-configuration-par-defaut)
 - [Interface web](#fr-interface-web)
@@ -236,6 +237,16 @@ en labo, en studio, et en usage quotidien.
 - Bluetooth
 - rétroéclairage pilotable (On/Off)
 - ...
+
+<a id="fr-achat-esp"></a>
+
+#### 🔗 Article et achat
+
+J'ai publié un article complet sur ce matériel, avec mon retour d'expérience, des photos et une note sur le blog :
+
+- [ESP32-S3 Touch LCD : le terrain de jeu parfait pour les makers](https://testicool.org/hardware/2026/03/15/ecran-esp32-s3-touch-lcd-le-terrain-de-jeu-parfait-pour-les-makers/)
+
+Cet article contient aussi le **lien d'affiliation** utilisé pour l'achat de l'ESP32-S3 Touch LCD présenté dans ce projet.
 
 #### 🎤 Entrée audio
 
@@ -913,6 +924,7 @@ Point d'entrée recommandé :
 - [Use cases](#en-use-cases)
 - [Features](#en-features)
 - [Hardware target](#en-hardware-target)
+- [Buy the ESP](#en-buy-the-esp)
 - [Quick start](#en-quick-start)
 - [Default configuration](#en-default-configuration)
 - [Web interface](#en-web-interface)
@@ -1075,6 +1087,16 @@ lab space, recording studio, and day-to-day use.
 - PSRAM
 - USB
 - controllable backlight
+
+<a id="en-buy-the-esp"></a>
+
+#### 🔗 Article and purchase link
+
+I published a full write-up about this hardware on my blog, including hands-on feedback, photos, and a final rating:
+
+- [ESP32-S3 Touch LCD: the perfect playground for makers](https://testicool.org/hardware/2026/03/15/ecran-esp32-s3-touch-lcd-le-terrain-de-jeu-parfait-pour-les-makers/)
+
+That article also includes the **affiliate purchase link** for the ESP32-S3 Touch LCD used in this project.
 
 #### 🎤 Audio input
 
