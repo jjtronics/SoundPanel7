@@ -28,7 +28,7 @@ float AudioEngine::clampf(float v, float lo, float hi) {
 const char* AudioEngine::sourceLabel(uint8_t src) {
   switch ((AudioSource)src) {
     case AudioSource::Demo:         return "Demo";
-    case AudioSource::SensorAnalog: return "SensorAnalog";
+    case AudioSource::SensorAnalog: return "Aalog Mic";
     default:                        return "Unknown";
   }
 }

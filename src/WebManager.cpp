@@ -180,6 +180,7 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"touchEnabled\":"; json += (s && s->touchEnabled ? "true" : "false"); json += ",";
   json += "\"dashboardPage\":"; json += String(s ? s->dashboardPage : DEFAULT_DASHBOARD_PAGE); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s ? s->dashboardFullscreenMask : DEFAULT_DASHBOARD_FULLSCREEN_MASK); json += ",";
+  json += "\"audioSource\":"; json += String(s ? s->audioSource : 1); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -1444,6 +1445,7 @@ void WebManager::handleUiSave() {
   int g  = sp7json::parseInt(body, "greenMax",  (int)_s->th.greenMax);
   int o  = sp7json::parseInt(body, "orangeMax", (int)_s->th.orangeMax);
   int hm = sp7json::parseInt(body, "historyMinutes", (int)_s->historyMinutes);
+  int audioSource = sp7json::parseInt(body, "audioSource", (int)_s->audioSource);
   int arm = sp7json::parseInt(body, "audioResponseMode", (int)_s->audioResponseMode);
   const bool touchEnabled = sp7json::parseBool(body, "touchEnabled", _s->touchEnabled != 0);
   int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
@@ -1461,6 +1463,8 @@ void WebManager::handleUiSave() {
   if (o > 100) o = 100;
   if (hm < 1) hm = 1;
   if (hm > 60) hm = 60;
+  if (audioSource < 0) audioSource = 0;
+  if (audioSource > 1) audioSource = 1;
   if (arm < 0) arm = 0;
   if (arm > 1) arm = 1;
   dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
@@ -1477,6 +1481,7 @@ void WebManager::handleUiSave() {
   _s->th.greenMax = (uint8_t)g;
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
+  _s->audioSource = (uint8_t)audioSource;
   _s->audioResponseMode = (uint8_t)arm;
   _s->touchEnabled = touchEnabled ? 1 : 0;
   _s->dashboardPage = (uint8_t)dashboardPage;
@@ -1493,8 +1498,9 @@ void WebManager::handleUiSave() {
   applyBacklightNow(_s->backlight);
   applyTouchNow(_s->touchEnabled != 0);
 
-  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d green=%d orange=%d hist=%d page=%d fsm=%d mode=%s warn=%ds crit=%ds cal=%ds\n",
+  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
                  bl, touchEnabled ? 1 : 0, g, o, hm, dashboardPage, dashboardFullscreenMask,
+                 AudioEngine::sourceLabel(_s->audioSource),
                  AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyOkJson(true);
 }
@@ -3786,6 +3792,14 @@ R"HTML(
                             <button class="btn choice" id="modeSlow" data-mode="1">Slow</button>
                           </div>
                           <div class="hint">Fast reste reactif. Slow stabilise l'affichage.</div>
+                          <div class="field">
+                            <label>Micro</label>
+                            <div class="choiceRow">
+                              <button class="btn choice" id="micDemo" data-audio-source="0">Demo</button>
+                              <button class="btn choice" id="micAnalog" data-audio-source="1">Aalog Mic</button>
+                            </div>
+                            <div class="hint">Demo simule des valeurs. Aalog Mic utilise l'entree micro analogique.</div>
+                          </div>
                         </div>
                         <div>
                           <div class="field">
@@ -4523,6 +4537,7 @@ R"HTML(
     dashboardFullscreenMask: 0,
     dashboardDisplayDirty: false,
     uiDirty: false,
+    uiAudioSource: 1,
     uiResponseMode: 0,
     pinConfigured: false,
     calibrationPointCount: 3,
@@ -5335,6 +5350,7 @@ R"HTML(
       if ("warningHoldSec" in merged) $("warnHoldSec").value = warningHoldSec;
       if ("criticalHoldSec" in merged) $("critHoldSec").value = criticalHoldSec;
       if ("calibrationCaptureSec" in merged) $("calCaptureSec").value = Number(merged.calibrationCaptureSec ?? 3);
+      if ("audioSource" in merged) state.uiAudioSource = Number(merged.audioSource ?? 1);
       if ("audioResponseMode" in merged) state.uiResponseMode = Number(merged.audioResponseMode ?? 0);
       syncUiLabels();
     }
@@ -5351,6 +5367,8 @@ R"HTML(
     $("gVal").textContent = g;
     $("oVal").textContent = o;
     $("hVal").textContent = $("hist").value;
+    $("micDemo").classList.toggle("active", state.uiAudioSource === 0);
+    $("micAnalog").classList.toggle("active", state.uiAudioSource === 1);
     $("modeFast").classList.toggle("active", state.uiResponseMode === 0);
     $("modeSlow").classList.toggle("active", state.uiResponseMode === 1);
   }
@@ -5761,6 +5779,7 @@ R"HTML(
       greenMax: getNumberValue("g"),
       orangeMax: getNumberValue("o"),
       historyMinutes: getNumberValue("hist"),
+      audioSource: state.uiAudioSource,
       audioResponseMode: state.uiResponseMode,
       warningHoldSec: getNumberValue("warnHoldSec", 0),
       criticalHoldSec: getNumberValue("critHoldSec", 0),
@@ -6552,6 +6571,14 @@ R"HTML(
   document.querySelectorAll("[data-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.uiResponseMode = Number(btn.dataset.mode);
+      markUiDirty();
+      syncUiLabels();
+    });
+  });
+
+  document.querySelectorAll("[data-audio-source]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.uiAudioSource = Number(btn.dataset.audioSource);
       markUiDirty();
       syncUiLabels();
     });
