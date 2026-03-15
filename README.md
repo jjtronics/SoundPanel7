@@ -238,13 +238,17 @@ en labo, en studio, et en usage quotidien.
 - rétroéclairage pilotable (On/Off)
 - ...
 
+Pour la documentation constructeur de la carte, voir aussi :
+
+- <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7</a>
+
 <a id="fr-achat-esp"></a>
 
 #### 🔗 Article et achat
 
 J'ai publié un article complet sur ce matériel, avec mon retour d'expérience, des photos et une note sur le blog :
 
-- [ESP32-S3 Touch LCD : le terrain de jeu parfait pour les makers](https://testicool.org/hardware/2026/03/15/ecran-esp32-s3-touch-lcd-le-terrain-de-jeu-parfait-pour-les-makers/)
+- <a href="https://testicool.org/hardware/2026/03/15/ecran-esp32-s3-touch-lcd-le-terrain-de-jeu-parfait-pour-les-makers/" target="_blank" rel="noopener noreferrer">ESP32-S3 Touch LCD : le terrain de jeu parfait pour les makers</a>
 
 Cet article contient aussi le **lien d'affiliation** utilisé pour l'achat de l'ESP32-S3 Touch LCD présenté dans ce projet.
 
@@ -1088,13 +1092,17 @@ lab space, recording studio, and day-to-day use.
 - USB
 - controllable backlight
 
+For the official board documentation, see also:
+
+- <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7</a>
+
 <a id="en-buy-the-esp"></a>
 
 #### 🔗 Article and purchase link
 
 I published a full write-up about this hardware on my blog, including hands-on feedback, photos, and a final rating:
 
-- [ESP32-S3 Touch LCD: the perfect playground for makers](https://testicool.org/hardware/2026/03/15/ecran-esp32-s3-touch-lcd-le-terrain-de-jeu-parfait-pour-les-makers/)
+- <a href="https://testicool.org/hardware/2026/03/15/ecran-esp32-s3-touch-lcd-le-terrain-de-jeu-parfait-pour-les-makers/" target="_blank" rel="noopener noreferrer">ESP32-S3 Touch LCD: the perfect playground for makers</a>
 
 That article also includes the **affiliate purchase link** for the ESP32-S3 Touch LCD used in this project.
 
