@@ -116,8 +116,10 @@ static void sampleRuntimeStats() {
   g_runtimeStats.lvglIdlePct = lv_timer_get_idle();
   g_runtimeStats.lvglLoadPct = 100U - g_runtimeStats.lvglIdlePct;
   g_runtimeStats.heapInternalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  g_runtimeStats.heapInternalTotal = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   g_runtimeStats.heapInternalMin = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   g_runtimeStats.heapPsramFree = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  g_runtimeStats.heapPsramTotal = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
   g_runtimeStats.heapPsramMin = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
 
   uint32_t count = 0;

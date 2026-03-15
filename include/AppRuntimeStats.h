@@ -13,8 +13,10 @@ struct RuntimeStats {
   uint32_t lvHandlerMaxUs = 0;
   uint32_t lvObjCount = 0;
   uint32_t heapInternalFree = 0;
+  uint32_t heapInternalTotal = 0;
   uint32_t heapInternalMin = 0;
   uint32_t heapPsramFree = 0;
+  uint32_t heapPsramTotal = 0;
   uint32_t heapPsramMin = 0;
   char activePage[24] = "Principal";
 };

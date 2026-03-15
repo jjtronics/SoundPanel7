@@ -6,8 +6,10 @@
 #include "ui/UiManager.h"
 
 #include <WiFi.h>
+#include <LittleFS.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
 #include <esp_sntp.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
@@ -217,8 +219,10 @@ static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
   json += "\"lvglHandlerMaxUs\":"; json += String(stats.lvHandlerMaxUs); json += ",";
   json += "\"lvglObjCount\":"; json += String(stats.lvObjCount); json += ",";
   json += "\"heapInternalFree\":"; json += String(stats.heapInternalFree); json += ",";
+  json += "\"heapInternalTotal\":"; json += String(stats.heapInternalTotal); json += ",";
   json += "\"heapInternalMin\":"; json += String(stats.heapInternalMin); json += ",";
   json += "\"heapPsramFree\":"; json += String(stats.heapPsramFree); json += ",";
+  json += "\"heapPsramTotal\":"; json += String(stats.heapPsramTotal); json += ",";
   json += "\"heapPsramMin\":"; json += String(stats.heapPsramMin); json += ",";
   sp7json::appendEscapedField(json, "activePage", stats.activePage);
 }
@@ -928,6 +932,8 @@ String WebManager::systemSummaryJson() const {
   const uint32_t backupTs = _store ? _store->backupTimestamp() : 0;
   const float mcuTempC = temperatureRead();
   const bool mcuTempOk = !isnan(mcuTempC);
+  const size_t fsTotalBytes = LittleFS.totalBytes();
+  const size_t fsUsedBytes = LittleFS.usedBytes();
 
   struct tm ti;
   const bool hasTime = getLocalTime(&ti, 0);
@@ -935,7 +941,7 @@ String WebManager::systemSummaryJson() const {
   if (hasTime) strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &ti);
 
   String json;
-  json.reserve(640);
+  json.reserve(768);
   json += "{";
   appendWifiJson(json, wifiConnected, ip, rssi, ssid);
   json += "\"uptime_s\":"; json += String(up); json += ",";
@@ -943,6 +949,8 @@ String WebManager::systemSummaryJson() const {
   appendTimeJson(json, hasTime, tbuf);
   json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
   json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
+  json += "\"fsTotalBytes\":"; json += String((uint32_t)fsTotalBytes); json += ",";
+  json += "\"fsUsedBytes\":"; json += String((uint32_t)fsUsedBytes); json += ",";
   json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
   json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
   json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
@@ -3690,9 +3698,9 @@ R"HTML(
                   <div class="v mono" id="settingsLvglTiming">--</div>
                 </div>
                 <div class="settingsSnapshot">
-                  <div class="k">Heap / objets</div>
-                  <div class="v mono" id="settingsLvglHeap">--</div>
-                </div>
+                <div class="k">Heap / disque</div>
+                <div class="v mono" id="settingsLvglHeap">--</div>
+              </div>
               </div>
               <div class="settingsOverviewBlock">
                 <div class="settingsSubhead">
@@ -5054,8 +5062,21 @@ R"HTML(
       if (freeBytes < 98304 || minBytes < 81920 || objCount >= 450) return "warn";
       return "ok";
     };
+    const usageTone = (usedPct) => usedPct >= 95 ? "bad" : (usedPct >= 85 ? "warn" : "ok");
     const kb = (value) => `${Math.round(Number(value || 0) / 1024)}k`;
     const usToMs = (value) => `${(Number(value || 0) / 1000).toFixed(1)} ms`;
+    const pctUsed = (freeBytes, totalBytes) => {
+      const total = Number(totalBytes || 0);
+      if (total <= 0) return null;
+      const free = Math.max(0, Number(freeBytes || 0));
+      return Math.max(0, Math.min(100, Math.round(((total - free) * 100) / total)));
+    };
+    const pctFromUsage = (usedBytes, totalBytes) => {
+      const total = Number(totalBytes || 0);
+      if (total <= 0) return null;
+      const used = Math.max(0, Number(usedBytes || 0));
+      return Math.max(0, Math.min(100, Math.round((used * 100) / total)));
+    };
     const cpuLoadPct = Number(st.cpuLoadPct ?? 0);
     const lvglLoadPct = Number(st.lvglLoadPct ?? 0);
     const lvglIdlePct = Number(st.lvglIdlePct ?? 100);
@@ -5065,9 +5086,16 @@ R"HTML(
     const lvglHandlerMaxUs = Number(st.lvglHandlerMaxUs ?? 0);
     const lvglObjCount = Number(st.lvglObjCount ?? 0);
     const heapInternalFree = Number(st.heapInternalFree ?? 0);
+    const heapInternalTotal = Number(st.heapInternalTotal ?? 0);
     const heapInternalMin = Number(st.heapInternalMin ?? 0);
     const heapPsramFree = Number(st.heapPsramFree ?? 0);
+    const heapPsramTotal = Number(st.heapPsramTotal ?? 0);
     const heapPsramMin = Number(st.heapPsramMin ?? 0);
+    const fsTotalBytes = Number(st.fsTotalBytes ?? 0);
+    const fsUsedBytes = Number(st.fsUsedBytes ?? 0);
+    const heapInternalUsedPct = pctUsed(heapInternalFree, heapInternalTotal);
+    const heapPsramUsedPct = pctUsed(heapPsramFree, heapPsramTotal);
+    const fsUsedPct = pctFromUsage(fsUsedBytes, fsTotalBytes);
     $("settingsIp").textContent = st.wifi ? `${st.ip || "-"} / ${st.rssi ?? 0} dBm` : "--";
     $("settingsUptime").textContent = formatUptime(st.uptime_s);
     $("settingsHistory").textContent = `${state.historyMinutes} min / ${state.historyCapacity} points`;
@@ -5095,14 +5123,26 @@ R"HTML(
     $("settingsLvglLoad").textContent = `${lvglLoadPct}% / ${lvglIdlePct}%`;
     $("settingsLvglTiming").textContent =
       `UI ${usToMs(lvglUiWorkUs)} max ${usToMs(lvglUiWorkMaxUs)} | H ${usToMs(lvglHandlerUs)} max ${usToMs(lvglHandlerMaxUs)}`;
+    const intText = heapInternalUsedPct === null
+      ? `INT ${kb(heapInternalFree)} min ${kb(heapInternalMin)}`
+      : `INT ${kb(heapInternalFree)} min ${kb(heapInternalMin)} util ${heapInternalUsedPct}%`;
     const psramText = heapPsramFree > 0
-      ? ` / PS ${kb(heapPsramFree)} min ${kb(heapPsramMin)}`
+      ? (heapPsramUsedPct === null
+          ? ` / PS ${kb(heapPsramFree)} min ${kb(heapPsramMin)}`
+          : ` / PS ${kb(heapPsramFree)} min ${kb(heapPsramMin)} util ${heapPsramUsedPct}%`)
+      : "";
+    const fsText = fsTotalBytes > 0
+      ? ` / FS ${kb(fsUsedBytes)}/${kb(fsTotalBytes)} util ${fsUsedPct ?? 0}%`
       : "";
     $("settingsLvglHeap").textContent =
-      `INT ${kb(heapInternalFree)} min ${kb(heapInternalMin)} / OBJ ${lvglObjCount}${psramText}`;
+      `${intText} / OBJ ${lvglObjCount}${psramText}${fsText}`;
     setMetricTone("settingsLvglLoad", loadTone(lvglLoadPct));
     setMetricTone("settingsLvglTiming", worstTone(timingTone(lvglUiWorkUs / 1000), timingTone(lvglHandlerUs / 1000)));
-    setMetricTone("settingsLvglHeap", heapTone(heapInternalFree, heapInternalMin, lvglObjCount));
+    setMetricTone("settingsLvglHeap", worstTone(
+      heapTone(heapInternalFree, heapInternalMin, lvglObjCount),
+      usageTone(heapInternalUsedPct ?? 0),
+      fsUsedPct === null ? "ok" : usageTone(fsUsedPct)
+    ));
     $("backupInfo").textContent = `Dernier backup: ${formatBackupDate(st.backupTs)}`;
 
   }
