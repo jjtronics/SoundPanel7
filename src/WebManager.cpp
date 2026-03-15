@@ -3098,6 +3098,17 @@ R"HTML(
     .sectionKicker{
       font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#93a4b6;
     }
+    .tabStatusBadge{
+      display:inline-flex;align-items:center;justify-content:center;
+      min-height:28px;
+      margin-left:8px;
+      padding:4px 10px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:.02em;
+      vertical-align:middle;
+    }
     .sectionLead{font-size:13px;color:var(--muted);max-width:52ch;line-height:1.5}
     .sectionMeta{
       display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
@@ -3397,6 +3408,7 @@ R"HTML(
         <button class="tab" data-page="sound">Sonometre</button>
         <button class="tab" data-page="calibration">Calibration</button>
         <button class="tab" data-page="settings">Parametres</button>
+        <span class="healthBadge bad tabStatusBadge" id="topSystemBadge">--</span>
       </div>
     </div>
   </div>
@@ -5147,6 +5159,16 @@ R"HTML(
 
   }
 
+  function updateSystemBadges(label, tone) {
+    ["settingsSystemBadge", "topSystemBadge"].forEach((id) => {
+      const badge = $(id);
+      if (!badge) return;
+      badge.textContent = label;
+      badge.classList.toggle("ok", tone === "ok");
+      badge.classList.toggle("bad", tone === "bad");
+    });
+  }
+
   function setSystemBadgeOnline(source = "live") {
     const now = Date.now();
     if (source === "status") {
@@ -5156,17 +5178,11 @@ R"HTML(
     } else {
       state.lastContactMs = now;
     }
-    const systemBadge = $("settingsSystemBadge");
-    systemBadge.textContent = "En ligne";
-    systemBadge.classList.add("ok");
-    systemBadge.classList.remove("bad");
+    updateSystemBadges("En ligne", "ok");
   }
 
   function setSystemBadgeError() {
-    const systemBadge = $("settingsSystemBadge");
-    systemBadge.textContent = "Erreur";
-    systemBadge.classList.add("bad");
-    systemBadge.classList.remove("ok");
+    updateSystemBadges("Erreur", "bad");
   }
 
   function checkSystemHeartbeat() {
