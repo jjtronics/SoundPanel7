@@ -6187,7 +6187,8 @@ R"HTML(
       return;
     }
     if (state.releaseInstallPollTimer) return;
-    state.releaseInstallPollTimer = setInterval(pollReleaseInstallStatusOnce, 1000);
+    state.releaseInstallPollTimer = setInterval(pollReleaseInstallStatusOnce, 250);
+    pollReleaseInstallStatusOnce();
   }
 
   async function loadReleaseStatus() {
@@ -6221,6 +6222,20 @@ R"HTML(
 
   async function installReleaseNow() {
     if (!confirm("Installer le firmware trouve sur GitHub puis redemarrer le panneau ?")) return;
+    applyReleaseStatus({
+      ...(state.status || {}),
+      checked: true,
+      ok: true,
+      available: true,
+      installing: true,
+      installFinished: false,
+      installSucceeded: false,
+      installStatus: "starting",
+      installError: "",
+      installProgressPct: 0,
+      installWrittenBytes: 0,
+      installTotalBytes: 0,
+    });
     await runToastRequest(
       "toastReleaseAdv",
       "Lancement installation...",
