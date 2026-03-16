@@ -4,6 +4,9 @@
 #include <esp_timer.h>
 #include <freertos/idf_additions.h>
 #include <esp_display_panel.hpp>
+
+#include "AppConfig.h"
+
 #if SOUNDPANEL7_HAS_SCREEN
 #include <lvgl.h>
 #endif
@@ -15,7 +18,6 @@
 #include "ui/UiManager.h"
 #include "WebManager.h"
 #include "AudioEngine.h"
-#include "AppConfig.h"
 #include "SharedHistory.h"
 
 #include "OtaManager.h"
@@ -289,6 +291,7 @@ void loop() {
     }
   }
 
+#if SOUNDPANEL7_HAS_SCREEN
   uint32_t lvHandlerStartUs = micros();
   lv_timer_handler();
   g_runtimeStats.lvHandlerLastUs = micros() - lvHandlerStartUs;
@@ -308,5 +311,8 @@ void loop() {
                    (unsigned long)g_runtimeStats.lvObjCount,
                    (unsigned long)(g_runtimeStats.heapInternalFree / 1024));
   }
+#else
+  g_runtimeStats.lvHandlerLastUs = 0;
+#endif
   delay(5);
 }

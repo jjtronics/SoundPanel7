@@ -18,6 +18,15 @@ static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
 static constexpr size_t kSecretKeyLength = 32;
 
+void applyAudioBoardProfileDefaults(SettingsV1& s) {
+  s.analogPin = SOUNDPANEL7_DEFAULT_ANALOG_PIN;
+  s.pdmClkPin = SOUNDPANEL7_DEFAULT_PDM_CLK_PIN;
+  s.pdmDataPin = SOUNDPANEL7_DEFAULT_PDM_DATA_PIN;
+  s.inmp441BclkPin = SOUNDPANEL7_DEFAULT_INMP441_BCLK_PIN;
+  s.inmp441WsPin = SOUNDPANEL7_DEFAULT_INMP441_WS_PIN;
+  s.inmp441DataPin = SOUNDPANEL7_DEFAULT_INMP441_DATA_PIN;
+}
+
 bool secureEqualsRaw(const char* a, const char* b) {
   const size_t lenA = a ? strlen(a) : 0;
   const size_t lenB = b ? strlen(b) : 0;
@@ -415,12 +424,6 @@ void SettingsStore::load(SettingsV1 &out) {
   }
 
   out.audioSource        = (uint8_t)_prefs.getUChar("a_src", out.audioSource);
-  out.analogPin          = (uint8_t)_prefs.getUChar("a_pin", out.analogPin);
-  out.pdmClkPin          = (uint8_t)_prefs.getUChar("a_pdmck", out.pdmClkPin);
-  out.pdmDataPin         = (uint8_t)_prefs.getUChar("a_pdmdt", out.pdmDataPin);
-  out.inmp441BclkPin     = (uint8_t)_prefs.getUChar("a_i2sbk", out.inmp441BclkPin);
-  out.inmp441WsPin       = (uint8_t)_prefs.getUChar("a_i2sws", out.inmp441WsPin);
-  out.inmp441DataPin     = (uint8_t)_prefs.getUChar("a_i2sdt", out.inmp441DataPin);
   out.analogRmsSamples   = (uint16_t)_prefs.getUShort("a_rms", out.analogRmsSamples);
   out.audioResponseMode  = (uint8_t)_prefs.getUChar("a_resp", out.audioResponseMode);
   out.emaAlpha           = _prefs.getFloat("a_ema", out.emaAlpha);
@@ -542,12 +545,12 @@ void SettingsStore::save(const SettingsV1 &s) {
   saveSecret("ota_pw", "ota_password", s.otaPassword);
 
   _prefs.putUChar("a_src", s.audioSource);
-  _prefs.putUChar("a_pin", s.analogPin);
-  _prefs.putUChar("a_pdmck", s.pdmClkPin);
-  _prefs.putUChar("a_pdmdt", s.pdmDataPin);
-  _prefs.putUChar("a_i2sbk", s.inmp441BclkPin);
-  _prefs.putUChar("a_i2sws", s.inmp441WsPin);
-  _prefs.putUChar("a_i2sdt", s.inmp441DataPin);
+  _prefs.remove("a_pin");
+  _prefs.remove("a_pdmck");
+  _prefs.remove("a_pdmdt");
+  _prefs.remove("a_i2sbk");
+  _prefs.remove("a_i2sws");
+  _prefs.remove("a_i2sdt");
   _prefs.putUShort("a_rms", s.analogRmsSamples);
   _prefs.putUChar("a_resp", s.audioResponseMode);
   _prefs.putFloat("a_ema", s.emaAlpha);
@@ -619,6 +622,7 @@ void SettingsStore::sanitize(SettingsV1& s) {
   }
   s.homeAssistantToken[sizeof(s.homeAssistantToken) - 1] = '\0';
 
+  applyAudioBoardProfileDefaults(s);
   if (s.audioSource > 3) s.audioSource = 1;
   if (s.analogRmsSamples < 32) s.analogRmsSamples = 32;
   if (s.analogRmsSamples > 1024) s.analogRmsSamples = 1024;
@@ -903,12 +907,6 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
     }
   }
   json += "\"audioSource\":"; json += String(s.audioSource); json += ",";
-  json += "\"analogPin\":"; json += String(s.analogPin); json += ",";
-  json += "\"pdmClkPin\":"; json += String(s.pdmClkPin); json += ",";
-  json += "\"pdmDataPin\":"; json += String(s.pdmDataPin); json += ",";
-  json += "\"inmp441BclkPin\":"; json += String(s.inmp441BclkPin); json += ",";
-  json += "\"inmp441WsPin\":"; json += String(s.inmp441WsPin); json += ",";
-  json += "\"inmp441DataPin\":"; json += String(s.inmp441DataPin); json += ",";
   json += "\"analogRmsSamples\":"; json += String(s.analogRmsSamples); json += ",";
   json += "\"audioResponseMode\":"; json += String(s.audioResponseMode); json += ",";
   json += "\"emaAlpha\":"; json += String(s.emaAlpha, 4); json += ",";
@@ -1095,12 +1093,6 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.ntpSyncIntervalMs = (uint32_t)sp7json::parseInt(json, "ntpSyncMinutes", (int)(next.ntpSyncIntervalMs / MS_PER_MINUTE)) * MS_PER_MINUTE;
 
   next.audioSource = (uint8_t)sp7json::parseInt(json, "audioSource", next.audioSource);
-  next.analogPin = (uint8_t)sp7json::parseInt(json, "analogPin", next.analogPin);
-  next.pdmClkPin = (uint8_t)sp7json::parseInt(json, "pdmClkPin", next.pdmClkPin);
-  next.pdmDataPin = (uint8_t)sp7json::parseInt(json, "pdmDataPin", next.pdmDataPin);
-  next.inmp441BclkPin = (uint8_t)sp7json::parseInt(json, "inmp441BclkPin", next.inmp441BclkPin);
-  next.inmp441WsPin = (uint8_t)sp7json::parseInt(json, "inmp441WsPin", next.inmp441WsPin);
-  next.inmp441DataPin = (uint8_t)sp7json::parseInt(json, "inmp441DataPin", next.inmp441DataPin);
   next.analogRmsSamples = (uint16_t)sp7json::parseInt(json, "analogRmsSamples", next.analogRmsSamples);
   next.audioResponseMode = (uint8_t)sp7json::parseInt(json, "audioResponseMode", next.audioResponseMode);
   next.emaAlpha = sp7json::parseFloat(json, "emaAlpha", next.emaAlpha);
@@ -1284,6 +1276,11 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
   } else if (scope == "audio") {
     s.audioSource = def.audioSource;
     s.analogPin = def.analogPin;
+    s.pdmClkPin = def.pdmClkPin;
+    s.pdmDataPin = def.pdmDataPin;
+    s.inmp441BclkPin = def.inmp441BclkPin;
+    s.inmp441WsPin = def.inmp441WsPin;
+    s.inmp441DataPin = def.inmp441DataPin;
     s.analogRmsSamples = def.analogRmsSamples;
     s.audioResponseMode = def.audioResponseMode;
     s.emaAlpha = def.emaAlpha;
