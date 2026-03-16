@@ -16,6 +16,7 @@
 #include <esp_random.h>
 #include <mbedtls/sha256.h>
 #include <ctime>
+#include <sys/time.h>
 #include <math.h>
 #include <cstring>
 #include <ctype.h>
@@ -87,9 +88,27 @@ static void appendWifiJson(String& json, bool wifiConnected, const String& ip, i
   json += "\"rssi\":"; json += String(rssi); json += ",";
 }
 
+static uint64_t currentUnixTimeMs(bool* hasTimeOut = nullptr) {
+  struct timeval tv;
+  const bool hasTime = gettimeofday(&tv, nullptr) == 0 && tv.tv_sec > 946684800;
+  if (hasTimeOut) *hasTimeOut = hasTime;
+  if (!hasTime) return 0;
+  return ((uint64_t)tv.tv_sec * 1000ULL) + (uint64_t)(tv.tv_usec / 1000);
+}
+
 static void appendTimeJson(String& json, bool hasTime, const char* timeText) {
+  const uint64_t timeUnixMs = hasTime ? currentUnixTimeMs(nullptr) : 0;
   json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
   sp7json::appendEscapedField(json, "time", hasTime ? timeText : "");
+  json += "\"timeUnixMs\":";
+  if (timeUnixMs > 0) {
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)timeUnixMs);
+    json += buf;
+  } else {
+    json += "0";
+  }
+  json += ",";
 }
 
 static void appendDeviceJson(String& json,
@@ -4515,8 +4534,9 @@ R"HTML(
     rawAudioSeededFromStatus: false,
     rawAudioLiveStarted: false,
     clockBaseMs: 0,
-    clockSyncClientMs: 0,
-    clockRenderedMs: 0,
+    clockSyncPerfMs: 0,
+    clockDisplayedSecond: -1,
+    clockRaf: 0,
     currentPage: "overview",
     settingsPanelsLoaded: false,
     settingsPanelsLoading: false,
@@ -4710,41 +4730,73 @@ R"HTML(
     return ((clamped - histDbMin) / (histDbMax - histDbMin)) * 100;
   }
 
-  function syncClock(serverTime, source = "status") {
-    if (!serverTime) {
+  const CLOCK_DISPLAY_PHASE_MS = 900;
+
+  function stopClockLoop() {
+    if (state.clockRaf) {
+      cancelAnimationFrame(state.clockRaf);
+      state.clockRaf = 0;
+    }
+  }
+
+  function clockNowMs() {
+    if (!state.clockBaseMs || !state.clockSyncPerfMs) return 0;
+    return state.clockBaseMs + (performance.now() - state.clockSyncPerfMs);
+  }
+
+  function syncClock(serverTime, serverTimeMs = 0, source = "status") {
+    const epochMs = Number(serverTimeMs || 0);
+    if (!serverTime && epochMs <= 0) {
       if (state.clockBaseMs) return;
       state.clockBaseMs = 0;
-      state.clockSyncClientMs = 0;
-      state.clockRenderedMs = 0;
+      state.clockSyncPerfMs = 0;
+      state.clockDisplayedSecond = -1;
+      stopClockLoop();
       renderClock();
       return;
     }
 
-    const parsed = Date.parse(serverTime.replace(" ", "T"));
+    const parsed = epochMs > 0 ? epochMs : Date.parse(String(serverTime || "").replace(" ", "T"));
     if (Number.isNaN(parsed)) {
       if (state.clockBaseMs) return;
       state.clockBaseMs = 0;
-      state.clockSyncClientMs = 0;
-      state.clockRenderedMs = 0;
+      state.clockSyncPerfMs = 0;
+      state.clockDisplayedSecond = -1;
+      stopClockLoop();
       renderClock();
       return;
     }
 
-    if (state.clockBaseMs && state.clockSyncClientMs) {
-      const predictedMs = state.clockBaseMs + (Date.now() - state.clockSyncClientMs);
+    if (state.clockBaseMs && state.clockSyncPerfMs) {
+      const predictedMs = clockNowMs();
       const driftMs = parsed - predictedMs;
       // This UI clock must be monotonic. No source is allowed to move it
       // backwards because that is visibly unacceptable on a broadcast clock.
       if (driftMs <= 0) return;
 
-      // Ignore tiny forward nudges from second-resolution timestamps; the local
-      // renderer is already smoother than the network cadence.
-      if (driftMs < 250) return;
+      // Keep the display stable and only accept meaningful forward corrections.
+      if (driftMs < 80) return;
     }
 
     state.clockBaseMs = parsed;
-    state.clockSyncClientMs = Date.now();
+    state.clockSyncPerfMs = performance.now();
+    state.clockDisplayedSecond = -1;
     renderClock();
+  }
+
+  function ensureClockLoop() {
+    if (state.clockRaf || !state.clockBaseMs) return;
+    const step = () => {
+      state.clockRaf = 0;
+      const nowMs = clockNowMs();
+      if (!nowMs) return;
+      const displaySecond = Math.floor((nowMs + CLOCK_DISPLAY_PHASE_MS) / 1000);
+      if (displaySecond !== state.clockDisplayedSecond) {
+        renderClock();
+      }
+      state.clockRaf = requestAnimationFrame(step);
+    };
+    state.clockRaf = requestAnimationFrame(step);
   }
 
   function renderClock() {
@@ -4756,15 +4808,13 @@ R"HTML(
       $("clockMain").textContent = "--:--";
       $("clockSec").textContent = "--";
       $("settingsTime").textContent = "NTP...";
-      state.clockRenderedMs = 0;
+      state.clockDisplayedSecond = -1;
+      stopClockLoop();
       return;
     }
 
-    let nowMs = state.clockBaseMs + (Date.now() - state.clockSyncClientMs);
-    if (state.clockRenderedMs && nowMs < state.clockRenderedMs) {
-      nowMs = state.clockRenderedMs;
-    }
-    state.clockRenderedMs = nowMs;
+    const nowMs = clockNowMs() + CLOCK_DISPLAY_PHASE_MS;
+    state.clockDisplayedSecond = Math.floor(nowMs / 1000);
 
     const d = new Date(nowMs);
     const date = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
@@ -4779,6 +4829,7 @@ R"HTML(
     $("clockMain").textContent = hhmm;
     $("clockSec").textContent = sec;
     $("settingsTime").textContent = hhmmss;
+    ensureClockLoop();
   }
 
   function applyPinState() {
@@ -5059,7 +5110,7 @@ R"HTML(
     state.status = { ...(state.status || {}), ...st };
     const merged = state.status;
 
-    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "", "status");
+    if ("time_ok" in st || "timeUnixMs" in st) syncClock(merged.time_ok ? merged.time : "", merged.timeUnixMs, "status");
     if (state.currentPage !== "settings") return;
 
     updateStatusSummary(merged, true);
@@ -5236,7 +5287,7 @@ R"HTML(
     const orangeMax = Number(merged.orangeMax ?? 70);
     const warningHoldSec = Number(merged.warningHoldSec ?? 3);
     const criticalHoldSec = Number(merged.criticalHoldSec ?? 2);
-    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "", "live");
+    if ("time_ok" in st || "timeUnixMs" in st) syncClock(merged.time_ok ? merged.time : "", merged.timeUnixMs, "live");
     applyRawAudio(merged);
 
     $("calLiveMic").textContent = merged.analogOk === false
@@ -5292,7 +5343,7 @@ R"HTML(
     applyLiveActionState();
     updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec);
 
-    if ("time_ok" in st) syncClock(merged.time_ok ? merged.time : "", "status");
+    if ("time_ok" in st || "timeUnixMs" in st) syncClock(merged.time_ok ? merged.time : "", merged.timeUnixMs, "status");
     updateStatusSummary(merged);
     if ("releaseUpdateChecked" in st || "releaseInstallStatus" in st) {
       applyReleaseStatus(merged);
@@ -6697,7 +6748,6 @@ R"HTML(
     setInterval(() => refreshStatus(false), 5000);
     setInterval(() => refreshSystemSummary(false), 1000);
     setInterval(checkSystemHeartbeat, 1000);
-    setInterval(renderClock, 1000);
   }
 
   initPage();

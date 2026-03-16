@@ -30,7 +30,8 @@ private:
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
   static constexpr uint32_t SOUND_UI_UPDATE_MS = 160;
   static constexpr uint32_t UI_TICK_PERIOD_MS = 250;
-  static constexpr uint32_t CLOCK_UI_UPDATE_MS = 1000;
+  static constexpr uint32_t CLOCK_UI_UPDATE_MS = 20;
+  static constexpr uint32_t CLOCK_DISPLAY_PHASE_MS = 900;
   static constexpr uint32_t SETTINGS_UI_UPDATE_MS = 1000;
   static constexpr uint32_t CALIBRATION_UI_UPDATE_MS = 250;
   static constexpr uint32_t POWER_OFF_DIALOG_SETTLE_MS = 250;
@@ -182,6 +183,7 @@ private:
   uint32_t _lastClockUiUpdateMs = 0;
   uint32_t _lastSettingsUiUpdateMs = 0;
   uint32_t _lastCalibrationUiUpdateMs = 0;
+  uint32_t _lastClockDisplaySecond = UINT32_MAX;
   float _lastDb = 0.0f;
   float _lastLeq = 0.0f;
   float _lastPeak = 0.0f;

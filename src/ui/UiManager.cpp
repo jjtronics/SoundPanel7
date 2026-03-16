@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <ctime>
 #include <cstring>
+#include <sys/time.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 #include "../AudioEngine.h"
@@ -81,6 +82,12 @@ static bool isOrangeZone(const SettingsV1* s, float db) {
 static bool isRedZone(const SettingsV1* s, float db) {
   if (!s) return false;
   return db > s->th.orangeMax;
+}
+
+static uint64_t currentClockUnixMs() {
+  struct timeval tv;
+  if (gettimeofday(&tv, nullptr) != 0 || tv.tv_sec <= 946684800) return 0;
+  return ((uint64_t)tv.tv_sec * 1000ULL) + (uint64_t)(tv.tv_usec / 1000ULL);
 }
 
 static lv_obj_t* mgmtCard(lv_obj_t* parent, const char* title) {
@@ -2042,22 +2049,31 @@ void UiManager::tick() {
   }
 
   uint32_t now = millis();
-  if (now - _lastTickMs < UI_TICK_PERIOD_MS) return;
-  _lastTickMs = now;
-
-  updateAlertState(now);
-  recordRedHistorySample(now);
-  applyAlertVisuals(now);
-
   struct tm ti;
-  bool hasTime = _net && _net->localTime(&ti);
+  bool hasTime = false;
   bool timeLocked = _net && _net->timeIsValid();
+  uint64_t clockUnixMs = 0;
+  uint32_t clockDisplaySecond = UINT32_MAX;
 
   if ((_currentDashPage == DASH_PAGE_OVERVIEW || _currentDashPage == DASH_PAGE_CLOCK) &&
       (_lastClockUiUpdateMs == 0 || (now - _lastClockUiUpdateMs) >= CLOCK_UI_UPDATE_MS)) {
     _lastClockUiUpdateMs = now;
     bool clockChanged = false;
-    if (hasTime) {
+    clockUnixMs = currentClockUnixMs();
+    hasTime = clockUnixMs > 0;
+    if (!hasTime && _net) {
+      hasTime = _net->localTime(&ti);
+    }
+    if (hasTime && clockUnixMs > 0) {
+      const time_t displayEpoch = (time_t)((clockUnixMs + CLOCK_DISPLAY_PHASE_MS) / 1000ULL);
+      localtime_r(&displayEpoch, &ti);
+      clockDisplaySecond = (uint32_t)displayEpoch;
+    } else if (hasTime) {
+      clockDisplaySecond = (uint32_t)mktime(&ti);
+    }
+
+    if (hasTime && clockDisplaySecond != _lastClockDisplaySecond) {
+      _lastClockDisplaySecond = clockDisplaySecond;
       char dateBuf[32];
       char mainBuf[8];
       char secBuf[8];
@@ -2072,7 +2088,8 @@ void UiManager::tick() {
         clockChanged |= updateClockDisplay(_lblClockDateFocus, _lblClockMainFocus, nullptr, dateBuf, mainBuf, secBuf);
         clockChanged |= setLabelTextIfChanged(_lblClockSecFocus, secBuf + 1);
       }
-    } else {
+    } else if (!hasTime) {
+      _lastClockDisplaySecond = UINT32_MAX;
       if (_currentDashPage == DASH_PAGE_OVERVIEW) {
         clockChanged |= updateClockDisplay(_lblClockDate, _lblClockMain, _lblClockSec, "--/--/----", "--:--", ":--");
       } else {
@@ -2085,7 +2102,7 @@ void UiManager::tick() {
     }
   }
 
-  if (_lblTime && _currentDashPage == DASH_PAGE_OVERVIEW && (_lastClockUiUpdateMs == now)) {
+  if (_lblTime && _currentDashPage == DASH_PAGE_OVERVIEW) {
     if (hasTime) {
       char tbuf[16];
       strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &ti);
@@ -2094,6 +2111,13 @@ void UiManager::tick() {
       setLabelTextIfChanged(_lblTime, "--:--:--");
     }
   }
+
+  if (now - _lastTickMs < UI_TICK_PERIOD_MS) return;
+  _lastTickMs = now;
+
+  updateAlertState(now);
+  recordRedHistorySample(now);
+  applyAlertVisuals(now);
 
   if (_currentDashPage == DASH_PAGE_SETTINGS || _currentDashPage == DASH_PAGE_CLOCK) {
     if (timeLocked) {
