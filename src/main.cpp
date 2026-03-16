@@ -1,10 +1,12 @@
 #include <Arduino.h>
-#include <esp_display_panel.hpp>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <freertos/idf_additions.h>
+#include <esp_display_panel.hpp>
+#if SOUNDPANEL7_HAS_SCREEN
 #include <lvgl.h>
+#endif
 
 #include "AppRuntimeStats.h"
 #include "lvgl_v8_port.h"
@@ -78,12 +80,14 @@ static void confirmRunningOtaImage() {
   }
 }
 
+#if SOUNDPANEL7_HAS_SCREEN
 static lv_obj_tree_walk_res_t countLvglObjectsCb(lv_obj_t* obj, void* user_data) {
   (void)obj;
   uint32_t* count = static_cast<uint32_t*>(user_data);
   if (count) (*count)++;
   return LV_OBJ_TREE_WALK_NEXT;
 }
+#endif
 
 static void sampleRuntimeStats() {
   static bool runtimeStatsInitialized = false;
@@ -110,11 +114,16 @@ static void sampleRuntimeStats() {
       ? ((uint64_t)idleDeltaSum * 100ULL) / totalWindow
       : 100ULL;
     g_runtimeStats.cpuIdlePct = (uint8_t)min<uint64_t>(idlePct, 100ULL);
-    g_runtimeStats.cpuLoadPct = 100U - g_runtimeStats.cpuIdlePct;
+  g_runtimeStats.cpuLoadPct = 100U - g_runtimeStats.cpuIdlePct;
   }
 
+#if SOUNDPANEL7_HAS_SCREEN
   g_runtimeStats.lvglIdlePct = lv_timer_get_idle();
   g_runtimeStats.lvglLoadPct = 100U - g_runtimeStats.lvglIdlePct;
+#else
+  g_runtimeStats.lvglIdlePct = 100;
+  g_runtimeStats.lvglLoadPct = 0;
+#endif
   g_runtimeStats.heapInternalFree = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   g_runtimeStats.heapInternalTotal = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   g_runtimeStats.heapInternalMin = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -122,6 +131,7 @@ static void sampleRuntimeStats() {
   g_runtimeStats.heapPsramTotal = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
   g_runtimeStats.heapPsramMin = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
 
+#if SOUNDPANEL7_HAS_SCREEN
   uint32_t count = 0;
   lv_obj_t* active = lv_scr_act();
   if (active) lv_obj_tree_walk(active, countLvglObjectsCb, &count);
@@ -130,6 +140,9 @@ static void sampleRuntimeStats() {
   lv_obj_t* sys = lv_layer_sys();
   if (sys) lv_obj_tree_walk(sys, countLvglObjectsCb, &count);
   g_runtimeStats.lvObjCount = count;
+#else
+  g_runtimeStats.lvObjCount = 0;
+#endif
 }
 
 static bool dueOnFixedPeriod(uint32_t& anchorMs, uint32_t periodMs, uint32_t nowMs) {
@@ -160,6 +173,7 @@ void setup() {
   g_store.load(g_settings);
   g_history.begin(&g_settings);
 
+#if SOUNDPANEL7_HAS_SCREEN
   g_board = new Board();
   g_board->init();
 
@@ -173,6 +187,9 @@ void setup() {
   lvgl_port_lock(-1);
   g_ui.begin(g_board, &g_settings, &g_store, &g_net, &g_history);
   lvgl_port_unlock();
+#else
+  g_ui.begin(nullptr, &g_settings, &g_store, &g_net, &g_history);
+#endif
 
   g_net.begin(&g_settings, &g_store);
   g_ota.begin(&g_settings);
@@ -237,11 +254,17 @@ void loop() {
     }
 
     uint32_t uiStartUs = micros();
+#if SOUNDPANEL7_HAS_SCREEN
     lvgl_port_lock(-1);
     g_ui.tick();
     g_ui.setDb(m.dbInstant, m.leq, m.peak);
     sampleRuntimeStats();
     lvgl_port_unlock();
+#else
+    g_ui.tick();
+    g_ui.setDb(m.dbInstant, m.leq, m.peak);
+    sampleRuntimeStats();
+#endif
     g_runtimeStats.uiWorkLastUs = micros() - uiStartUs;
     if (g_runtimeStats.uiWorkLastUs > g_runtimeStats.uiWorkMaxUs) {
       g_runtimeStats.uiWorkMaxUs = g_runtimeStats.uiWorkLastUs;
@@ -251,10 +274,15 @@ void loop() {
     g_mqtt.updateMetrics(m.dbInstant, m.leq, m.peak);
   } else {
     uint32_t uiStartUs = micros();
+#if SOUNDPANEL7_HAS_SCREEN
     lvgl_port_lock(-1);
     g_ui.tick();
     sampleRuntimeStats();
     lvgl_port_unlock();
+#else
+    g_ui.tick();
+    sampleRuntimeStats();
+#endif
     g_runtimeStats.uiWorkLastUs = micros() - uiStartUs;
     if (g_runtimeStats.uiWorkLastUs > g_runtimeStats.uiWorkMaxUs) {
       g_runtimeStats.uiWorkMaxUs = g_runtimeStats.uiWorkLastUs;

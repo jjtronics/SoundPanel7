@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <Preferences.h>
+#include "AppConfig.h"
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
 static constexpr uint16_t SETTINGS_VERSION = 6;
@@ -169,10 +170,16 @@ struct SettingsV1 {
   // Audio source
   // 0 = Demo
   // 1 = Sensor Analog (GPIO6 / Sensor AD)
+  // 2 = PDM MEMS
+  // 3 = INMP441
   uint8_t audioSource = 1;
 
-  // Analog mic on Sensor AD = GPIO6
-  uint8_t analogPin = 6;
+  uint8_t analogPin = SOUNDPANEL7_DEFAULT_ANALOG_PIN;
+  uint8_t pdmClkPin = SOUNDPANEL7_DEFAULT_PDM_CLK_PIN;
+  uint8_t pdmDataPin = SOUNDPANEL7_DEFAULT_PDM_DATA_PIN;
+  uint8_t inmp441BclkPin = SOUNDPANEL7_DEFAULT_INMP441_BCLK_PIN;
+  uint8_t inmp441WsPin = SOUNDPANEL7_DEFAULT_INMP441_WS_PIN;
+  uint8_t inmp441DataPin = SOUNDPANEL7_DEFAULT_INMP441_DATA_PIN;
   uint16_t analogRmsSamples = 256;
   // 0 = Fast, 1 = Slow
   uint8_t audioResponseMode = 0;

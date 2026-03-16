@@ -164,6 +164,7 @@ en labo, en studio, et en usage quotidien.
 #### 🔊 Monitoring sonore
 
 - mesure continue du niveau sonore
+- choix de la source audio : `Demo`, `Analog Mic`, `PDM MEMS`, `INMP441`
 - calcul du **Leq**
 - calcul du **Peak**
 - seuils visuels configurables
@@ -242,6 +243,19 @@ Pour la documentation constructeur de la carte, voir aussi :
 
 - <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7</a>
 
+#### 🧱 Variantes matérielles supportées
+
+Le firmware gère maintenant deux profils matériels distincts via `PlatformIO` :
+
+- `soundpanel7_usb` / `soundpanel7_ota` : profil **Waveshare 7"** avec écran tactile, UI locale LVGL, PIN local, contrôle d'affichage et admin web complète
+- `soundpanel7_headless_usb` / `soundpanel7_headless_ota` : profil **ESP32-S3 standard sans écran**, pour un sonomètre **web only**
+
+En mode headless :
+
+- il n'y a pas d'interface tactile locale
+- les réglages liés à l'écran, au tactile et au PIN local disparaissent de l'admin web
+- le reste reste identique : mesure audio, interface web, Wi-Fi, NTP, MQTT, OTA, Home Assistant, export/import de config
+
 <a id="fr-achat-esp"></a>
 
 #### 🔗 Article et achat
@@ -254,16 +268,69 @@ Cet article contient aussi le **lien d'affiliation** utilisé pour l'achat de l'
 
 #### 🎤 Entrée audio
 
-Le firmware est pensé pour un **micro analogique** branché sur l'entrée capteur.
+Le firmware permet maintenant de choisir la source audio directement dans l'admin web :
 
-Exemples compatibles cités dans le projet :
+- `Demo` : valeurs simulées pour le développement et les démos
+- `Analog Mic` : micro analogique type `MAX4466`
+- `PDM MEMS` : micro numérique PDM
+- `INMP441` : micro numérique I2S
 
-- `MAX4466`
-- équivalent analogique à **gain fixe**
+Exemples compatibles :
+
+- `MAX4466` ou équivalent analogique à **gain fixe**
+- micro **PDM MEMS** 3.3 V
+- `INMP441`
 
 Modèle à ne surtout pas utiliser :
 
 - `MAX9814` : son gain automatique fausse la mesure pour ce projet
+
+Important :
+
+- les pins audio ne se règlent pas dans l'interface web
+- le mapping des GPIO est sélectionné automatiquement selon l'environnement `PlatformIO`
+- profil `Waveshare` = pins Waveshare
+- profil `headless` = pins ESP32-S3 standard
+
+#### 🔌 Câblage audio par carte
+
+Les tableaux ci-dessous documentent le câblage par défaut utilisé par le firmware actuel.
+
+##### Waveshare ESP32-S3-Touch-LCD-7
+
+| Type de micro | Signal module | GPIO firmware | Marquage visible sur la carte |
+| --- | --- | --- | --- |
+| Analog Mic (`MAX4466`) | `OUT` | `GPIO6` | `Sensor AD` |
+| PDM MEMS | `CLK` | `GPIO12` | `SCK` |
+| PDM MEMS | `DATA` | `GPIO13` | `MISO` |
+| INMP441 | `SCK / BCLK` | `GPIO12` | `SCK` |
+| INMP441 | `WS / LRCL` | `GPIO11` | `MOSI` |
+| INMP441 | `SD` | `GPIO13` | `MISO` |
+
+Notes utiles :
+
+- sur la Waveshare, `GPIO11`, `GPIO12` et `GPIO13` correspondent aussi au bus `TF` exposé comme `MOSI`, `SCK`, `MISO`
+- si tu branches un micro numérique sur ces pins, évite d'utiliser la carte TF en même temps
+- pour `INMP441`, relier `L/R` à `GND` pour lire le canal gauche
+
+##### ESP32-S3 standard headless
+
+Le profil headless cible un `ESP32-S3 DevKitC-1` ou équivalent, sans écran.
+
+| Type de micro | Signal module | GPIO firmware | Sérigraphie habituelle sur la carte |
+| --- | --- | --- | --- |
+| Analog Mic (`MAX4466`) | `OUT` | `GPIO4` | `4` / `IO4` |
+| PDM MEMS | `CLK` | `GPIO12` | `12` / `IO12` |
+| PDM MEMS | `DATA` | `GPIO13` | `13` / `IO13` |
+| INMP441 | `SCK / BCLK` | `GPIO12` | `12` / `IO12` |
+| INMP441 | `WS / LRCL` | `GPIO11` | `11` / `IO11` |
+| INMP441 | `SD` | `GPIO13` | `13` / `IO13` |
+
+Notes utiles :
+
+- sur un `ESP32-S3` standard, ces libellés sont généralement sérigraphiés directement comme `IO4`, `IO11`, `IO12`, `IO13` ou simplement `4`, `11`, `12`, `13`
+- pour `INMP441`, relier `L/R` à `GND` pour rester sur le canal gauche
+- toutes les masses doivent être communes entre le micro et la carte
 
 Par défaut, le projet compile avec un **mode audio mock** pour faciliter le développement.
 
@@ -301,12 +368,25 @@ Tu peux aussi utiliser `pio` en ligne de commande si PlatformIO Core est déjà 
 pio run
 ```
 
+Build explicite par profil :
+
+```bash
+pio run -e soundpanel7_usb
+pio run -e soundpanel7_headless_usb
+```
+
 #### 4. Flasher en USB
 
 L'environnement par défaut est `soundpanel7_usb`.
 
 ```bash
 pio run -e soundpanel7_usb -t upload
+```
+
+Pour un `ESP32-S3` standard sans écran :
+
+```bash
+pio run -e soundpanel7_headless_usb -t upload
 ```
 
 #### 5. Ouvrir le moniteur série
@@ -321,6 +401,12 @@ Quand l'OTA est configurée sur l'appareil :
 
 ```bash
 pio run -e soundpanel7_ota -t upload
+```
+
+Version headless :
+
+```bash
+pio run -e soundpanel7_headless_ota -t upload
 ```
 
 Les réglages locaux de machine et de réseau ne doivent pas être commités dans [`platformio.ini`](platformio.ini).
@@ -354,7 +440,7 @@ Les valeurs locales typiques à surcharger sont :
 Au boot, le firmware initialise successivement :
 
 1. le stockage des réglages
-2. l'affichage et le tactile
+2. l'affichage et le tactile, si le build inclut un écran
 3. le réseau
 4. l'OTA
 5. le MQTT
@@ -375,8 +461,11 @@ Valeurs actuelles du firmware :
 - port OTA : `3232`
 - MQTT activé : `non`
 - topic MQTT de base : `soundpanel7`
-- pin analogique : `GPIO6`
-- source audio par défaut : capteur analogique
+- sources audio disponibles : `Demo`, `Analog Mic`, `PDM MEMS`, `INMP441`
+- pin analogique par défaut profil Waveshare : `GPIO6`
+- pin analogique par défaut profil headless : `GPIO4`
+- pins numériques par défaut : `GPIO11`, `GPIO12`, `GPIO13`
+- source audio par défaut : `Analog Mic`
 - fenêtre RMS analogique : `256 samples`
 - réponse audio par défaut : `Fast`
 - peak hold : `5000 ms`
@@ -410,6 +499,7 @@ L'interface permet notamment de régler :
 
 - luminosité
 - seuils de couleur
+- source micro : `Demo`, `Analog Mic`, `PDM MEMS`, `INMP441`
 - durée d'historique
 - mode de réponse audio
 - durée des alertes orange / rouge
@@ -424,6 +514,8 @@ L'interface permet notamment de régler :
 - PIN local d'accès
 - comptes utilisateurs web
 - backup / restore / import / export des réglages
+
+En build headless, les blocs liés à l'écran local, au tactile et au code PIN sont masqués automatiquement.
 
 #### Zone Paramètres
 
@@ -505,6 +597,8 @@ L'interface web permet aussi de piloter finement l'affichage du panneau tactile 
 
 Ces réglages sont sauvegardés via l'API UI du firmware et restent actifs après redémarrage.
 
+Sur un build headless, cette section n'est pas applicable : il n'y a pas d'écran local à piloter.
+
 <a id="fr-securite-web-pin"></a>
 
 ### 🔐 Sécurité web et PIN
@@ -515,6 +609,8 @@ Le projet combine deux niveaux de protection :
 - gestion de comptes locaux avec changement de mot de passe et suppression d'utilisateur
 - sessions web pour l'administration et l'accès au flux live
 - code **PIN** local pour protéger les pages sensibles sur le panneau tactile
+
+Le code PIN local n'existe que sur les builds avec écran.
 
 Endpoints associés :
 
@@ -1018,6 +1114,7 @@ lab space, recording studio, and day-to-day use.
 #### 🔊 Sound monitoring
 
 - continuous sound level measurement
+- selectable audio source: `Demo`, `Analog Mic`, `PDM MEMS`, `INMP441`
 - **Leq** calculation
 - **Peak** calculation
 - configurable visual thresholds
@@ -1096,6 +1193,19 @@ For the official board documentation, see also:
 
 - <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7</a>
 
+#### 🧱 Supported hardware profiles
+
+The firmware now supports two distinct hardware profiles through `PlatformIO`:
+
+- `soundpanel7_usb` / `soundpanel7_ota`: **Waveshare 7-inch touchscreen** profile with local LVGL UI, local PIN, display control, and full web administration
+- `soundpanel7_headless_usb` / `soundpanel7_headless_ota`: **standard ESP32-S3 without screen** for a **web-only sound meter**
+
+In headless mode:
+
+- there is no local touch UI
+- screen, touch, and local PIN settings disappear from the web admin
+- the rest stays the same: audio metering, web UI, Wi-Fi, NTP, MQTT, OTA, Home Assistant, config export/import
+
 <a id="en-buy-the-esp"></a>
 
 #### 🔗 Article and purchase link
@@ -1108,16 +1218,69 @@ That article also includes the **affiliate purchase link** for the ESP32-S3 Touc
 
 #### 🎤 Audio input
 
-The firmware is designed around an **analog microphone** connected to the sensor input.
+The firmware now lets you choose the audio source directly from the web admin:
 
-Examples referenced in the project:
+- `Demo`: simulated values for development and demos
+- `Analog Mic`: analog microphone such as `MAX4466`
+- `PDM MEMS`: digital PDM microphone
+- `INMP441`: digital I2S microphone
 
-- `MAX4466`
-- similar analog microphone modules with **fixed gain**
+Compatible examples:
+
+- `MAX4466` or similar fixed-gain analog microphone modules
+- 3.3 V **PDM MEMS** microphones
+- `INMP441`
 
 Model to definitely avoid:
 
 - `MAX9814`: its automatic gain control makes it unsuitable for reliable measurement here
+
+Important:
+
+- audio pins are not configured from the web UI
+- GPIO mapping is selected automatically from the `PlatformIO` environment
+- `Waveshare` profile = Waveshare pin map
+- `headless` profile = standard ESP32-S3 pin map
+
+#### 🔌 Audio wiring by board
+
+The tables below document the default wiring used by the current firmware.
+
+##### Waveshare ESP32-S3-Touch-LCD-7
+
+| Microphone type | Module signal | Firmware GPIO | Board label / silk screen |
+| --- | --- | --- | --- |
+| Analog Mic (`MAX4466`) | `OUT` | `GPIO6` | `Sensor AD` |
+| PDM MEMS | `CLK` | `GPIO12` | `SCK` |
+| PDM MEMS | `DATA` | `GPIO13` | `MISO` |
+| INMP441 | `SCK / BCLK` | `GPIO12` | `SCK` |
+| INMP441 | `WS / LRCL` | `GPIO11` | `MOSI` |
+| INMP441 | `SD` | `GPIO13` | `MISO` |
+
+Useful notes:
+
+- on the Waveshare board, `GPIO11`, `GPIO12`, and `GPIO13` are also the exposed `TF` bus labeled `MOSI`, `SCK`, `MISO`
+- if you wire a digital microphone there, avoid using the TF card at the same time
+- for `INMP441`, connect `L/R` to `GND` to read the left channel
+
+##### Standard ESP32-S3 headless board
+
+The headless profile targets an `ESP32-S3 DevKitC-1` or equivalent without a screen.
+
+| Microphone type | Module signal | Firmware GPIO | Usual board silk screen |
+| --- | --- | --- | --- |
+| Analog Mic (`MAX4466`) | `OUT` | `GPIO4` | `4` / `IO4` |
+| PDM MEMS | `CLK` | `GPIO12` | `12` / `IO12` |
+| PDM MEMS | `DATA` | `GPIO13` | `13` / `IO13` |
+| INMP441 | `SCK / BCLK` | `GPIO12` | `12` / `IO12` |
+| INMP441 | `WS / LRCL` | `GPIO11` | `11` / `IO11` |
+| INMP441 | `SD` | `GPIO13` | `13` / `IO13` |
+
+Useful notes:
+
+- on a standard `ESP32-S3` board, these labels are usually printed directly as `IO4`, `IO11`, `IO12`, `IO13` or simply `4`, `11`, `12`, `13`
+- for `INMP441`, connect `L/R` to `GND` to stay on the left channel
+- make sure the microphone and the board share a common ground
 
 By default, the project builds with a **mock audio mode** to make development easier without a real measurement chain.
 
@@ -1155,12 +1318,25 @@ You can also use the `pio` CLI if PlatformIO Core is already installed.
 pio run
 ```
 
+Explicit per-profile builds:
+
+```bash
+pio run -e soundpanel7_usb
+pio run -e soundpanel7_headless_usb
+```
+
 #### 4. Flash over USB
 
 The default environment is `soundpanel7_usb`.
 
 ```bash
 pio run -e soundpanel7_usb -t upload
+```
+
+For a standard `ESP32-S3` without screen:
+
+```bash
+pio run -e soundpanel7_headless_usb -t upload
 ```
 
 #### 5. Open the serial monitor
@@ -1175,6 +1351,12 @@ Once OTA is configured on the device:
 
 ```bash
 pio run -e soundpanel7_ota -t upload
+```
+
+Headless variant:
+
+```bash
+pio run -e soundpanel7_headless_ota -t upload
 ```
 
 Machine- and network-specific values should not be committed in [`platformio.ini`](platformio.ini).
@@ -1208,7 +1390,7 @@ Typical local values to override are:
 At boot, the firmware initializes:
 
 1. settings storage
-2. display and touch
+2. display and touch, when the build includes a screen
 3. networking
 4. OTA
 5. MQTT

@@ -1,5 +1,7 @@
 #include "UiManager.h"
 
+#if SOUNDPANEL7_HAS_SCREEN
+
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -2418,3 +2420,36 @@ void UiManager::onPinDisable(lv_event_t* e) {
   self->_touchPinUnlocked = false;
   self->refreshSettingsControls();
 }
+
+#else
+
+void UiManager::begin(esp_panel::board::Board* board,
+                      SettingsV1* settings,
+                      SettingsStore* store,
+                      NetManager* net,
+                      SharedHistory* history) {
+  (void)board;
+  (void)store;
+  (void)net;
+  (void)history;
+  _s = settings;
+}
+
+void UiManager::showDashboard() {}
+
+void UiManager::tick() {}
+
+void UiManager::setDb(float dbInstant, float leq, float peak) {
+  (void)dbInstant;
+  (void)leq;
+  (void)peak;
+}
+
+void UiManager::requestDashboardPage(uint8_t page, bool persistSelection) {
+  (void)page;
+  (void)persistSelection;
+}
+
+void UiManager::refreshDashboardLayout() {}
+
+#endif

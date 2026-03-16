@@ -1,10 +1,16 @@
 #include "AudioEngine.h"
+#include <ESP_I2S.h>
 #include <math.h>
 
 static constexpr float kRmsEpsilon = 0.0001f;
 static constexpr float kFastAlpha = 0.45f;
 static constexpr float kSlowAlpha = 0.10f;
 static constexpr uint8_t kCalibrationSampleCount = 24;
+static constexpr uint32_t kDigitalSampleRate = 16000;
+static constexpr uint16_t kDigitalMinSampleCount = 64;
+static constexpr uint16_t kDigitalMaxSampleCount = 512;
+
+static I2SClass g_audioI2s;
 
 static uint8_t configuredCalibrationPointCount(const SettingsV1& s) {
   return normalizedCalibrationPointCount(s.calibrationPointCount);
@@ -28,9 +34,19 @@ float AudioEngine::clampf(float v, float lo, float hi) {
 const char* AudioEngine::sourceLabel(uint8_t src) {
   switch ((AudioSource)src) {
     case AudioSource::Demo:         return "Demo";
-    case AudioSource::SensorAnalog: return "Aalog Mic";
+    case AudioSource::SensorAnalog: return "Analog Mic";
+    case AudioSource::PdmMems:      return "PDM MEMS";
+    case AudioSource::Inmp441:      return "INMP441";
     default:                        return "Unknown";
   }
+}
+
+bool AudioEngine::sourceSupportsCalibration(uint8_t src) {
+  return (AudioSource)src != AudioSource::Demo;
+}
+
+bool AudioEngine::sourceUsesAnalog(uint8_t src) {
+  return (AudioSource)src == AudioSource::SensorAnalog;
 }
 
 const char* AudioEngine::responseModeLabel(uint8_t mode) {
@@ -57,6 +73,9 @@ void AudioEngine::begin(SettingsV1* settings) {
   // been initialized by the core, even though later reads still work.
   analogSetAttenuation(ADC_11db);
 #endif
+
+  _activeDigitalSource = 0xFF;
+  _digitalInputReady = false;
 }
 
 float AudioEngine::computeDemoDb() {
@@ -90,6 +109,101 @@ float AudioEngine::computeAnalogRms(uint8_t pin, uint16_t sampleCount, uint16_t&
   if (var < 0.0) var = 0.0;
 
   meanOut = (uint16_t)(mean + 0.5);
+  okOut = true;
+  return (float)sqrt(var);
+}
+
+bool AudioEngine::ensureDigitalInput(const SettingsV1& s) {
+  const AudioSource source = (AudioSource)s.audioSource;
+  if (source != AudioSource::PdmMems && source != AudioSource::Inmp441) {
+    stopDigitalInput();
+    return false;
+  }
+
+  if (_digitalInputReady && _activeDigitalSource == s.audioSource) return true;
+
+  stopDigitalInput();
+
+  bool ok = false;
+  switch (source) {
+    case AudioSource::PdmMems:
+      g_audioI2s.setPinsPdmRx((int8_t)s.pdmClkPin, (int8_t)s.pdmDataPin);
+      ok = g_audioI2s.begin(I2S_MODE_PDM_RX, kDigitalSampleRate, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
+      break;
+
+    case AudioSource::Inmp441:
+      g_audioI2s.setPins((int8_t)s.inmp441BclkPin, (int8_t)s.inmp441WsPin, -1, (int8_t)s.inmp441DataPin);
+      ok = g_audioI2s.begin(I2S_MODE_STD, kDigitalSampleRate, I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT);
+      break;
+
+    default:
+      break;
+  }
+
+  _digitalInputReady = ok;
+  _activeDigitalSource = ok ? s.audioSource : 0xFF;
+  return ok;
+}
+
+void AudioEngine::stopDigitalInput() {
+  if (_digitalInputReady) g_audioI2s.end();
+  _digitalInputReady = false;
+  _activeDigitalSource = 0xFF;
+}
+
+float AudioEngine::computePdmRms(const SettingsV1& s, uint16_t sampleCount, bool& okOut) {
+  okOut = false;
+  if (!ensureDigitalInput(s)) return 0.0f;
+
+  sampleCount = (uint16_t)clampf((float)sampleCount, (float)kDigitalMinSampleCount, (float)kDigitalMaxSampleCount);
+  int16_t samples[kDigitalMaxSampleCount];
+  const size_t bytesWanted = (size_t)sampleCount * sizeof(int16_t);
+  const size_t bytesRead = g_audioI2s.readBytes((char*)samples, bytesWanted);
+  const size_t count = bytesRead / sizeof(int16_t);
+  if (count < 16) return 0.0f;
+
+  double sum = 0.0;
+  double sum2 = 0.0;
+  for (size_t i = 0; i < count; i++) {
+    const double v = (double)samples[i];
+    sum += v;
+    sum2 += v * v;
+  }
+
+  const double n = (double)count;
+  const double mean = sum / n;
+  double var = (sum2 / n) - (mean * mean);
+  if (var < 0.0) var = 0.0;
+
+  okOut = true;
+  return (float)sqrt(var);
+}
+
+float AudioEngine::computeInmp441Rms(const SettingsV1& s, uint16_t sampleCount, bool& okOut) {
+  okOut = false;
+  if (!ensureDigitalInput(s)) return 0.0f;
+
+  sampleCount = (uint16_t)clampf((float)sampleCount, (float)kDigitalMinSampleCount, (float)kDigitalMaxSampleCount);
+  int32_t samples[kDigitalMaxSampleCount];
+  const size_t bytesWanted = (size_t)sampleCount * sizeof(int32_t);
+  const size_t bytesRead = g_audioI2s.readBytes((char*)samples, bytesWanted);
+  const size_t count = bytesRead / sizeof(int32_t);
+  if (count < 16) return 0.0f;
+
+  double sum = 0.0;
+  double sum2 = 0.0;
+  for (size_t i = 0; i < count; i++) {
+    const int32_t sample = samples[i] >> 8;
+    const double v = (double)sample;
+    sum += v;
+    sum2 += v * v;
+  }
+
+  const double n = (double)count;
+  const double mean = sum / n;
+  double var = (sum2 / n) - (mean * mean);
+  if (var < 0.0) var = 0.0;
+
   okOut = true;
   return (float)sqrt(var);
 }
@@ -154,10 +268,8 @@ float AudioEngine::computeCalibratedDb(float rms, const SettingsV1& s) const {
 float AudioEngine::captureCalibrationLogRms(const SettingsV1& s, bool& okOut) {
   okOut = false;
 
-  if ((AudioSource)s.audioSource != AudioSource::SensorAnalog) {
-    if (_m.rawRms <= 0.0f) return 0.0f;
-    okOut = true;
-    return log10f(_m.rawRms + kRmsEpsilon);
+  if (!sourceSupportsCalibration(s.audioSource)) {
+    return 0.0f;
   }
 
   float logSamples[kCalibrationSampleCount];
@@ -165,11 +277,20 @@ float AudioEngine::captureCalibrationLogRms(const SettingsV1& s, bool& okOut) {
   uint32_t startMs = millis();
 
   while ((millis() - startMs) < s.calibrationCaptureMs && sampleUsed < kCalibrationSampleCount) {
-    uint16_t meanAdc = 0;
-    int lastAdc = 0;
-    bool analogOk = false;
-    float rms = computeAnalogRms(s.analogPin, s.analogRmsSamples, meanAdc, lastAdc, analogOk);
-    if (analogOk && rms > 0.0f) {
+    bool captureOk = false;
+    float rms = 0.0f;
+
+    if ((AudioSource)s.audioSource == AudioSource::SensorAnalog) {
+      uint16_t meanAdc = 0;
+      int lastAdc = 0;
+      rms = computeAnalogRms(s.analogPin, s.analogRmsSamples, meanAdc, lastAdc, captureOk);
+    } else if ((AudioSource)s.audioSource == AudioSource::PdmMems) {
+      rms = computePdmRms(s, s.analogRmsSamples, captureOk);
+    } else if ((AudioSource)s.audioSource == AudioSource::Inmp441) {
+      rms = computeInmp441Rms(s, s.analogRmsSamples, captureOk);
+    }
+
+    if (captureOk && rms > 0.0f) {
       logSamples[sampleUsed++] = log10f(rms + kRmsEpsilon);
     }
   }
@@ -239,6 +360,7 @@ void AudioEngine::update(SettingsV1* settings) {
 
   switch ((AudioSource)settings->audioSource) {
     case AudioSource::Demo:
+      stopDigitalInput();
       dbRaw = computeDemoDb();
       rawRms = powf(10.0f, dbRaw / 20.0f);
       meanAdc = 2048;
@@ -247,6 +369,7 @@ void AudioEngine::update(SettingsV1* settings) {
       break;
 
     case AudioSource::SensorAnalog:
+      stopDigitalInput();
       rawRms = computeAnalogRms(settings->analogPin, settings->analogRmsSamples, meanAdc, lastAdc, analogOk);
       dbRaw = computeCalibratedDb(rawRms, *settings);
       // Keep the legacy global offset only for the uncalibrated fallback path.
@@ -258,7 +381,34 @@ void AudioEngine::update(SettingsV1* settings) {
       dbRaw = clampf(dbRaw, 0.0f, 120.0f);
       break;
 
+    case AudioSource::PdmMems:
+      rawRms = computePdmRms(*settings, settings->analogRmsSamples, analogOk);
+      if (analogOk && rawRms > 0.0f) {
+        dbRaw = computeCalibratedDb(rawRms, *settings);
+        if (countValidCalibrationPoints(*settings) == 0) {
+          dbRaw += settings->analogExtraOffsetDb;
+        }
+        dbRaw = clampf(dbRaw, 0.0f, 120.0f);
+      } else {
+        dbRaw = _fast;
+      }
+      break;
+
+    case AudioSource::Inmp441:
+      rawRms = computeInmp441Rms(*settings, settings->analogRmsSamples, analogOk);
+      if (analogOk && rawRms > 0.0f) {
+        dbRaw = computeCalibratedDb(rawRms, *settings);
+        if (countValidCalibrationPoints(*settings) == 0) {
+          dbRaw += settings->analogExtraOffsetDb;
+        }
+        dbRaw = clampf(dbRaw, 0.0f, 120.0f);
+      } else {
+        dbRaw = _fast;
+      }
+      break;
+
     default:
+      stopDigitalInput();
       dbRaw = computeDemoDb();
       rawRms = powf(10.0f, dbRaw / 20.0f);
       meanAdc = 2048;

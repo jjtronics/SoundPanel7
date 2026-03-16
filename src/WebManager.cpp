@@ -197,9 +197,14 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
   json += "\"liveEnabled\":"; json += (s && s->liveEnabled ? "true" : "false"); json += ",";
   json += "\"touchEnabled\":"; json += (s && s->touchEnabled ? "true" : "false"); json += ",";
+  json += "\"hasScreen\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
   json += "\"dashboardPage\":"; json += String(s ? s->dashboardPage : DEFAULT_DASHBOARD_PAGE); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s ? s->dashboardFullscreenMask : DEFAULT_DASHBOARD_FULLSCREEN_MASK); json += ",";
   json += "\"audioSource\":"; json += String(s ? s->audioSource : 1); json += ",";
+  json += "\"audioSourceSupportsCalibration\":"; json += (AudioEngine::sourceSupportsCalibration(s ? s->audioSource : 1) ? "true" : "false"); json += ",";
+  json += "\"audioSourceUsesAnalog\":"; json += (AudioEngine::sourceUsesAnalog(s ? s->audioSource : 1) ? "true" : "false"); json += ",";
+  json += "\"supportsDashboardDisplay\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
+  json += "\"supportsDashboardPin\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -892,7 +897,11 @@ bool WebManager::requireStoreAndSettingsJson() {
 }
 
 bool WebManager::pinConfigured() const {
+#if !SOUNDPANEL7_HAS_SCREEN
+  return false;
+#else
   return _s && pinCodeIsConfigured(_s->dashboardPin);
+#endif
 }
 
 String WebManager::statusJson() const {
@@ -1027,6 +1036,10 @@ String WebManager::liveMetricsJson() const {
 }
 
 void WebManager::applyBacklightNow(uint8_t percent) {
+#if !SOUNDPANEL7_HAS_SCREEN
+  (void)percent;
+  return;
+#else
   if (!_board) {
     Serial0.println("[WEB] Backlight apply skipped: board=null");
     return;
@@ -1049,11 +1062,16 @@ void WebManager::applyBacklightNow(uint8_t percent) {
   bl->on();
   bl->setBrightness((int)percent);
   Serial0.printf("[WEB] Backlight ON (%u%%)\n", percent);
+#endif
 }
 
 void WebManager::applyTouchNow(bool enabled) {
+#if SOUNDPANEL7_HAS_SCREEN
   lvgl_port_set_touch_enabled(enabled);
   Serial0.printf("[WEB] Touch %s\n", enabled ? "ENABLED" : "DISABLED");
+#else
+  (void)enabled;
+#endif
 }
 
 void WebManager::applySettingsRuntimeState() {
@@ -1430,6 +1448,11 @@ void WebManager::handlePinSave() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
+#if !SOUNDPANEL7_HAS_SCREEN
+  replyErrorJson(400, "pin unsupported without screen");
+  return;
+#endif
+
   String body = _srv.arg("plain");
   String pin = sp7json::parseString(body, "pin", "", true);
   pin.trim();
@@ -1483,7 +1506,7 @@ void WebManager::handleUiSave() {
   if (hm < 1) hm = 1;
   if (hm > 60) hm = 60;
   if (audioSource < 0) audioSource = 0;
-  if (audioSource > 1) audioSource = 1;
+  if (audioSource > 3) audioSource = 3;
   if (arm < 0) arm = 0;
   if (arm > 1) arm = 1;
   dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
@@ -1496,22 +1519,28 @@ void WebManager::handleUiSave() {
   if (ccs < 1) ccs = 1;
   if (ccs > 30) ccs = 30;
 
-  _s->backlight = (uint8_t)bl;
+  if (SOUNDPANEL7_HAS_SCREEN) {
+    _s->backlight = (uint8_t)bl;
+  }
   _s->th.greenMax = (uint8_t)g;
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
   _s->audioSource = (uint8_t)audioSource;
   _s->audioResponseMode = (uint8_t)arm;
-  _s->touchEnabled = touchEnabled ? 1 : 0;
-  _s->dashboardPage = (uint8_t)dashboardPage;
-  _s->dashboardFullscreenMask = (uint8_t)dashboardFullscreenMask;
+  if (SOUNDPANEL7_HAS_SCREEN) {
+    _s->touchEnabled = touchEnabled ? 1 : 0;
+    _s->dashboardPage = (uint8_t)dashboardPage;
+    _s->dashboardFullscreenMask = (uint8_t)dashboardFullscreenMask;
+  }
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
   _s->calibrationPointCount = (uint8_t)calCount;
   _s->calibrationCaptureMs = (uint32_t)ccs * MS_PER_SECOND;
   if (_history) _history->settingsChanged();
-  if (dashboardPageRequested && _ui) _ui->requestDashboardPage(_s->dashboardPage);
-  else if (dashboardFullscreenMaskRequested && _ui) _ui->refreshDashboardLayout();
+  if (SOUNDPANEL7_HAS_SCREEN) {
+    if (dashboardPageRequested && _ui) _ui->requestDashboardPage(_s->dashboardPage);
+    else if (dashboardFullscreenMaskRequested && _ui) _ui->refreshDashboardLayout();
+  }
 
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
@@ -1569,6 +1598,10 @@ void WebManager::handleCalPoint() {
   }
   if (refDb <= 0.0f || refDb > 140.0f) {
     replyErrorJson(400, "bad refDb");
+    return;
+  }
+  if (!AudioEngine::sourceSupportsCalibration(_s->audioSource)) {
+    replyErrorJson(400, "source not calibratable");
     return;
   }
 
@@ -3813,11 +3846,13 @@ R"HTML(
                           <div class="hint">Fast reste reactif. Slow stabilise l'affichage.</div>
                           <div class="field">
                             <label>Micro</label>
-                            <div class="choiceRow">
-                              <button class="btn choice" id="micDemo" data-audio-source="0">Demo</button>
-                              <button class="btn choice" id="micAnalog" data-audio-source="1">Aalog Mic</button>
-                            </div>
-                            <div class="hint">Demo simule des valeurs. Aalog Mic utilise l'entree micro analogique.</div>
+                            <select id="audioSourceSelect">
+                              <option value="0">Demo</option>
+                              <option value="1">Analog Mic</option>
+                              <option value="2">PDM MEMS</option>
+                              <option value="3">INMP441</option>
+                            </select>
+                            <div class="hint" id="audioSourceHint">Choisis le type de micro cable sur la carte.</div>
                           </div>
                         </div>
                         <div>
@@ -4553,11 +4588,16 @@ R"HTML(
     redSinceMs: 0,
     liveEnabled: false,
     touchEnabled: true,
+    hasScreen: true,
+    supportsDashboardDisplay: true,
+    supportsDashboardPin: true,
     dashboardPage: 0,
     dashboardFullscreenMask: 0,
     dashboardDisplayDirty: false,
     uiDirty: false,
     uiAudioSource: 1,
+    uiAudioSourceSupportsCalibration: true,
+    uiAudioSourceUsesAnalog: true,
     uiResponseMode: 0,
     pinConfigured: false,
     calibrationPointCount: 3,
@@ -5366,7 +5406,7 @@ R"HTML(
       : "Micro live: indisponible";
     $("calLiveLog").textContent = merged.analogOk
       ? `Log calibration live: ${Math.log10((Number(merged.rawRms ?? 0) + 0.0001)).toFixed(4)}`
-      : "Log calibration live: --";
+      : (state.uiAudioSourceSupportsCalibration ? "Log calibration live: --" : "Log calibration live: indisponible en mode Demo");
 
     if (Array.isArray(merged.cal)) {
       let validCount = 0;
@@ -5401,9 +5441,16 @@ R"HTML(
       if ("warningHoldSec" in merged) $("warnHoldSec").value = warningHoldSec;
       if ("criticalHoldSec" in merged) $("critHoldSec").value = criticalHoldSec;
       if ("calibrationCaptureSec" in merged) $("calCaptureSec").value = Number(merged.calibrationCaptureSec ?? 3);
+      if ("hasScreen" in merged) state.hasScreen = Boolean(merged.hasScreen);
+      if ("supportsDashboardDisplay" in merged) state.supportsDashboardDisplay = Boolean(merged.supportsDashboardDisplay);
+      if ("supportsDashboardPin" in merged) state.supportsDashboardPin = Boolean(merged.supportsDashboardPin);
       if ("audioSource" in merged) state.uiAudioSource = Number(merged.audioSource ?? 1);
+      if ("audioSourceSupportsCalibration" in merged) state.uiAudioSourceSupportsCalibration = Boolean(merged.audioSourceSupportsCalibration);
+      if ("audioSourceUsesAnalog" in merged) state.uiAudioSourceUsesAnalog = Boolean(merged.audioSourceUsesAnalog);
       if ("audioResponseMode" in merged) state.uiResponseMode = Number(merged.audioResponseMode ?? 0);
       syncUiLabels();
+      applyHardwareCapabilities();
+      syncCalibrationAvailability();
     }
   }
 
@@ -5418,10 +5465,32 @@ R"HTML(
     $("gVal").textContent = g;
     $("oVal").textContent = o;
     $("hVal").textContent = $("hist").value;
-    $("micDemo").classList.toggle("active", state.uiAudioSource === 0);
-    $("micAnalog").classList.toggle("active", state.uiAudioSource === 1);
+    $("audioSourceSelect").value = String(state.uiAudioSource);
+    if (state.uiAudioSource === 0) {
+      $("audioSourceHint").textContent = "Demo simule des valeurs et desactive la calibration micro.";
+    } else if (state.uiAudioSource === 1) {
+      $("audioSourceHint").textContent = "Analog Mic utilise l'entree micro analogique configuree sur la carte.";
+    } else if (state.uiAudioSource === 2) {
+      $("audioSourceHint").textContent = "PDM MEMS utilise 2 fils: CLK et DATA.";
+    } else {
+      $("audioSourceHint").textContent = "INMP441 utilise 3 fils: BCLK, WS/LRCLK et SD.";
+    }
     $("modeFast").classList.toggle("active", state.uiResponseMode === 0);
     $("modeSlow").classList.toggle("active", state.uiResponseMode === 1);
+  }
+
+  function applyHardwareCapabilities() {
+    const displayBlock = $("settings-display");
+    const pinBlock = $("settings-pin");
+    if (displayBlock) displayBlock.style.display = state.supportsDashboardDisplay ? "" : "none";
+    if (pinBlock) pinBlock.style.display = state.supportsDashboardPin ? "" : "none";
+  }
+
+  function syncCalibrationAvailability() {
+    const enabled = Boolean(state.uiAudioSourceSupportsCalibration);
+    document.querySelectorAll("[data-cal-capture]").forEach((btn) => {
+      btn.disabled = !enabled;
+    });
   }
 
   function markUiDirty() {
@@ -6627,12 +6696,12 @@ R"HTML(
     });
   });
 
-  document.querySelectorAll("[data-audio-source]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      state.uiAudioSource = Number(btn.dataset.audioSource);
-      markUiDirty();
-      syncUiLabels();
-    });
+  $("audioSourceSelect").addEventListener("change", () => {
+    state.uiAudioSource = Number($("audioSourceSelect").value);
+    state.uiAudioSourceSupportsCalibration = state.uiAudioSource !== 0;
+    markUiDirty();
+    syncUiLabels();
+    syncCalibrationAvailability();
   });
 
   document.querySelectorAll("[data-cal-mode]").forEach((btn) => {

@@ -5,7 +5,9 @@
 
 enum class AudioSource : uint8_t {
   Demo = 0,
-  SensorAnalog = 1
+  SensorAnalog = 1,
+  PdmMems = 2,
+  Inmp441 = 3
 };
 
 struct AudioMetrics {
@@ -32,6 +34,8 @@ public:
 
   static const char* sourceLabel(uint8_t src);
   static const char* responseModeLabel(uint8_t mode);
+  static bool sourceSupportsCalibration(uint8_t src);
+  static bool sourceUsesAnalog(uint8_t src);
 
 private:
   AudioMetrics _m;
@@ -41,10 +45,16 @@ private:
   float _peak = 45.0f;
   uint32_t _lastPeakReset = 0;
   float _demoT = 0.0f;
+  uint8_t _activeDigitalSource = 0xFF;
+  bool _digitalInputReady = false;
 
   float computeDemoDb();
   float computeAnalogRms(uint8_t pin, uint16_t sampleCount, uint16_t& meanOut, int& lastOut, bool& okOut);
+  float computePdmRms(const SettingsV1& s, uint16_t sampleCount, bool& okOut);
+  float computeInmp441Rms(const SettingsV1& s, uint16_t sampleCount, bool& okOut);
   float computeCalibratedDb(float rms, const SettingsV1& s) const;
   float captureCalibrationLogRms(const SettingsV1& s, bool& okOut);
+  bool ensureDigitalInput(const SettingsV1& s);
+  void stopDigitalInput();
   static float clampf(float v, float lo, float hi);
 };

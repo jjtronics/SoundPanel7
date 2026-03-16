@@ -1,12 +1,16 @@
 #pragma once
 
 #include <Arduino.h>
-#include <lvgl.h>
 #include <esp_display_panel.hpp>
 
 #include "../SettingsStore.h"
 #include "../NetManager.h"
 #include "../SharedHistory.h"
+#include "AppConfig.h"
+
+#if SOUNDPANEL7_HAS_SCREEN
+#include <lvgl.h>
+#endif
 
 class UiManager {
 public:
@@ -23,6 +27,7 @@ public:
   void requestDashboardPage(uint8_t page, bool persistSelection = false);
   void refreshDashboardLayout();
 
+#if SOUNDPANEL7_HAS_SCREEN
 private:
   static constexpr uint16_t HISTORY_BAR_COUNT = SharedHistory::POINT_COUNT;
   static constexpr uint8_t DASH_PAGE_COUNT = 6;
@@ -274,4 +279,8 @@ private:
   static void onPinSubmit(lv_event_t* e);
   static void onPinConfigure(lv_event_t* e);
   static void onPinDisable(lv_event_t* e);
+#else
+private:
+  SettingsV1* _s = nullptr;
+#endif
 };
