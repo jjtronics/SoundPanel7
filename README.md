@@ -257,6 +257,14 @@ En mode headless :
 - le mode TARDIS peut piloter la LED RGB intégrée de certaines cartes ESP32-S3 standard pour simuler l'éclairage de cabine
 - le reste reste identique : mesure audio, interface web, Wi-Fi, NTP, MQTT, OTA, Home Assistant, export/import de config
 
+<p align="center">
+  <img src="MEDIAS/HARDWARE/Tardis-db_BACK.jpeg" alt="Version headless SoundPanel 7 intégrée dans une maquette TARDIS" width="420">
+</p>
+
+<p align="center">
+  <em>Exemple de build headless : sonomètre web-only intégré dans une maquette TARDIS.</em>
+</p>
+
 <a id="fr-achat-esp"></a>
 
 #### 🔗 Article et achat
@@ -526,6 +534,14 @@ En build headless, un bloc `Mode TARDIS` permet aussi de piloter l'éclairage ca
 - `Décollage TARDIS` : animation bleue non bloquante inspirée de la lueur de la TARDIS
 
 Sur les cartes compatibles, la LED RGB intégrée est utilisée pour l'intérieur, tandis que la LED extérieure reste pilotée par la sortie GPIO dédiée.
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/Tardis-db_FRONT.jpeg" alt="Mode TARDIS avec éclairage cabine bleu sur une maquette TARDIS headless" width="420">
+</p>
+
+<p align="center">
+  <em>Le mode TARDIS peut réutiliser la LED RGB intégrée pour animer l'éclairage cabine en bleu.</em>
+</p>
 
 #### Zone Paramètres
 
@@ -1217,6 +1233,14 @@ In headless mode:
 - TARDIS mode can drive the onboard RGB LED found on some standard ESP32-S3 boards to simulate the cabin light
 - the rest stays the same: audio metering, web UI, Wi-Fi, NTP, MQTT, OTA, Home Assistant, config export/import
 
+<p align="center">
+  <img src="MEDIAS/HARDWARE/Tardis-db_BACK.jpeg" alt="Headless SoundPanel 7 build integrated into a TARDIS model" width="420">
+</p>
+
+<p align="center">
+  <em>Example headless build: a web-only sound meter integrated into a TARDIS model.</em>
+</p>
+
 <a id="en-buy-the-esp"></a>
 
 #### 🔗 Article and purchase link
@@ -1311,6 +1335,14 @@ On headless builds, the web admin also exposes a `TARDIS mode` block for the cab
 - `TARDIS takeoff`: non-blocking blue animated effect inspired by the TARDIS beacon glow
 
 On compatible boards, the onboard RGB LED is used for the interior light, while the exterior light remains driven through its dedicated GPIO output.
+
+<p align="center">
+  <img src="MEDIAS/HARDWARE/Tardis-db_FRONT.jpeg" alt="TARDIS mode using the onboard RGB LED for blue cabin lighting" width="420">
+</p>
+
+<p align="center">
+  <em>TARDIS mode can reuse the onboard RGB LED to animate the cabin glow in blue.</em>
+</p>
 
 <a id="en-quick-start"></a>
 
