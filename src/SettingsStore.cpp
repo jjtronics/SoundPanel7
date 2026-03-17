@@ -515,6 +515,9 @@ void SettingsStore::load(SettingsV1 &out) {
   out.touchEnabled = (uint8_t)_prefs.getUChar("ui_touch", out.touchEnabled);
   out.dashboardPage = (uint8_t)_prefs.getUChar("ui_page", out.dashboardPage);
   out.dashboardFullscreenMask = (uint8_t)_prefs.getUChar("ui_fsm", out.dashboardFullscreenMask);
+  out.tardisModeEnabled = (uint8_t)_prefs.getUChar("td_en", out.tardisModeEnabled);
+  out.tardisInteriorLedEnabled = (uint8_t)_prefs.getUChar("td_in", out.tardisInteriorLedEnabled);
+  out.tardisExteriorLedEnabled = (uint8_t)_prefs.getUChar("td_ex", out.tardisExteriorLedEnabled);
   _prefs.getString("ui_pin", out.dashboardPin, sizeof(out.dashboardPin));
   const bool pinMigrated = out.dashboardPin[0]
     && !isPinHashRecord(out.dashboardPin)
@@ -664,6 +667,9 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("ui_touch", persisted.touchEnabled);
   _prefs.putUChar("ui_page", persisted.dashboardPage);
   _prefs.putUChar("ui_fsm", persisted.dashboardFullscreenMask);
+  _prefs.putUChar("td_en", persisted.tardisModeEnabled);
+  _prefs.putUChar("td_in", persisted.tardisInteriorLedEnabled);
+  _prefs.putUChar("td_ex", persisted.tardisExteriorLedEnabled);
   char dashboardPin[sizeof(persisted.dashboardPin)] = {0};
   if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(persisted.dashboardPin))
       && normalizePinStorage(dashboardPin, sizeof(dashboardPin))) {
@@ -780,6 +786,9 @@ void SettingsStore::sanitize(SettingsV1& s) {
   s.touchEnabled = s.touchEnabled ? 1 : 0;
   s.dashboardPage = normalizedDashboardPage(s.dashboardPage);
   s.dashboardFullscreenMask = normalizedDashboardFullscreenMask(s.dashboardFullscreenMask);
+  s.tardisModeEnabled = s.tardisModeEnabled ? 1 : 0;
+  s.tardisInteriorLedEnabled = s.tardisInteriorLedEnabled ? 1 : 0;
+  s.tardisExteriorLedEnabled = s.tardisExteriorLedEnabled ? 1 : 0;
 
   if (s.orangeAlertHoldMs > MAX_ALERT_HOLD_MS) s.orangeAlertHoldMs = MAX_ALERT_HOLD_MS;
   if (s.redAlertHoldMs > MAX_ALERT_HOLD_MS) s.redAlertHoldMs = MAX_ALERT_HOLD_MS;
@@ -1039,6 +1048,9 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
   json += "\"touchEnabled\":"; json += (s.touchEnabled ? "true" : "false"); json += ",";
   json += "\"dashboardPage\":"; json += String(s.dashboardPage); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s.dashboardFullscreenMask); json += ",";
+  json += "\"tardisModeEnabled\":"; json += (s.tardisModeEnabled ? "true" : "false"); json += ",";
+  json += "\"tardisInteriorLedEnabled\":"; json += (s.tardisInteriorLedEnabled ? "true" : "false"); json += ",";
+  json += "\"tardisExteriorLedEnabled\":"; json += (s.tardisExteriorLedEnabled ? "true" : "false"); json += ",";
   if (includeSecrets) {
     char dashboardPin[sizeof(s.dashboardPin)] = {0};
     if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(s.dashboardPin))) {
@@ -1271,6 +1283,9 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.dashboardFullscreenMask = normalizedDashboardFullscreenMask(
     (uint8_t)sp7json::parseInt(json, "dashboardFullscreenMask", next.dashboardFullscreenMask)
   );
+  next.tardisModeEnabled = sp7json::parseBool(json, "tardisModeEnabled", next.tardisModeEnabled != 0) ? 1 : 0;
+  next.tardisInteriorLedEnabled = sp7json::parseBool(json, "tardisInteriorLedEnabled", next.tardisInteriorLedEnabled != 0) ? 1 : 0;
+  next.tardisExteriorLedEnabled = sp7json::parseBool(json, "tardisExteriorLedEnabled", next.tardisExteriorLedEnabled != 0) ? 1 : 0;
   String dashboardPin = sp7json::parseString(json, "dashboardPin", String(next.dashboardPin));
   String homeAssistantToken = sp7json::parseString(json, "homeAssistantToken", String(next.homeAssistantToken));
 
@@ -1654,6 +1669,9 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.touchEnabled = def.touchEnabled;
     s.dashboardPage = def.dashboardPage;
     s.dashboardFullscreenMask = def.dashboardFullscreenMask;
+    s.tardisModeEnabled = def.tardisModeEnabled;
+    s.tardisInteriorLedEnabled = def.tardisInteriorLedEnabled;
+    s.tardisExteriorLedEnabled = def.tardisExteriorLedEnabled;
     s.audioResponseMode = def.audioResponseMode;
   } else if (scope == "security") {
     memcpy(s.dashboardPin, def.dashboardPin, sizeof(s.dashboardPin));

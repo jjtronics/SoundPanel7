@@ -4,7 +4,7 @@
 #include "AppConfig.h"
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
-static constexpr uint16_t SETTINGS_VERSION = 6;
+static constexpr uint16_t SETTINGS_VERSION = 7;
 static constexpr uint32_t MS_PER_SECOND = 1000UL;
 static constexpr uint32_t MS_PER_MINUTE = 60UL * MS_PER_SECOND;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
@@ -181,6 +181,9 @@ struct SettingsV1 {
   uint8_t touchEnabled = 1;
   uint8_t dashboardPage = DEFAULT_DASHBOARD_PAGE;
   uint8_t dashboardFullscreenMask = DEFAULT_DASHBOARD_FULLSCREEN_MASK;
+  uint8_t tardisModeEnabled = 0;
+  uint8_t tardisInteriorLedEnabled = 0;
+  uint8_t tardisExteriorLedEnabled = 0;
   char dashboardPin[PIN_STORAGE_MAX_LENGTH + 1] = "";
   char homeAssistantToken[HOME_ASSISTANT_TOKEN_MAX_LENGTH + 1] = "";
 

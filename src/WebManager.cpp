@@ -205,6 +205,12 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"audioSourceUsesAnalog\":"; json += (AudioEngine::sourceUsesAnalog(s ? s->audioSource : 1) ? "true" : "false"); json += ",";
   json += "\"supportsDashboardDisplay\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
   json += "\"supportsDashboardPin\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
+  json += "\"supportsTardisControl\":"; json += (SOUNDPANEL7_TARDIS_SUPPORTED ? "true" : "false"); json += ",";
+  json += "\"tardisModeEnabled\":"; json += (s && s->tardisModeEnabled ? "true" : "false"); json += ",";
+  json += "\"tardisInteriorLedEnabled\":"; json += (s && s->tardisInteriorLedEnabled ? "true" : "false"); json += ",";
+  json += "\"tardisExteriorLedEnabled\":"; json += (s && s->tardisExteriorLedEnabled ? "true" : "false"); json += ",";
+  json += "\"tardisInteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN); json += ",";
+  json += "\"tardisExteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -214,6 +220,24 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
     json += "\"calibrationPointCount\":"; json += String(s ? s->calibrationPointCount : 3); json += ",";
   }
   json += "\"calibrationCaptureSec\":"; json += String(s ? (s->calibrationCaptureMs / MS_PER_SECOND) : (DEFAULT_CALIBRATION_CAPTURE_MS / MS_PER_SECOND)); json += ",";
+}
+
+static bool tardisPinConflictsWithAudioPin(uint8_t pin, const SettingsV1* s) {
+  if (pin == SOUNDPANEL7_DEFAULT_ANALOG_PIN
+      || pin == SOUNDPANEL7_DEFAULT_PDM_CLK_PIN
+      || pin == SOUNDPANEL7_DEFAULT_PDM_DATA_PIN
+      || pin == SOUNDPANEL7_DEFAULT_INMP441_BCLK_PIN
+      || pin == SOUNDPANEL7_DEFAULT_INMP441_WS_PIN
+      || pin == SOUNDPANEL7_DEFAULT_INMP441_DATA_PIN) {
+    return true;
+  }
+  if (!s) return false;
+  return pin == s->analogPin
+      || pin == s->pdmClkPin
+      || pin == s->pdmDataPin
+      || pin == s->inmp441BclkPin
+      || pin == s->inmp441WsPin
+      || pin == s->inmp441DataPin;
 }
 
 static void appendPinStateJson(String& json, bool configured) {
@@ -595,6 +619,7 @@ bool WebManager::begin(SettingsStore* store,
   routes();
   setupLiveStream();
   _started = true;
+  applyTardisNow();
   Serial0.println("[WEB] LIVE SSE on 81");
   syncHttpAvailability();
   return true;
@@ -1074,11 +1099,51 @@ void WebManager::applyTouchNow(bool enabled) {
 #endif
 }
 
+void WebManager::applyTardisPinNow(uint8_t pin, bool enabled, const char* label) {
+#if !SOUNDPANEL7_TARDIS_SUPPORTED
+  (void)pin;
+  (void)enabled;
+  (void)label;
+  return;
+#else
+  if (tardisPinConflictsWithAudioPin(pin, _s)) {
+    Serial0.printf("[TARDIS] %s skipped on GPIO%u (audio conflict)\n",
+                   label ? label : "led",
+                   (unsigned)pin);
+    return;
+  }
+
+  pinMode(pin, OUTPUT);
+#if SOUNDPANEL7_TARDIS_LED_ACTIVE_HIGH
+  digitalWrite(pin, enabled ? HIGH : LOW);
+#else
+  digitalWrite(pin, enabled ? LOW : HIGH);
+#endif
+  Serial0.printf("[TARDIS] %s GPIO%u -> %s\n",
+                 label ? label : "led",
+                 (unsigned)pin,
+                 enabled ? "ON" : "OFF");
+#endif
+}
+
+void WebManager::applyTardisNow() {
+#if !SOUNDPANEL7_TARDIS_SUPPORTED
+  return;
+#else
+  const bool modeEnabled = _s && _s->tardisModeEnabled;
+  const bool interiorEnabled = modeEnabled && _s && _s->tardisInteriorLedEnabled;
+  const bool exteriorEnabled = modeEnabled && _s && _s->tardisExteriorLedEnabled;
+  applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN, interiorEnabled, "interior");
+  applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN, exteriorEnabled, "exterior");
+#endif
+}
+
 void WebManager::applySettingsRuntimeState() {
   if (!_s) return;
 
   applyBacklightNow(_s->backlight);
   applyTouchNow(_s->touchEnabled != 0);
+  applyTardisNow();
 
   if (_history) _history->settingsChanged();
 
@@ -1490,6 +1555,9 @@ void WebManager::handleUiSave() {
   int audioSource = sp7json::parseInt(body, "audioSource", (int)_s->audioSource);
   int arm = sp7json::parseInt(body, "audioResponseMode", (int)_s->audioResponseMode);
   const bool touchEnabled = sp7json::parseBool(body, "touchEnabled", _s->touchEnabled != 0);
+  const bool tardisModeEnabled = sp7json::parseBool(body, "tardisModeEnabled", _s->tardisModeEnabled != 0);
+  const bool tardisInteriorLedEnabled = sp7json::parseBool(body, "tardisInteriorLedEnabled", _s->tardisInteriorLedEnabled != 0);
+  const bool tardisExteriorLedEnabled = sp7json::parseBool(body, "tardisExteriorLedEnabled", _s->tardisExteriorLedEnabled != 0);
   int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
   int dashboardFullscreenMask = sp7json::parseInt(body, "dashboardFullscreenMask", (int)_s->dashboardFullscreenMask);
   int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
@@ -1539,6 +1607,11 @@ void WebManager::handleUiSave() {
     _s->dashboardPage = (uint8_t)dashboardPage;
     _s->dashboardFullscreenMask = (uint8_t)dashboardFullscreenMask;
   }
+  if (SOUNDPANEL7_TARDIS_SUPPORTED) {
+    _s->tardisModeEnabled = tardisModeEnabled ? 1 : 0;
+    _s->tardisInteriorLedEnabled = tardisInteriorLedEnabled ? 1 : 0;
+    _s->tardisExteriorLedEnabled = tardisExteriorLedEnabled ? 1 : 0;
+  }
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
   if (AudioEngine::sourceSupportsCalibration(_s->audioSource)) {
@@ -1555,9 +1628,12 @@ void WebManager::handleUiSave() {
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
   applyTouchNow(_s->touchEnabled != 0);
+  applyTardisNow();
 
-  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
-                 bl, touchEnabled ? 1 : 0, g, o, hm, dashboardPage, dashboardFullscreenMask,
+  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d tardis=%d int=%d ext=%d green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
+                 bl, touchEnabled ? 1 : 0,
+                 tardisModeEnabled ? 1 : 0, tardisInteriorLedEnabled ? 1 : 0, tardisExteriorLedEnabled ? 1 : 0,
+                 g, o, hm, dashboardPage, dashboardFullscreenMask,
                  AudioEngine::sourceLabel(_s->audioSource),
                  AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
   replyOkJson(true);
@@ -1919,6 +1995,8 @@ void WebManager::handleShutdown() {
   delay(150);
 
   applyBacklightNow(0);
+  applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN, false, "interior");
+  applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN, false, "exterior");
   delay(80);
 
   gpio_hold_dis(GPIO_NUM_0);
@@ -3974,6 +4052,63 @@ R"HTML(
                       </div>
                       <div class="toast" id="dashboardPageToast"></div>
                     </div>
+
+                    <div class="settingsSurfaceBlock" id="settings-tardis">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Mode TARDIS</h3>
+                          <div class="settingsSublead">Carte reservee au build headless pour piloter les LED de cabine sans toucher aux GPIO audio.</div>
+                        </div>
+                        <div class="pill mono" id="tardisPinsBadge">GPIO -- / --</div>
+                      </div>
+                      <div class="settingsSplit">
+                        <div>
+                          <div class="field">
+                            <div class="switchRow">
+                              <div class="switchText">
+                                <label>Mode TARDIS</label>
+                                <div class="switchState mono" id="tardisModeEnabledVal">--</div>
+                              </div>
+                              <button class="switch" id="tardisModeEnabled" type="button" aria-label="Activer ou desactiver le mode TARDIS" aria-pressed="false">
+                                <span class="switchTrack"></span>
+                                <span class="switchThumb"></span>
+                              </button>
+                            </div>
+                          </div>
+                          <div class="field">
+                            <div class="switchRow">
+                              <div class="switchText">
+                                <label>LED cabine interieur</label>
+                                <div class="switchState mono" id="tardisInteriorLedEnabledVal">--</div>
+                              </div>
+                              <button class="switch" id="tardisInteriorLedEnabled" type="button" aria-label="Activer ou desactiver la LED interieur" aria-pressed="false">
+                                <span class="switchTrack"></span>
+                                <span class="switchThumb"></span>
+                              </button>
+                            </div>
+                          </div>
+                          <div class="field">
+                            <div class="switchRow">
+                              <div class="switchText">
+                                <label>LED exterieur</label>
+                                <div class="switchState mono" id="tardisExteriorLedEnabledVal">--</div>
+                              </div>
+                              <button class="switch" id="tardisExteriorLedEnabled" type="button" aria-label="Activer ou desactiver la LED exterieur" aria-pressed="false">
+                                <span class="switchTrack"></span>
+                                <span class="switchThumb"></span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <div class="hint" id="tardisPinsHint">GPIO interieur -- / exterieur --. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.</div>
+                        </div>
+                      </div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="saveTardisAdv">Appliquer le mode TARDIS</button>
+                      </div>
+                      <div class="toast" id="tardisToast"></div>
+                    </div>
                   </section>
                 </div>
 
@@ -4620,9 +4755,16 @@ R"HTML(
     hasScreen: true,
     supportsDashboardDisplay: true,
     supportsDashboardPin: true,
+    supportsTardisControl: false,
     dashboardPage: 0,
     dashboardFullscreenMask: 0,
     dashboardDisplayDirty: false,
+    tardisModeEnabled: false,
+    tardisInteriorLedEnabled: false,
+    tardisExteriorLedEnabled: false,
+    tardisInteriorLedPin: 15,
+    tardisExteriorLedPin: 16,
+    tardisDirty: false,
     uiDirty: false,
     uiAudioSource: 1,
     uiAudioSourceSupportsCalibration: true,
@@ -4726,6 +4868,29 @@ R"HTML(
 
   function readDashboardTouchEnabled() {
     return $("touchEnabledAdv").classList.contains("active");
+  }
+
+  function setTardisSwitch(id, valueId, enabled, onLabel) {
+    const active = Boolean(enabled);
+    $(id).classList.toggle("active", active);
+    $(id).setAttribute("aria-pressed", active ? "true" : "false");
+    $(valueId).textContent = active ? onLabel : "OFF";
+  }
+
+  function syncTardisUi() {
+    setTardisSwitch("tardisModeEnabled", "tardisModeEnabledVal", state.tardisModeEnabled, "ACTIF");
+    setTardisSwitch("tardisInteriorLedEnabled", "tardisInteriorLedEnabledVal", state.tardisInteriorLedEnabled, "ON");
+    setTardisSwitch("tardisExteriorLedEnabled", "tardisExteriorLedEnabledVal", state.tardisExteriorLedEnabled, "ON");
+
+    const pinsBadge = `GPIO ${state.tardisInteriorLedPin} / ${state.tardisExteriorLedPin}`;
+    $("tardisPinsBadge").textContent = pinsBadge;
+    $("tardisPinsHint").textContent =
+      `GPIO interieur ${state.tardisInteriorLedPin} / exterieur ${state.tardisExteriorLedPin}. ` +
+      "Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.";
+
+    const ledsEnabled = Boolean(state.tardisModeEnabled);
+    $("tardisInteriorLedEnabled").disabled = !ledsEnabled;
+    $("tardisExteriorLedEnabled").disabled = !ledsEnabled;
   }
 
   function sanitizeUsernameValue(value) {
@@ -5393,6 +5558,15 @@ R"HTML(
       state.dashboardFullscreenMask = getDashboardFullscreenMaskValue(merged.dashboardFullscreenMask);
       applyDashboardFullscreenMask(state.dashboardFullscreenMask);
     }
+    if ("supportsTardisControl" in merged) state.supportsTardisControl = Boolean(merged.supportsTardisControl);
+    if ("tardisInteriorLedPin" in merged) state.tardisInteriorLedPin = Number(merged.tardisInteriorLedPin ?? state.tardisInteriorLedPin ?? 15);
+    if ("tardisExteriorLedPin" in merged) state.tardisExteriorLedPin = Number(merged.tardisExteriorLedPin ?? state.tardisExteriorLedPin ?? 16);
+    if (!state.tardisDirty) {
+      if ("tardisModeEnabled" in merged) state.tardisModeEnabled = Boolean(merged.tardisModeEnabled);
+      if ("tardisInteriorLedEnabled" in merged) state.tardisInteriorLedEnabled = Boolean(merged.tardisInteriorLedEnabled);
+      if ("tardisExteriorLedEnabled" in merged) state.tardisExteriorLedEnabled = Boolean(merged.tardisExteriorLedEnabled);
+      syncTardisUi();
+    }
 
     const db = Number(merged.db ?? 0);
     const leq = Number(merged.leq ?? 0);
@@ -5511,8 +5685,10 @@ R"HTML(
   function applyHardwareCapabilities() {
     const displayBlock = $("settings-display");
     const pinBlock = $("settings-pin");
+    const tardisBlock = $("settings-tardis");
     if (displayBlock) displayBlock.style.display = state.supportsDashboardDisplay ? "" : "none";
     if (pinBlock) pinBlock.style.display = state.supportsDashboardPin ? "" : "none";
+    if (tardisBlock) tardisBlock.style.display = state.supportsTardisControl ? "" : "none";
   }
 
   function syncCalibrationAvailability() {
@@ -5961,6 +6137,23 @@ R"HTML(
       await refreshStatus();
     } catch (err) {
       setToastError("dashboardPageToast", err);
+    }
+  }
+
+  async function saveTardisSettings() {
+    const payload = {
+      tardisModeEnabled: state.tardisModeEnabled,
+      tardisInteriorLedEnabled: state.tardisInteriorLedEnabled,
+      tardisExteriorLedEnabled: state.tardisExteriorLedEnabled,
+    };
+
+    try {
+      await apiPost("/api/ui", payload);
+      state.tardisDirty = false;
+      setToast("tardisToast", "Mode TARDIS mis a jour.");
+      await refreshStatus();
+    } catch (err) {
+      setToastError("tardisToast", err);
     }
   }
 
@@ -6681,6 +6874,8 @@ R"HTML(
     await postAction("/api/factory_reset", "Factory reset demande.");
   }
 
+  syncTardisUi();
+
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => setActivePage(tab.dataset.page));
   });
@@ -6705,6 +6900,24 @@ R"HTML(
     setDashboardTouchEnabled(next);
     state.touchEnabled = next;
     state.dashboardDisplayDirty = true;
+  });
+
+  $("tardisModeEnabled").addEventListener("click", () => {
+    state.tardisModeEnabled = !state.tardisModeEnabled;
+    state.tardisDirty = true;
+    syncTardisUi();
+  });
+
+  $("tardisInteriorLedEnabled").addEventListener("click", () => {
+    state.tardisInteriorLedEnabled = !state.tardisInteriorLedEnabled;
+    state.tardisDirty = true;
+    syncTardisUi();
+  });
+
+  $("tardisExteriorLedEnabled").addEventListener("click", () => {
+    state.tardisExteriorLedEnabled = !state.tardisExteriorLedEnabled;
+    state.tardisDirty = true;
+    syncTardisUi();
   });
 
   document.querySelectorAll("[data-dashboard-fullscreen]").forEach((btn) => {
@@ -6756,6 +6969,7 @@ R"HTML(
 
   $("saveUi").addEventListener("click", saveUi);
   $("saveDashboardPageAdv").addEventListener("click", saveDashboardPage);
+  $("saveTardisAdv").addEventListener("click", saveTardisSettings);
   $("savePinAdv").addEventListener("click", savePinSettings);
   $("clearPinAdv").addEventListener("click", clearPinSettings);
   $("createWebUserBtn").addEventListener("click", createWebUser);

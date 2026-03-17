@@ -150,6 +150,8 @@ private:
 
   void applyBacklightNow(uint8_t percent);
   void applyTouchNow(bool enabled);
+  void applyTardisNow();
+  void applyTardisPinNow(uint8_t pin, bool enabled, const char* label);
   void applySettingsRuntimeState();
   String historyJson() const;
 
