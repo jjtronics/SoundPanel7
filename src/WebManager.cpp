@@ -754,13 +754,22 @@ void WebManager::routes() {
 void WebManager::loop() {
   if (!_started) return;
   updateTardisAnimationNow();
-  if (liveTrafficPaused()) {
+
+  const bool localOtaInProgress = _ota && _ota->inProgress();
+  const bool releaseInstallInProgress = _releaseUpdate && _releaseUpdate->installInProgress();
+
+  if (localOtaInProgress) {
     stopHttpServer();
     if (_live && _live->clientCount() > 0) {
       _live->close();
     }
     return;
   }
+
+  if (releaseInstallInProgress && _live && _live->clientCount() > 0) {
+    _live->close();
+  }
+
   processPendingNotification();
   syncHttpAvailability();
   if (!_httpListening) return;
