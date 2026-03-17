@@ -1393,7 +1393,12 @@ void WebManager::handleAuthLogin() {
   const String body = _srv.arg("plain");
   String username = sp7json::parseString(body, "username", "", false);
   const String password = sp7json::parseString(body, "password", "", false);
+  Serial0.printf("[WEB][AUTH] login attempt user='%s' body=%uB password=%uB\n",
+    username.c_str(),
+    (unsigned)body.length(),
+    (unsigned)password.length());
   if (!normalizeUsername(username)) {
+    Serial0.println("[WEB][AUTH] login rejected: bad username");
     replyErrorJson(400, "bad username");
     return;
   }
@@ -1411,6 +1416,7 @@ void WebManager::handleAuthLogin() {
 
   const String computedHash = match ? hashPassword(match->username, password.c_str(), match->passwordSalt) : String("");
   if (!match || !secureEquals(match->passwordHash, computedHash.c_str())) {
+    Serial0.printf("[WEB][AUTH] login failed for '%s' (match=%u)\n", username.c_str(), match ? 1U : 0U);
     _loginFailureCount++;
     if (_loginFailureCount >= WEB_LOGIN_MAX_FAILURES) {
       _loginLockUntilMs = now + WEB_LOGIN_LOCK_MS;
@@ -1423,6 +1429,7 @@ void WebManager::handleAuthLogin() {
 
   _loginFailureCount = 0;
   _loginLockUntilMs = 0;
+  Serial0.printf("[WEB][AUTH] login success for '%s'\n", match->username);
   String liveToken;
   if (!issueSessionForUser(match->username, liveToken)) {
     replyErrorJson(500, "session failed");
@@ -1457,13 +1464,19 @@ void WebManager::handleAuthBootstrap() {
   const String body = _srv.arg("plain");
   String username = sp7json::parseString(body, "username", "", false);
   const String password = sp7json::parseString(body, "password", "", false);
+  Serial0.printf("[WEB][AUTH] bootstrap attempt user='%s' body=%uB password=%uB\n",
+    username.c_str(),
+    (unsigned)body.length(),
+    (unsigned)password.length());
   if (!normalizeUsername(username)) {
+    Serial0.println("[WEB][AUTH] bootstrap rejected: bad username");
     replyErrorJson(400, "bad username");
     return;
   }
 
   String passwordReason;
   if (!passwordIsStrongEnough(password, &passwordReason)) {
+    Serial0.printf("[WEB][AUTH] bootstrap rejected: %s\n", passwordReason.c_str());
     replyErrorJson(400, passwordReason);
     return;
   }
@@ -1481,9 +1494,11 @@ void WebManager::handleAuthBootstrap() {
 
   String err;
   if (!_store->upsertWebUser(user, &err)) {
+    Serial0.printf("[WEB][AUTH] bootstrap store failed: %s\n", err.c_str());
     replyErrorJson(400, err);
     return;
   }
+  Serial0.printf("[WEB][AUTH] bootstrap created '%s'\n", user.username);
 
   String liveToken;
   if (!issueSessionForUser(user.username, liveToken)) {
@@ -1530,13 +1545,19 @@ void WebManager::handleUsersCreate() {
   const String body = _srv.arg("plain");
   String username = sp7json::parseString(body, "username", "", false);
   const String password = sp7json::parseString(body, "password", "", false);
+  Serial0.printf("[WEB][AUTH] create user attempt user='%s' body=%uB password=%uB\n",
+    username.c_str(),
+    (unsigned)body.length(),
+    (unsigned)password.length());
   if (!normalizeUsername(username)) {
+    Serial0.println("[WEB][AUTH] create user rejected: bad username");
     replyErrorJson(400, "bad username");
     return;
   }
 
   String passwordReason;
   if (!passwordIsStrongEnough(password, &passwordReason)) {
+    Serial0.printf("[WEB][AUTH] create user rejected: %s\n", passwordReason.c_str());
     replyErrorJson(400, passwordReason);
     return;
   }
@@ -1545,6 +1566,7 @@ void WebManager::handleUsersCreate() {
   _store->loadWebUsers(existingUsers);
   for (const WebUserRecord& existing : existingUsers) {
     if (existing.active && strcmp(existing.username, username.c_str()) == 0) {
+      Serial0.printf("[WEB][AUTH] create user rejected: '%s' already exists\n", username.c_str());
       replyErrorJson(409, "user already exists");
       return;
     }
@@ -1563,10 +1585,12 @@ void WebManager::handleUsersCreate() {
 
   String err;
   if (!_store->upsertWebUser(user, &err)) {
+    Serial0.printf("[WEB][AUTH] create user store failed: %s\n", err.c_str());
     replyErrorJson(400, err);
     return;
   }
 
+  Serial0.printf("[WEB][AUTH] user created '%s'\n", user.username);
   replyOkJson();
 }
 
@@ -1576,13 +1600,19 @@ void WebManager::handleUsersPassword() {
   const String body = _srv.arg("plain");
   String username = sp7json::parseString(body, "username", "", false);
   const String password = sp7json::parseString(body, "password", "", false);
+  Serial0.printf("[WEB][AUTH] password update attempt user='%s' body=%uB password=%uB\n",
+    username.c_str(),
+    (unsigned)body.length(),
+    (unsigned)password.length());
   if (!normalizeUsername(username)) {
+    Serial0.println("[WEB][AUTH] password update rejected: bad username");
     replyErrorJson(400, "bad username");
     return;
   }
 
   String passwordReason;
   if (!passwordIsStrongEnough(password, &passwordReason)) {
+    Serial0.printf("[WEB][AUTH] password update rejected: %s\n", passwordReason.c_str());
     replyErrorJson(400, passwordReason);
     return;
   }
@@ -1598,6 +1628,7 @@ void WebManager::handleUsersPassword() {
     }
   }
   if (index < 0) {
+    Serial0.printf("[WEB][AUTH] password update failed: user '%s' not found\n", username.c_str());
     replyErrorJson(404, "user not found");
     return;
   }
@@ -1612,10 +1643,12 @@ void WebManager::handleUsersPassword() {
 
   String err;
   if (!_store->upsertWebUser(users[index], &err)) {
+    Serial0.printf("[WEB][AUTH] password update store failed: %s\n", err.c_str());
     replyErrorJson(400, err);
     return;
   }
 
+  Serial0.printf("[WEB][AUTH] password updated for '%s'\n", username.c_str());
   invalidateSessionsForUser(username.c_str());
   replyOkJson();
 }

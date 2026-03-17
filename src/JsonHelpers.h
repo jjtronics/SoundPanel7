@@ -5,14 +5,64 @@
 
 namespace sp7json {
 
-inline int findValueStart(const String& body, const char* key) {
-  String k = String("\"") + key + "\":";
-  int p = body.indexOf(k);
-  if (p < 0) return -1;
-  p += k.length();
+inline bool isJsonWhitespace(char c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
 
-  while (p < (int)body.length() && (body[p] == ' ' || body[p] == '\t')) p++;
-  return p;
+inline bool appendUtf8Codepoint(String& out, uint32_t codepoint) {
+  if (codepoint <= 0x7F) {
+    out += (char)codepoint;
+    return true;
+  }
+  if (codepoint <= 0x7FF) {
+    out += (char)(0xC0 | ((codepoint >> 6) & 0x1F));
+    out += (char)(0x80 | (codepoint & 0x3F));
+    return true;
+  }
+  if (codepoint <= 0xFFFF) {
+    out += (char)(0xE0 | ((codepoint >> 12) & 0x0F));
+    out += (char)(0x80 | ((codepoint >> 6) & 0x3F));
+    out += (char)(0x80 | (codepoint & 0x3F));
+    return true;
+  }
+  if (codepoint <= 0x10FFFF) {
+    out += (char)(0xF0 | ((codepoint >> 18) & 0x07));
+    out += (char)(0x80 | ((codepoint >> 12) & 0x3F));
+    out += (char)(0x80 | ((codepoint >> 6) & 0x3F));
+    out += (char)(0x80 | (codepoint & 0x3F));
+    return true;
+  }
+  return false;
+}
+
+inline int hexNibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+  if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+  return -1;
+}
+
+inline int findValueStart(const String& body, const char* key) {
+  if (!key || !key[0]) return -1;
+
+  const String quotedKey = String("\"") + key + "\"";
+  int searchFrom = 0;
+  while (searchFrom >= 0 && searchFrom < (int)body.length()) {
+    const int keyPos = body.indexOf(quotedKey, searchFrom);
+    if (keyPos < 0) return -1;
+
+    int p = keyPos + quotedKey.length();
+    while (p < (int)body.length() && isJsonWhitespace(body[p])) p++;
+    if (p >= (int)body.length() || body[p] != ':') {
+      searchFrom = keyPos + 1;
+      continue;
+    }
+
+    p++;
+    while (p < (int)body.length() && isJsonWhitespace(body[p])) p++;
+    return p;
+  }
+  return -1;
 }
 
 inline int parseInt(const String& body, const char* key, int def) {
@@ -87,7 +137,26 @@ inline String parseString(const String& body, const char* key, const String& def
       else if (n == 'n') out += '\n';
       else if (n == 'r') out += '\r';
       else if (n == 't') out += '\t';
-      else out += n;
+      else if (n == 'b') out += '\b';
+      else if (n == 'f') out += '\f';
+      else if (n == 'u' && (p + 4) <= (int)body.length()) {
+        uint32_t codepoint = 0;
+        bool ok = true;
+        for (int i = 0; i < 4; ++i) {
+          const int nibble = hexNibble(body[p + i]);
+          if (nibble < 0) {
+            ok = false;
+            break;
+          }
+          codepoint = (codepoint << 4) | (uint32_t)nibble;
+        }
+        if (ok) {
+          appendUtf8Codepoint(out, codepoint);
+          p += 4;
+        } else {
+          out += 'u';
+        }
+      } else out += n;
       continue;
     }
     if (c == '"') break;
