@@ -4,6 +4,12 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to rebuild and attach to the release
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,12 +17,14 @@ permissions:
 jobs:
   build-and-upload:
     runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
 
     steps:
       - name: Check out tagged release
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -38,6 +46,38 @@ jobs:
       - name: Install PlatformIO Core
         run: pip install platformio
 
+      - name: Resolve release metadata
+        id: resolve_release_metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ env.RELEASE_TAG }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repository = os.environ["REPOSITORY"]
+          tag_name = os.environ["TAG_NAME"]
+          token = os.environ["GH_TOKEN"]
+
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{repository}/releases/tags/{tag_name}",
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "User-Agent": "soundpanel7-release-workflow",
+              },
+          )
+
+          with urllib.request.urlopen(request) as response:
+              release = json.load(response)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"published_at={release['published_at']}\n")
+          PY
+
       - name: Build firmware
         run: |
           pio run -e soundpanel7_ota
@@ -45,40 +85,53 @@ jobs:
 
       - name: Generate release manifest
         env:
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ env.RELEASE_TAG }}
           REPOSITORY: ${{ github.repository }}
         run: |
           python tools/generate_release_manifest.py \
             --tag "${TAG_NAME}" \
             --repository "${REPOSITORY}" \
-            --published-at "${{ github.event.release.published_at }}" \
+            --published-at "${{ steps.resolve_release_metadata.outputs.published_at }}" \
             --build-dir .pio/build/soundpanel7_ota \
             --headless-build-dir .pio/build/soundpanel7_headless_ota \
             --output .pio/build/soundpanel7_ota/release-manifest.json
 
+      - name: Prepare release assets
+        run: |
+          mkdir -p .release-assets
+          cp .pio/build/soundpanel7_ota/firmware.bin .release-assets/soundpanel7_ota-firmware.bin
+          cp .pio/build/soundpanel7_ota/bootloader.bin .release-assets/soundpanel7_ota-bootloader.bin
+          cp .pio/build/soundpanel7_ota/partitions.bin .release-assets/soundpanel7_ota-partitions.bin
+          cp .pio/build/soundpanel7_headless_ota/firmware.bin .release-assets/soundpanel7_headless_ota-firmware.bin
+          cp .pio/build/soundpanel7_headless_ota/bootloader.bin .release-assets/soundpanel7_headless_ota-bootloader.bin
+          cp .pio/build/soundpanel7_headless_ota/partitions.bin .release-assets/soundpanel7_headless_ota-partitions.bin
+          cp .pio/build/soundpanel7_ota/release-manifest.json .release-assets/release-manifest.json
+
       - name: Upload release workflow artifact
         uses: actions/upload-artifact@v6
         with:
-          name: soundpanel7_${{ github.event.release.tag_name }}
+          name: soundpanel7_${{ env.RELEASE_TAG }}
           path: |
-            .pio/build/soundpanel7_ota/firmware.bin
-            .pio/build/soundpanel7_ota/bootloader.bin
-            .pio/build/soundpanel7_ota/partitions.bin
-            .pio/build/soundpanel7_headless_ota/firmware.bin
-            .pio/build/soundpanel7_headless_ota/bootloader.bin
-            .pio/build/soundpanel7_headless_ota/partitions.bin
-            .pio/build/soundpanel7_ota/release-manifest.json
+            .release-assets/*
+
+      - name: Remove legacy release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset "${{ env.RELEASE_TAG }}" firmware.bin --yes || true
+          gh release delete-asset "${{ env.RELEASE_TAG }}" bootloader.bin --yes || true
+          gh release delete-asset "${{ env.RELEASE_TAG }}" partitions.bin --yes || true
 
       - name: Attach binaries to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            .pio/build/soundpanel7_ota/firmware.bin#soundpanel7_ota-firmware.bin \
-            .pio/build/soundpanel7_ota/bootloader.bin#soundpanel7_ota-bootloader.bin \
-            .pio/build/soundpanel7_ota/partitions.bin#soundpanel7_ota-partitions.bin \
-            .pio/build/soundpanel7_headless_ota/firmware.bin#soundpanel7_headless_ota-firmware.bin \
-            .pio/build/soundpanel7_headless_ota/bootloader.bin#soundpanel7_headless_ota-bootloader.bin \
-            .pio/build/soundpanel7_headless_ota/partitions.bin#soundpanel7_headless_ota-partitions.bin \
-            .pio/build/soundpanel7_ota/release-manifest.json#release-manifest.json \
+          gh release upload "${{ env.RELEASE_TAG }}" \
+            .release-assets/soundpanel7_ota-firmware.bin \
+            .release-assets/soundpanel7_ota-bootloader.bin \
+            .release-assets/soundpanel7_ota-partitions.bin \
+            .release-assets/soundpanel7_headless_ota-firmware.bin \
+            .release-assets/soundpanel7_headless_ota-bootloader.bin \
+            .release-assets/soundpanel7_headless_ota-partitions.bin \
+            .release-assets/release-manifest.json \
             --clobber
