@@ -1000,10 +1000,32 @@ bool SettingsStore::upsertWebUser(const WebUserRecord& user, String* err) {
   snprintf(keySalt, sizeof(keySalt), "wu%ds", slot + 1);
   snprintf(keyHash, sizeof(keyHash), "wu%dh", slot + 1);
 
-  _prefs.putUChar(keyActive, users[slot].active);
-  _prefs.putString(keyUser, users[slot].username);
-  _prefs.putString(keySalt, users[slot].passwordSalt);
-  _prefs.putString(keyHash, users[slot].passwordHash);
+  if (_prefs.putUChar(keyActive, users[slot].active) != sizeof(uint8_t)) {
+    if (err) *err = "user active flag write failed";
+    return false;
+  }
+  if (_prefs.putString(keyUser, users[slot].username) != strlen(users[slot].username)) {
+    if (err) *err = "username write failed";
+    return false;
+  }
+  if (_prefs.putString(keySalt, users[slot].passwordSalt) != strlen(users[slot].passwordSalt)) {
+    if (err) *err = "password salt write failed";
+    return false;
+  }
+  if (_prefs.putString(keyHash, users[slot].passwordHash) != strlen(users[slot].passwordHash)) {
+    if (err) *err = "password hash write failed";
+    return false;
+  }
+
+  WebUserRecord verify[WEB_USER_MAX_COUNT];
+  loadWebUsers(verify);
+  if (!verify[slot].active
+      || strcmp(verify[slot].username, users[slot].username) != 0
+      || strcmp(verify[slot].passwordSalt, users[slot].passwordSalt) != 0
+      || strcmp(verify[slot].passwordHash, users[slot].passwordHash) != 0) {
+    if (err) *err = "user verification failed";
+    return false;
+  }
   return true;
 }
 
@@ -1044,10 +1066,20 @@ bool SettingsStore::deleteWebUser(const char* username, String* err) {
   snprintf(keySalt, sizeof(keySalt), "wu%ds", index + 1);
   snprintf(keyHash, sizeof(keyHash), "wu%dh", index + 1);
 
-  _prefs.putUChar(keyActive, 0);
-  _prefs.putString(keyUser, "");
-  _prefs.putString(keySalt, "");
-  _prefs.putString(keyHash, "");
+  if (_prefs.putUChar(keyActive, 0) != sizeof(uint8_t)
+      || _prefs.putString(keyUser, "") != 0
+      || _prefs.putString(keySalt, "") != 0
+      || _prefs.putString(keyHash, "") != 0) {
+    if (err) *err = "user delete write failed";
+    return false;
+  }
+
+  WebUserRecord verify[WEB_USER_MAX_COUNT];
+  loadWebUsers(verify);
+  if (verify[index].active) {
+    if (err) *err = "user delete verification failed";
+    return false;
+  }
   return true;
 }
 
