@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 data/video/*.mp4
 platformio.override.ini
+.release-assets/
