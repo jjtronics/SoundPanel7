@@ -8,6 +8,7 @@
 
 #include <esp_mac.h>
 #include <esp_random.h>
+#include <LittleFS.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/sha256.h>
 
@@ -17,11 +18,36 @@ static constexpr const char* kPinHashPrefix = "h1:";
 static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
 static constexpr size_t kSecretKeyLength = 32;
+static constexpr size_t kBackupChunkSize = 768;
+static constexpr uint8_t kBackupChunkMaxCount = 16;
+static constexpr const char* kBackupFilePath = "/sp7-backup.json";
+static constexpr const char* kBackupTsFilePath = "/sp7-backup.ts";
 static constexpr const char* kCalibrationProfileJsonNames[CALIBRATION_PROFILE_COUNT] = {
   "analog",
   "pdm",
   "inmp441",
 };
+
+bool ensureBackupFsMounted() {
+  static int8_t mounted = -1;
+  if (mounted >= 0) return mounted == 1;
+  mounted = LittleFS.begin(true) ? 1 : 0;
+  return mounted == 1;
+}
+
+bool readBackupFileString(const char* path, String& out) {
+  out = "";
+  if (!ensureBackupFsMounted()) return false;
+  File file = LittleFS.open(path, "r");
+  if (!file) return false;
+  const size_t size = file.size();
+  if (size) out.reserve(size + 1U);
+  while (file.available()) {
+    out += (char)file.read();
+  }
+  file.close();
+  return out.length() > 0;
+}
 
 void applyAudioBoardProfileDefaults(SettingsV1& s) {
   s.analogPin = SOUNDPANEL7_DEFAULT_ANALOG_PIN;
@@ -472,8 +498,9 @@ bool SettingsStore::normalizePinStorage(char* storage, size_t storageSize) {
 void SettingsStore::load(SettingsV1 &out) {
   uint32_t magic = _prefs.getUInt("magic", 0);
   uint16_t ver   = _prefs.getUShort("ver", 0);
+  const bool versionMismatch = (ver != SETTINGS_VERSION);
 
-  if (magic != SETTINGS_MAGIC || ver != SETTINGS_VERSION) {
+  if (magic != SETTINGS_MAGIC) {
     save(out);
     return;
   }
@@ -617,6 +644,7 @@ void SettingsStore::load(SettingsV1 &out) {
   if (slackMigrated) saveSecret("n_s_url", "slack_webhook", out.slackWebhookUrl);
   if (telegramMigrated) saveSecret("n_t_tok", "telegram_token", out.telegramBotToken);
   if (whatsappMigrated) saveSecret("n_w_tok", "whatsapp_token", out.whatsappAccessToken);
+  if (versionMismatch && ver < SETTINGS_VERSION) save(out);
 }
 
 void SettingsStore::save(const SettingsV1 &s) {
@@ -989,7 +1017,8 @@ void SettingsStore::clearWebUsers() {
   }
 }
 
-String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMode) const {
+String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMode, String* err) const {
+  if (err) *err = "";
   const bool includeSecrets = secretMode != EXPORT_SECRETS_OMIT;
   const bool clearSecrets = secretMode == EXPORT_SECRETS_CLEAR;
   String json;
@@ -1020,7 +1049,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
       sp7json::appendEscapedField(json, "homeAssistantToken", s.homeAssistantToken);
     } else {
       String homeAssistantToken;
-      encryptSecret("ha_token", s.homeAssistantToken, homeAssistantToken);
+      if (!encryptSecret("ha_token", s.homeAssistantToken, homeAssistantToken)) {
+        if (err) *err = "home assistant token export failed";
+        return String();
+      }
       sp7json::appendEscapedField(json, "homeAssistantToken", homeAssistantToken.c_str());
     }
   }
@@ -1044,7 +1076,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
         char purpose[8];
         snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
         String encrypted;
-        encryptSecret(purpose, s.wifiCredentials[i].password, encrypted);
+        if (!encryptSecret(purpose, s.wifiCredentials[i].password, encrypted)) {
+          if (err) *err = String("wifi") + String(i + 1) + " export failed";
+          return String();
+        }
         json += sp7json::escape(encrypted.c_str());
       }
       json += "\",";
@@ -1111,7 +1146,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
       sp7json::appendEscapedField(json, "otaPassword", s.otaPassword);
     } else {
       String otaPassword;
-      encryptSecret("ota_password", s.otaPassword, otaPassword);
+      if (!encryptSecret("ota_password", s.otaPassword, otaPassword)) {
+        if (err) *err = "ota password export failed";
+        return String();
+      }
       sp7json::appendEscapedField(json, "otaPassword", otaPassword.c_str());
     }
   }
@@ -1124,7 +1162,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
       sp7json::appendEscapedField(json, "mqttPassword", s.mqttPassword);
     } else {
       String mqttPassword;
-      encryptSecret("mqtt_password", s.mqttPassword, mqttPassword);
+      if (!encryptSecret("mqtt_password", s.mqttPassword, mqttPassword)) {
+        if (err) *err = "mqtt password export failed";
+        return String();
+      }
       sp7json::appendEscapedField(json, "mqttPassword", mqttPassword.c_str());
     }
   }
@@ -1140,7 +1181,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
       sp7json::appendEscapedField(json, "slackWebhookUrl", s.slackWebhookUrl);
     } else {
       String slackWebhookUrl;
-      encryptSecret("slack_webhook", s.slackWebhookUrl, slackWebhookUrl);
+      if (!encryptSecret("slack_webhook", s.slackWebhookUrl, slackWebhookUrl)) {
+        if (err) *err = "slack webhook export failed";
+        return String();
+      }
       sp7json::appendEscapedField(json, "slackWebhookUrl", slackWebhookUrl.c_str());
     }
   }
@@ -1151,7 +1195,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
       sp7json::appendEscapedField(json, "telegramBotToken", s.telegramBotToken);
     } else {
       String telegramBotToken;
-      encryptSecret("telegram_token", s.telegramBotToken, telegramBotToken);
+      if (!encryptSecret("telegram_token", s.telegramBotToken, telegramBotToken)) {
+        if (err) *err = "telegram token export failed";
+        return String();
+      }
       sp7json::appendEscapedField(json, "telegramBotToken", telegramBotToken.c_str());
     }
   }
@@ -1162,7 +1209,10 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
       sp7json::appendEscapedField(json, "whatsappAccessToken", s.whatsappAccessToken);
     } else {
       String whatsappAccessToken;
-      encryptSecret("whatsapp_token", s.whatsappAccessToken, whatsappAccessToken);
+      if (!encryptSecret("whatsapp_token", s.whatsappAccessToken, whatsappAccessToken)) {
+        if (err) *err = "whatsapp token export failed";
+        return String();
+      }
       sp7json::appendEscapedField(json, "whatsappAccessToken", whatsappAccessToken.c_str());
     }
   }
@@ -1175,6 +1225,21 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
 
 bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   SettingsV1 next = s;
+  const String type = sp7json::parseString(json, "type", "", false);
+  if (type != "soundpanel7-config") {
+    if (err) *err = "invalid config type";
+    return false;
+  }
+  const int version = sp7json::parseInt(json, "version", 0);
+  if (version <= 0) {
+    if (err) *err = "missing config version";
+    return false;
+  }
+  if (version > SETTINGS_VERSION) {
+    if (err) *err = "config created by newer firmware";
+    return false;
+  }
+
   auto loadImportedSecret = [&](const String& raw,
                                 const char* purpose,
                                 char* out,
@@ -1444,17 +1509,87 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
 }
 
 bool SettingsStore::saveBackup(const SettingsV1& s) {
+  SettingsV1 persisted = s;
+  syncActiveCalibrationProfile(persisted);
+
   Preferences backupPrefs;
   String backupNs = _ns + "_bak";
   if (!backupPrefs.begin(backupNs.c_str(), false)) return false;
-  backupPrefs.putString("cfg", exportJson(s, EXPORT_SECRETS_ENCRYPTED));
+  String err;
+  const String json = exportJson(persisted, EXPORT_SECRETS_ENCRYPTED, &err);
+  if (!json.length()) {
+    backupPrefs.end();
+    return false;
+  }
+  if (ensureBackupFsMounted()) {
+    File backupFile = LittleFS.open(kBackupFilePath, "w");
+    if (backupFile) {
+      const size_t written = backupFile.print(json);
+      backupFile.close();
+      if (written == json.length()) {
+        time_t now = time(nullptr);
+        const uint32_t ts = now > 946684800 ? (uint32_t)now : 0U;
+        File tsFile = LittleFS.open(kBackupTsFilePath, "w");
+        if (tsFile) {
+          const size_t tsWritten = tsFile.print(String(ts));
+          tsFile.close();
+          if (tsWritten > 0) {
+            backupPrefs.end();
+            return true;
+          }
+        }
+      }
+      LittleFS.remove(kBackupFilePath);
+      LittleFS.remove(kBackupTsFilePath);
+    }
+  }
+  const size_t chunkCount = (json.length() + kBackupChunkSize - 1U) / kBackupChunkSize;
+  if (chunkCount == 0 || chunkCount > kBackupChunkMaxCount) {
+    backupPrefs.end();
+    return false;
+  }
+
+  backupPrefs.remove("cfg");
+  backupPrefs.remove("parts");
+  backupPrefs.remove("len");
+  for (uint8_t i = 0; i < kBackupChunkMaxCount; i++) {
+    char key[8];
+    snprintf(key, sizeof(key), "cfg%u", (unsigned)i);
+    backupPrefs.remove(key);
+  }
+
+  bool chunksOk = true;
+  for (uint8_t i = 0; i < chunkCount; i++) {
+    const size_t start = (size_t)i * kBackupChunkSize;
+    const String chunk = json.substring(start, min(json.length(), start + kBackupChunkSize));
+    char key[8];
+    snprintf(key, sizeof(key), "cfg%u", (unsigned)i);
+    if (backupPrefs.putString(key, chunk) != chunk.length()) {
+      chunksOk = false;
+      break;
+    }
+  }
   time_t now = time(nullptr);
-  backupPrefs.putUInt("ts", now > 946684800 ? (uint32_t)now : 0U);
+  const uint32_t ts = now > 946684800 ? (uint32_t)now : 0U;
+  const size_t partsWritten = backupPrefs.putUChar("parts", (uint8_t)chunkCount);
+  const size_t lenWritten = backupPrefs.putUInt("len", (uint32_t)json.length());
+  const size_t tsWritten = backupPrefs.putUInt("ts", ts);
+  const bool ok = chunksOk
+               && partsWritten == sizeof(uint8_t)
+               && lenWritten == sizeof(uint32_t)
+               && tsWritten == sizeof(ts);
   backupPrefs.end();
-  return true;
+  return ok;
 }
 
 uint32_t SettingsStore::backupTimestamp() const {
+  String tsFileValue;
+  if (readBackupFileString(kBackupTsFilePath, tsFileValue)) {
+    tsFileValue.trim();
+    const uint32_t ts = (uint32_t)strtoul(tsFileValue.c_str(), nullptr, 10);
+    if (ts > 0) return ts;
+  }
+
   Preferences backupPrefs;
   String backupNs = _ns + "_bak";
   if (!backupPrefs.begin(backupNs.c_str(), true)) return 0;
@@ -1464,13 +1599,38 @@ uint32_t SettingsStore::backupTimestamp() const {
 }
 
 bool SettingsStore::restoreBackup(SettingsV1& out, String* err) {
+  String json;
+  if (readBackupFileString(kBackupFilePath, json)) {
+    return importJson(out, json, err);
+  }
+
   Preferences backupPrefs;
   String backupNs = _ns + "_bak";
   if (!backupPrefs.begin(backupNs.c_str(), true)) {
     if (err) *err = "backup unavailable";
     return false;
   }
-  String json = backupPrefs.getString("cfg", "");
+  const uint8_t partCount = backupPrefs.getUChar("parts", 0);
+  if (partCount > 0 && partCount <= kBackupChunkMaxCount) {
+    const uint32_t expectedLen = backupPrefs.getUInt("len", 0);
+    json.reserve(expectedLen ? expectedLen : (uint32_t)partCount * kBackupChunkSize);
+    for (uint8_t i = 0; i < partCount; i++) {
+      char key[8];
+      snprintf(key, sizeof(key), "cfg%u", (unsigned)i);
+      const String chunk = backupPrefs.getString(key, "");
+      if (!chunk.length()) {
+        json = "";
+        break;
+      }
+      json += chunk;
+    }
+    if (expectedLen && json.length() != expectedLen) {
+      json = "";
+    }
+  }
+  if (!json.length()) {
+    json = backupPrefs.getString("cfg", "");
+  }
   backupPrefs.end();
 
   if (!json.length()) {

@@ -1725,8 +1725,6 @@ void WebManager::handleWifiSave() {
     const bool keepPassword = sp7json::parseBool(body, keepPasswordKey.c_str(), false);
 
     ssid.trim();
-    password.trim();
-
     if (!ssid.length()) {
       next.wifiCredentials[i].ssid[0] = '\0';
       next.wifiCredentials[i].password[0] = '\0';
@@ -1814,14 +1812,26 @@ void WebManager::handleConfigExport() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
-  replyJson(200, _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_OMIT));
+  String err;
+  const String json = _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_OMIT, &err);
+  if (!json.length()) {
+    replyErrorJson(500, err.length() ? err : "config export failed");
+    return;
+  }
+  replyJson(200, json);
 }
 
 void WebManager::handleConfigExportFull() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
 
-  replyJson(200, _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_CLEAR));
+  String err;
+  const String json = _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_CLEAR, &err);
+  if (!json.length()) {
+    replyErrorJson(500, err.length() ? err : "config export failed");
+    return;
+  }
+  replyJson(200, json);
 }
 
 void WebManager::handleConfigImport() {
@@ -1837,7 +1847,6 @@ void WebManager::handleConfigImport() {
 
   _store->save(*_s);
   applySettingsRuntimeState();
-  if (_net) _net->reloadWifiConfig();
   pushLiveMetrics(true);
   replyOkJsonRebootRecommended();
 }
@@ -1866,7 +1875,6 @@ void WebManager::handleConfigRestore() {
 
   _store->save(*_s);
   applySettingsRuntimeState();
-  if (_net) _net->reloadWifiConfig();
   pushLiveMetrics(true);
   replyOkJsonRebootRecommended();
 }

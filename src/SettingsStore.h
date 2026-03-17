@@ -278,7 +278,7 @@ public:
   void load(SettingsV1 &out);
   void save(const SettingsV1 &s);
   void factoryReset();
-  String exportJson(const SettingsV1& s, SecretExportMode secretMode = EXPORT_SECRETS_OMIT) const;
+  String exportJson(const SettingsV1& s, SecretExportMode secretMode = EXPORT_SECRETS_OMIT, String* err = nullptr) const;
   bool importJson(SettingsV1& s, const String& json, String* err = nullptr);
   bool saveBackup(const SettingsV1& s);
   uint32_t backupTimestamp() const;
