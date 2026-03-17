@@ -168,6 +168,7 @@ void UiManager::begin(Board* board, SettingsV1* settings, SettingsStore* store, 
   _history = history;
 
   buildDashboard();
+  buildOtaStatusScreen();
 
   lvgl_port_set_touch_enabled(_s && _s->touchEnabled);
   if (_s) applyBacklight(_s->backlight);
@@ -705,6 +706,61 @@ void UiManager::buildPinOverlay() {
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
     lv_obj_center(lbl);
   }
+}
+
+void UiManager::buildOtaStatusScreen() {
+  _scrOta = lv_obj_create(nullptr);
+  lv_obj_set_style_bg_color(_scrOta, lv_color_hex(0x07111A), 0);
+  lv_obj_set_style_bg_opa(_scrOta, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(_scrOta, 0, 0);
+  lv_obj_clear_flag(_scrOta, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(_scrOta, LV_SCROLLBAR_MODE_OFF);
+
+  _otaStatusCard = lv_obj_create(_scrOta);
+  lv_obj_set_size(_otaStatusCard, 560, 280);
+  lv_obj_center(_otaStatusCard);
+  lv_obj_set_style_radius(_otaStatusCard, 28, 0);
+  lv_obj_set_style_border_width(_otaStatusCard, 0, 0);
+  lv_obj_set_style_bg_color(_otaStatusCard, lv_color_hex(0x102030), 0);
+  lv_obj_set_style_pad_all(_otaStatusCard, 28, 0);
+  lv_obj_set_style_pad_row(_otaStatusCard, 16, 0);
+  lv_obj_clear_flag(_otaStatusCard, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(_otaStatusCard, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_flex_flow(_otaStatusCard, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(_otaStatusCard, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+  _lblOtaEyebrow = lv_label_create(_otaStatusCard);
+  lv_label_set_text(_lblOtaEyebrow, "OTA LOCALE");
+  lv_obj_set_style_text_font(_lblOtaEyebrow, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblOtaEyebrow, lv_color_hex(0x7CC6FE), 0);
+
+  _lblOtaTitle = lv_label_create(_otaStatusCard);
+  lv_label_set_text(_lblOtaTitle, "Mise a jour en cours");
+  lv_obj_set_style_text_font(_lblOtaTitle, &lv_font_montserrat_24, 0);
+  lv_obj_set_style_text_color(_lblOtaTitle, lv_color_hex(0xF4F7FA), 0);
+
+  _lblOtaDetail = lv_label_create(_otaStatusCard);
+  lv_label_set_text(_lblOtaDetail, "Reception du firmware en cours...");
+  lv_label_set_long_mode(_lblOtaDetail, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(_lblOtaDetail, lv_pct(100));
+  lv_obj_set_style_text_font(_lblOtaDetail, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_color(_lblOtaDetail, lv_color_hex(0xB7C7D6), 0);
+
+  _barOtaProgress = lv_bar_create(_otaStatusCard);
+  lv_obj_set_size(_barOtaProgress, lv_pct(100), 18);
+  lv_bar_set_range(_barOtaProgress, 0, 100);
+  lv_bar_set_value(_barOtaProgress, 0, LV_ANIM_OFF);
+  lv_obj_set_style_radius(_barOtaProgress, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(_barOtaProgress, lv_color_hex(0x1D3145), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(_barOtaProgress, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(_barOtaProgress, 0, 0);
+  lv_obj_set_style_bg_color(_barOtaProgress, lv_color_hex(0x39A0ED), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(_barOtaProgress, LV_OPA_COVER, LV_PART_INDICATOR);
+
+  _lblOtaProgress = lv_label_create(_otaStatusCard);
+  lv_label_set_text(_lblOtaProgress, "0%");
+  lv_obj_set_style_text_font(_lblOtaProgress, &lv_font_montserrat_24, 0);
+  lv_obj_set_style_text_color(_lblOtaProgress, lv_color_hex(0xDCE7F2), 0);
 }
 
 void UiManager::setPinOverlayStatus(const char* text) {
@@ -1791,6 +1847,43 @@ void UiManager::showDashboard() {
   lv_scr_load(_scrDash);
 }
 
+void UiManager::showOtaStatusScreen(const char* title, const char* detail, uint8_t progressPct, bool success) {
+  if (!_scrOta) return;
+  if (progressPct > 100) progressPct = 100;
+  if (!lvgl_port_lock(-1)) return;
+
+  setLabelTextIfChanged(_lblOtaTitle, title ? title : "Mise a jour en cours");
+  setLabelTextIfChanged(_lblOtaDetail, detail ? detail : "Reception du firmware en cours...");
+  if (_barOtaProgress) {
+    lv_obj_set_style_bg_color(_barOtaProgress,
+                              success ? lv_color_hex(0x23C552) : lv_color_hex(0x39A0ED),
+                              LV_PART_INDICATOR);
+    lv_bar_set_value(_barOtaProgress, progressPct, LV_ANIM_OFF);
+  }
+  if (_lblOtaProgress) {
+    char pctBuf[8];
+    snprintf(pctBuf, sizeof(pctBuf), "%u%%", (unsigned)progressPct);
+    setLabelTextIfChanged(_lblOtaProgress, pctBuf);
+  }
+  if (lv_scr_act() != _scrOta) {
+    lv_scr_load(_scrOta);
+  }
+  lvgl_port_set_touch_enabled(false);
+  lv_timer_handler();
+  lvgl_port_unlock();
+}
+
+void UiManager::hideOtaStatusScreen() {
+  if (!_scrOta) return;
+  if (!lvgl_port_lock(-1)) return;
+  if (_scrDash && lv_scr_act() == _scrOta) {
+    lv_scr_load(_scrDash);
+  }
+  lvgl_port_set_touch_enabled(_s && _s->touchEnabled);
+  lv_timer_handler();
+  lvgl_port_unlock();
+}
+
 void UiManager::applyBacklight(uint8_t percent) {
   if (!_board) return;
   auto bl = _board->getBacklight();
@@ -2440,6 +2533,15 @@ void UiManager::begin(esp_panel::board::Board* board,
 }
 
 void UiManager::showDashboard() {}
+
+void UiManager::showOtaStatusScreen(const char* title, const char* detail, uint8_t progressPct, bool success) {
+  (void)title;
+  (void)detail;
+  (void)progressPct;
+  (void)success;
+}
+
+void UiManager::hideOtaStatusScreen() {}
 
 void UiManager::tick() {}
 

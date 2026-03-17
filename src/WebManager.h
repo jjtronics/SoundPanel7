@@ -168,6 +168,8 @@ private:
   void handleNotificationsGet();
   void handleNotificationsSave();
   void handleNotificationsTest();
+  void handleDebugLogsGet();
+  void handleDebugLogsClear();
 
   void updateAlertState(float dbInstant, float leq, float peak);
   void enqueueNotification(uint8_t alertState, bool isTest, float dbInstant, float leq, float peak, uint32_t durationMs = 0);

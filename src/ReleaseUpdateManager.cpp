@@ -4,12 +4,16 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_heap_caps.h>
 #include <ctime>
 #include <mbedtls/sha256.h>
 
 #include "AppConfig.h"
+#include "DebugLog.h"
 #include "JsonHelpers.h"
 #include "NetManager.h"
+
+#define Serial0 DebugSerial0
 
 namespace {
 String sha256Hex(const uint8_t digest[32]) {
@@ -21,6 +25,37 @@ String sha256Hex(const uint8_t digest[32]) {
   }
   out[64] = '\0';
   return String(out);
+}
+
+String stripLeadingVersionPrefix(const String& tag) {
+  if (tag.startsWith("v") || tag.startsWith("V")) {
+    return tag.substring(1);
+  }
+  return tag;
+}
+
+int findAssetStart(const String& payload, const char* assetName) {
+  if (!assetName || !assetName[0]) return -1;
+
+  String withSpace = String("\"name\": \"") + assetName + "\"";
+  int pos = payload.indexOf(withSpace);
+  if (pos >= 0) return pos;
+
+  String withoutSpace = String("\"name\":\"") + assetName + "\"";
+  return payload.indexOf(withoutSpace);
+}
+
+String extractReleaseAssetField(const String& payload, const char* assetName, const char* fieldName, const String& def = "") {
+  const int assetPos = findAssetStart(payload, assetName);
+  if (assetPos < 0) return def;
+
+  int nextAssetPos = payload.indexOf("\"name\": \"", assetPos + 1);
+  if (nextAssetPos < 0) nextAssetPos = payload.indexOf("\"name\":\"", assetPos + 1);
+  if (nextAssetPos < 0) nextAssetPos = payload.indexOf("]", assetPos + 1);
+  if (nextAssetPos < 0) nextAssetPos = payload.length();
+
+  const String scope = payload.substring(assetPos, nextAssetPos);
+  return sp7json::parseString(scope, fieldName, def, false);
 }
 }
 
@@ -362,26 +397,39 @@ void ReleaseUpdateManager::processInstall() {
 }
 
 bool ReleaseUpdateManager::fetchManifest(String& payload) {
+  String releasePayload;
+  String apiError;
+  if (fetchUrl(String(SOUNDPANEL7_RELEASE_LATEST_API_URL), releasePayload, _lastHttpCode, apiError)) {
+    if (parseLatestReleaseApiPayload(releasePayload)) {
+      payload = "";
+      return true;
+    }
+    apiError = _lastError[0] ? String(_lastError) : String("latest release parse failed");
+  } else if (apiError.length()) {
+    apiError = "release api " + apiError;
+  }
+
   String error;
   if (fetchUrl(String(manifestUrl()), payload, _lastHttpCode, error)) {
     return true;
   }
 
-  const String primaryError = error;
-  const int primaryCode = _lastHttpCode;
-
-  if (fetchManifestViaLatestReleaseApi(payload, _lastHttpCode, error)) {
-    return true;
+  if (apiError.length()) {
+    if (error.length()) {
+      setError(apiError + " / fallback manifest " + error);
+    } else {
+      setError(apiError);
+    }
+  } else if (error.length()) {
+    setError("manifest " + error);
+  } else {
+    setError("release check failed");
   }
-
-  if (primaryCode != 0) {
-    error = primaryError + " / fallback " + error;
-  }
-  setError(error);
   return false;
 }
 
 bool ReleaseUpdateManager::fetchUrl(const String& url, String& payload, int& httpCode, String& error) {
+  WiFi.setSleep(false);
   WiFiClientSecure client;
   client.setInsecure();
 
@@ -394,19 +442,32 @@ bool ReleaseUpdateManager::fetchUrl(const String& url, String& payload, int& htt
 
   if (!http.begin(client, url)) {
     httpCode = 0;
-    error = "manifest request init failed";
+    error = "request init failed";
     return false;
+  }
+
+  if (url.startsWith("https://api.github.com/")) {
+    http.addHeader("Accept", "application/vnd.github+json");
+    http.addHeader("X-GitHub-Api-Version", "2022-11-28");
   }
 
   const int code = http.GET();
   httpCode = code;
   if (code != HTTP_CODE_OK) {
-    error = "manifest http ";
+    error = "http ";
     error += String(code);
     if (code < 0) {
       error += " ";
       error += http.errorToString(code);
     }
+    Serial0.printf("[REL] HTTPS fail url=%s code=%d wifi=%d ip=%s rssi=%ld heap=%lu min=%lu\n",
+                   url.c_str(),
+                   code,
+                   (int)WiFi.status(),
+                   WiFi.localIP().toString().c_str(),
+                   (long)WiFi.RSSI(),
+                   (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                   (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     http.end();
     setError(error);
     return false;
@@ -416,10 +477,65 @@ bool ReleaseUpdateManager::fetchUrl(const String& url, String& payload, int& htt
   http.end();
 
   if (payload.length() == 0) {
-    error = "empty manifest";
+    error = "empty response";
     return false;
   }
 
+  return true;
+}
+
+bool ReleaseUpdateManager::parseLatestReleaseApiPayload(const String& payload) {
+  const String tag = sp7json::parseString(payload, "tag_name", "", false);
+  const String version = stripLeadingVersionPrefix(tag);
+  const String publishedAt = sp7json::parseString(payload, "published_at", "", false);
+  const String releaseUrl = sp7json::parseString(payload, "html_url", "", false);
+  const String otaUrl = extractReleaseAssetField(payload, "firmware.bin", "browser_download_url", "");
+  String otaSha256 = extractReleaseAssetField(payload, "firmware.bin", "digest", "");
+
+  if (version.isEmpty()) {
+    setError("latest release missing tag_name");
+    return false;
+  }
+  if (releaseUrl.isEmpty()) {
+    setError("latest release missing html_url");
+    return false;
+  }
+  if (otaUrl.isEmpty()) {
+    setError("latest release missing firmware asset url");
+    return false;
+  }
+  if (otaSha256.startsWith("sha256:")) {
+    otaSha256.remove(0, 7);
+  }
+  if (otaSha256.length() != 64) {
+    setError("latest release missing firmware digest");
+    return false;
+  }
+
+  if (!sp7json::safeCopy(_latestVersion, sizeof(_latestVersion), version)) {
+    setError("version too long");
+    return false;
+  }
+  if (!sp7json::safeCopy(_publishedAt, sizeof(_publishedAt), publishedAt)) {
+    setError("published_at too long");
+    return false;
+  }
+  if (!sp7json::safeCopy(_releaseUrl, sizeof(_releaseUrl), releaseUrl)) {
+    setError("release_url too long");
+    return false;
+  }
+  if (!sp7json::safeCopy(_otaUrl, sizeof(_otaUrl), otaUrl)) {
+    setError("ota url too long");
+    return false;
+  }
+  if (!sp7json::safeCopy(_otaSha256, sizeof(_otaSha256), otaSha256)) {
+    setError("sha256 too long");
+    return false;
+  }
+
+  _updateAvailable = compareVersions(_latestVersion, SOUNDPANEL7_VERSION) > 0;
+  _lastCheckOk = true;
+  _lastError[0] = '\0';
   return true;
 }
 
@@ -519,7 +635,7 @@ bool ReleaseUpdateManager::checkNow() {
 
   String payload;
   const bool fetched = fetchManifest(payload);
-  if (fetched) {
+  if (fetched && payload.length() > 0) {
     parseManifest(payload);
   }
 

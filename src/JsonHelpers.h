@@ -172,9 +172,25 @@ inline String escape(const char* src) {
   String out;
   if (!src) return out;
   for (size_t i = 0; src[i]; i++) {
-    char c = src[i];
-    if (c == '\\' || c == '"') out += '\\';
-    out += c;
+    const unsigned char c = (unsigned char)src[i];
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      case '\b': out += "\\b"; break;
+      case '\f': out += "\\f"; break;
+      default:
+        if (c < 0x20) {
+          char buf[7];
+          snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)c);
+          out += buf;
+        } else {
+          out += (char)c;
+        }
+        break;
+    }
   }
   return out;
 }

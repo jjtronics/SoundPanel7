@@ -76,6 +76,7 @@ private:
 
   bool fetchManifest(String& payload);
   bool fetchUrl(const String& url, String& payload, int& httpCode, String& error);
+  bool parseLatestReleaseApiPayload(const String& payload);
   bool fetchManifestViaLatestReleaseApi(String& payload, int& httpCode, String& error);
   bool parseManifest(const String& payload);
   void clearResult();

@@ -12,6 +12,7 @@
 #endif
 
 #include "AppRuntimeStats.h"
+#include "DebugLog.h"
 #include "lvgl_v8_port.h"
 #include "SettingsStore.h"
 #include "NetManager.h"
@@ -24,6 +25,8 @@
 
 #include "MqttManager.h"
 #include "ReleaseUpdateManager.h"
+
+#define Serial0 DebugSerial0
 
 using namespace esp_panel::board;
 
@@ -166,8 +169,13 @@ void setup() {
   Serial0.println();
   Serial0.println("BOOT OK (UART0)");
   confirmRunningOtaImage();
+  Serial0.printf("[MEM] psramFound=%d INT=%luKB PSRAM=%luKB\n",
+                 psramFound() ? 1 : 0,
+                 (unsigned long)(heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) / 1024UL),
+                 (unsigned long)(heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024UL));
 
-  g_store.begin();
+  const bool storeReady = g_store.begin();
+  Serial0.printf("[SET] preferences namespace=sp7 ready=%d\n", storeReady ? 1 : 0);
 
   // TEMPORAIRE : à laisser une seule fois si besoin, puis supprimer
   // g_store.factoryReset();
@@ -194,7 +202,7 @@ void setup() {
 #endif
 
   g_net.begin(&g_settings, &g_store);
-  g_ota.begin(&g_settings);
+  g_ota.begin(&g_settings, &g_ui);
   g_releaseUpdate.begin(&g_net);
   g_mqtt.begin(&g_store, &g_settings);
   g_web.begin(&g_store, &g_settings, &g_net, g_board, &g_history, &g_ota, &g_releaseUpdate, &g_mqtt, &g_ui);

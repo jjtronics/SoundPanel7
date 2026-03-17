@@ -9,6 +9,9 @@
 #include <sys/time.h>
 
 #include "AppConfig.h"
+#include "DebugLog.h"
+
+#define Serial0 DebugSerial0
 
 static constexpr const char* kDefaultHostname = "soundpanel7";
 static constexpr const char* kSetupApName = "SoundPanel7-Setup";
@@ -46,6 +49,7 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
 
   _ntpConfigured = false;
   migrateLegacyCredentialIfNeeded();
@@ -303,6 +307,7 @@ void NetManager::loop() {
       Serial0.printf("[Net] WiFi status=%d\n", (int)wifiStatus);
     } else {
       _wifiAttemptFailures = 0;
+      WiFi.setSleep(false);
       if (g_wm.getConfigPortalActive()) {
         Serial0.println("[Net] WiFi restored, stopping config portal");
         g_wm.stopConfigPortal();

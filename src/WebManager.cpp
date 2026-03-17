@@ -1,4 +1,5 @@
 #include "WebManager.h"
+#include "DebugLog.h"
 #include "LiveEventServer.h"
 #include "JsonHelpers.h"
 #include "ReleaseUpdateManager.h"
@@ -24,6 +25,8 @@
 #include "AudioEngine.h"
 #include "AppConfig.h"
 #include "AppRuntimeStats.h"
+
+#define Serial0 DebugSerial0
 
 extern AudioEngine g_audio;
 
@@ -697,6 +700,8 @@ void WebManager::routes() {
   _srv.on("/api/notifications", kSyncHttpGet,  [this]() { handleNotificationsGet(); });
   _srv.on("/api/notifications", kSyncHttpPost, [this]() { handleNotificationsSave(); });
   _srv.on("/api/notifications/test", kSyncHttpPost, [this]() { handleNotificationsTest(); });
+  _srv.on("/api/debug/logs", kSyncHttpGet, [this]() { handleDebugLogsGet(); });
+  _srv.on("/api/debug/logs/clear", kSyncHttpPost, [this]() { handleDebugLogsClear(); });
 
   _srv.on("/api/calibrate", kSyncHttpPost, [this]() { handleCalPoint(); });
   _srv.on("/api/calibrate/clear", kSyncHttpPost, [this]() { handleCalClear(); });
@@ -2166,7 +2171,6 @@ void WebManager::handleReleaseCheck() {
     replyErrorJson(409, "release check already running");
     return;
   }
-
   const bool ok = _releaseUpdate->checkNow();
   handleReleaseGet();
   if (!ok) {
@@ -2227,15 +2231,18 @@ void WebManager::handleMqttSave() {
 
   String host = sp7json::parseString(body, "host", String(_s->mqttHost), false);
   String username = sp7json::parseString(body, "username", String(_s->mqttUsername), false);
-  String password = sp7json::parseString(body, "password", String(_s->mqttPassword), false);
+  String password = sp7json::parseString(body, "password", "", true);
   String clientId = sp7json::parseString(body, "clientId", String(_s->mqttClientId), false);
   String baseTopic = sp7json::parseString(body, "baseTopic", String(_s->mqttBaseTopic), false);
+  const bool keepPassword = sp7json::parseBool(body, "keepPassword", false);
 
   host.trim();
   username.trim();
   password.trim();
   clientId.trim();
   baseTopic.trim();
+
+  if (keepPassword && !password.length()) password = String(_s->mqttPassword);
 
     if (enabled) {
     if (host.length() < 1) {
@@ -2378,6 +2385,7 @@ bool WebManager::postJsonToUrl(const String& url,
   responseOut = "";
 
   if (!url.length()) return false;
+  WiFi.setSleep(false);
 
   HTTPClient http;
   http.setConnectTimeout(kNotificationHttpConnectTimeoutMs);
@@ -2396,8 +2404,19 @@ bool WebManager::postJsonToUrl(const String& url,
     http.addHeader("Content-Type", "application/json");
     if (authorization.length()) http.addHeader("Authorization", authorization);
     statusCodeOut = http.POST((uint8_t*)payload.c_str(), payload.length());
-    if (statusCodeOut <= 0) responseOut = http.errorToString(statusCodeOut);
-    else responseOut = http.getString();
+    if (statusCodeOut <= 0) {
+      responseOut = http.errorToString(statusCodeOut);
+      Serial0.printf("[WEB] HTTPS fail url=%s code=%d wifi=%d ip=%s rssi=%ld heap=%lu min=%lu\n",
+                     url.c_str(),
+                     statusCodeOut,
+                     (int)WiFi.status(),
+                     WiFi.localIP().toString().c_str(),
+                     (long)WiFi.RSSI(),
+                     (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                     (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    } else {
+      responseOut = http.getString();
+    }
     http.end();
     return statusCodeOut > 0;
   }
@@ -2409,9 +2428,21 @@ bool WebManager::postJsonToUrl(const String& url,
   http.addHeader("Content-Type", "application/json");
   if (authorization.length()) http.addHeader("Authorization", authorization);
   statusCodeOut = http.POST((uint8_t*)payload.c_str(), payload.length());
-  if (statusCodeOut <= 0) responseOut = http.errorToString(statusCodeOut);
-  else responseOut = http.getString();
+  if (statusCodeOut <= 0) {
+    responseOut = http.errorToString(statusCodeOut);
+    Serial0.printf("[WEB] HTTP fail url=%s code=%d wifi=%d ip=%s rssi=%ld heap=%lu min=%lu\n",
+                   url.c_str(),
+                   statusCodeOut,
+                   (int)WiFi.status(),
+                   WiFi.localIP().toString().c_str(),
+                   (long)WiFi.RSSI(),
+                   (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                   (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  } else {
+    responseOut = http.getString();
+  }
   http.end();
+
   return statusCodeOut > 0;
 }
 
@@ -2452,7 +2483,12 @@ bool WebManager::sendSlackNotification(uint8_t alertState, bool isTest, const St
 
   int statusCode = -1;
   String response;
-  if (postJsonToUrl(_s->slackWebhookUrl, payloadRich, "", statusCode, response) && statusCode >= 200 && statusCode < 300) {
+  if (!postJsonToUrl(_s->slackWebhookUrl, payloadRich, "", statusCode, response)) {
+    summary = "Slack: echec HTTP";
+    if (response.length()) summary += " (" + trimmedHttpResponse(response) + ")";
+    return false;
+  }
+  if (statusCode >= 200 && statusCode < 300) {
     summary = "Slack OK (barre couleur)";
     return true;
   }
@@ -2652,6 +2688,28 @@ void WebManager::handleNotificationsGet() {
   if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
   replyJson(200, notificationsJson(false));
+}
+
+void WebManager::handleDebugLogsGet() {
+  if (!requireWebAuth()) return;
+
+  const String tail = DebugLog::snapshotText();
+  String json;
+  json.reserve(tail.length() + 160);
+  json += "{";
+  json += "\"lineCount\":"; json += String(DebugLog::lineCount()); json += ",";
+  json += "\"wifiConnected\":"; json += (WiFi.isConnected() ? "true" : "false"); json += ",";
+  json += "\"uptime_s\":"; json += String((millis() - g_bootMs) / 1000UL); json += ",";
+  sp7json::appendEscapedField(json, "tail", tail.c_str(), false);
+  json += "}";
+  replyJson(200, json);
+}
+
+void WebManager::handleDebugLogsClear() {
+  if (!requireWebAuth()) return;
+  DebugLog::clear();
+  DebugLog::println("[WEB] Debug log buffer cleared");
+  replyOkJson();
 }
 
 void WebManager::handleNotificationsSave() {
@@ -3477,6 +3535,32 @@ R"HTML(
     .userRow{
       display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;
       background:var(--panel3);border-radius:16px;padding:12px 14px;
+    }
+    .debugConsole{
+      margin-top:14px;
+      border:1px solid var(--line);
+      border-radius:18px;
+      background:#09111A;
+      overflow:hidden;
+    }
+    .debugConsoleMeta{
+      display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+      padding:10px 14px;
+      border-bottom:1px solid rgba(255,255,255,.05);
+      color:var(--muted);
+      font-size:12px;
+    }
+    .debugConsoleBox{
+      margin:0;
+      padding:14px;
+      min-height:220px;
+      max-height:420px;
+      overflow:auto;
+      background:#050B11;
+      color:#D7E2EB;
+      font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+      white-space:pre-wrap;
+      word-break:break-word;
     }
     .userRow > :first-child{min-width:0}
     .userRowName{
@@ -4658,6 +4742,28 @@ R"HTML(
                       <div class="toast" id="actionsToast"></div>
                     </div>
 
+                    <div class="settingsSurfaceBlock">
+                      <div class="settingsSubhead">
+                        <div>
+                          <h3 class="settingsSubtitle">Logs debug</h3>
+                        </div>
+                      </div>
+                      <div class="hint">Ouvre les derniers logs firmware utiles pour diagnostiquer les soucis reseau, OTA, MQTT ou releases sans brancher le port serie.</div>
+                      <div class="btnRow">
+                        <button class="btn accent" id="toggleDebugLogsBtn">Logs</button>
+                        <button class="btn" id="refreshDebugLogsBtn">Rafraichir</button>
+                        <button class="btn" id="clearDebugLogsBtn">Vider</button>
+                      </div>
+                      <div class="debugConsole hidden" id="debugConsoleWrap">
+                        <div class="debugConsoleMeta">
+                          <div class="mono" id="debugLogsMeta">Aucun log charge.</div>
+                          <div class="mono" id="debugLogsHint">Mode debug web</div>
+                        </div>
+                        <pre class="debugConsoleBox" id="debugLogsBox">(ouvre les logs pour charger le buffer)</pre>
+                      </div>
+                      <div class="toast" id="debugLogsToast"></div>
+                    </div>
+
                   </section>
                 </div>
               </div>
@@ -4745,6 +4851,9 @@ R"HTML(
     reconnectTimer: null,
     releaseInstallPollTimer: null,
     releaseInstallPollPending: false,
+    debugLogsOpen: false,
+    debugLogsLoadedOnce: false,
+    debugLogsPollTimer: null,
     hasLiveFeed: false,
     lastContactMs: 0,
     lastStatusContactMs: 0,
@@ -5725,6 +5834,10 @@ R"HTML(
       state.events.close();
       state.events = null;
     }
+    stopDebugLogsPolling();
+    state.debugLogsOpen = false;
+    state.debugLogsLoadedOnce = false;
+    updateDebugLogUi();
     state.authenticated = false;
     state.currentUser = "";
     state.liveToken = "";
@@ -5766,6 +5879,72 @@ R"HTML(
 
   function setToastError(id, err) {
     setToast(id, `Erreur: ${err.message}`);
+  }
+
+  function updateDebugLogUi() {
+    const open = Boolean(state.debugLogsOpen);
+    $("debugConsoleWrap").classList.toggle("hidden", !open);
+    $("toggleDebugLogsBtn").textContent = open ? "Masquer logs" : "Logs";
+  }
+
+  function stopDebugLogsPolling() {
+    if (!state.debugLogsPollTimer) return;
+    clearInterval(state.debugLogsPollTimer);
+    state.debugLogsPollTimer = null;
+  }
+
+  function startDebugLogsPolling() {
+    stopDebugLogsPolling();
+    state.debugLogsPollTimer = setInterval(() => {
+      if (!state.authenticated || !state.debugLogsOpen) return;
+      loadDebugLogs(false).catch(() => {});
+    }, 2500);
+  }
+
+  async function loadDebugLogs(showToast = false) {
+    const payload = await apiGet("/api/debug/logs");
+    const box = $("debugLogsBox");
+    const stickToBottom = !state.debugLogsLoadedOnce || (box.scrollTop + box.clientHeight + 32 >= box.scrollHeight);
+    box.textContent = payload.tail || "(aucun log capture pour le moment)";
+    $("debugLogsMeta").textContent = `${payload.lineCount || 0} ligne(s) | uptime ${Math.max(0, Number(payload.uptime_s || 0))} s | Wi-Fi ${payload.wifiConnected ? "connecte" : "deconnecte"}`;
+    $("debugLogsHint").textContent = `Dernier refresh: ${new Date().toLocaleTimeString()}`;
+    if (stickToBottom) box.scrollTop = box.scrollHeight;
+    state.debugLogsLoadedOnce = true;
+    if (showToast) setToast("debugLogsToast", "Logs charges.");
+    return payload;
+  }
+
+  async function toggleDebugLogs() {
+    state.debugLogsOpen = !state.debugLogsOpen;
+    updateDebugLogUi();
+    if (!state.debugLogsOpen) {
+      stopDebugLogsPolling();
+      return;
+    }
+    await runToastRequest("debugLogsToast", "Chargement logs...", () => loadDebugLogs(false), "Logs prets.");
+    startDebugLogsPolling();
+  }
+
+  async function refreshDebugLogs() {
+    if (!state.debugLogsOpen) {
+      state.debugLogsOpen = true;
+      updateDebugLogUi();
+    }
+    await runToastRequest("debugLogsToast", "Rafraichissement logs...", () => loadDebugLogs(false), "Logs mis a jour.");
+    startDebugLogsPolling();
+  }
+
+  async function clearDebugLogs() {
+    await runToastRequest("debugLogsToast", "Vidage logs...", () => apiPost("/api/debug/logs/clear", {}), "Logs vides.");
+    state.debugLogsLoadedOnce = false;
+    if (state.debugLogsOpen) {
+      await loadDebugLogs(false);
+      startDebugLogsPolling();
+    } else {
+      $("debugLogsBox").textContent = "(buffer vide)";
+      $("debugLogsMeta").textContent = "0 ligne | buffer vide";
+      $("debugLogsHint").textContent = "Mode debug web";
+    }
   }
 
   function setFieldValue(id, value, fallback = "") {
@@ -5899,6 +6078,10 @@ R"HTML(
   }
 
   async function logout() {
+    stopDebugLogsPolling();
+    state.debugLogsOpen = false;
+    state.debugLogsLoadedOnce = false;
+    updateDebugLogUi();
     await runToastRequest("usersToast", "Deconnexion...", () => apiPost("/api/auth/logout", {}), "Session fermee.", async () => {
       if (state.events) {
         state.events.close();
@@ -6685,6 +6868,7 @@ R"HTML(
       setNumericFieldValue("mqttPortAdv", m.port, 1883);
       setFieldValue("mqttUsernameAdv", m.username);
       resetPasswordField("mqttPasswordAdv", "********", "laisser vide si non utilise", m.passwordConfigured);
+      $("mqttPasswordAdv").dataset.keepPassword = m.passwordConfigured ? "1" : "0";
       setFieldValue("mqttClientIdAdv", m.clientId, "soundpanel7");
       setFieldValue("mqttBaseTopicAdv", m.baseTopic, "soundpanel7");
       setNumericFieldValue("mqttPublishPeriodMsAdv", m.publishPeriodMs, 1000);
@@ -6701,6 +6885,7 @@ R"HTML(
         port: getIntValue("mqttPortAdv", 1883),
         username: getTrimmedValue("mqttUsernameAdv"),
         password: getFieldValue("mqttPasswordAdv"),
+        keepPassword: !getFieldValue("mqttPasswordAdv") && $("mqttPasswordAdv").dataset.keepPassword === "1",
         clientId: getTrimmedValue("mqttClientIdAdv"),
         baseTopic: getTrimmedValue("mqttBaseTopicAdv"),
         publishPeriodMs: getIntValue("mqttPublishPeriodMsAdv", 1000),
@@ -6998,6 +7183,9 @@ R"HTML(
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
   $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
   $("testNotificationsAdv").addEventListener("click", testNotificationSettings);
+  $("toggleDebugLogsBtn").addEventListener("click", toggleDebugLogs);
+  $("refreshDebugLogsBtn").addEventListener("click", refreshDebugLogs);
+  $("clearDebugLogsBtn").addEventListener("click", clearDebugLogs);
   $("authSubmitBtn").addEventListener("click", submitAuth);
   $("authUsername").addEventListener("input", () => {
     $("authUsername").value = sanitizeUsernameValue($("authUsername").value);
@@ -7037,6 +7225,9 @@ R"HTML(
       $(id).dataset.keepSecret = "0";
     });
   });
+  $("mqttPasswordAdv").addEventListener("input", () => {
+    $("mqttPasswordAdv").dataset.keepPassword = "0";
+  });
   $("configFile").addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];
     if (!file) return;
@@ -7052,6 +7243,7 @@ R"HTML(
     syncUiLabels();
     syncCalibrationModeButtons();
     applyLiveActionState();
+    updateDebugLogUi();
     renderAuthState();
     await loadAuthStatus();
     if (state.authenticated) {

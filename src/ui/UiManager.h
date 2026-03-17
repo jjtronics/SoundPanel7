@@ -26,6 +26,8 @@ public:
   void setDb(float dbInstant, float leq, float peak);
   void requestDashboardPage(uint8_t page, bool persistSelection = false);
   void refreshDashboardLayout();
+  void showOtaStatusScreen(const char* title, const char* detail, uint8_t progressPct, bool success = false);
+  void hideOtaStatusScreen();
 
 #if SOUNDPANEL7_HAS_SCREEN
 private:
@@ -59,6 +61,7 @@ private:
   NetManager* _net = nullptr;
 
   lv_obj_t* _scrDash = nullptr;
+  lv_obj_t* _scrOta = nullptr;
   lv_obj_t* _dashTop = nullptr;
   lv_obj_t* _dashContent = nullptr;
   lv_obj_t* _dashPages[DASH_PAGE_COUNT] = {nullptr};
@@ -139,6 +142,12 @@ private:
 
   // Popup confirmation reset
   lv_obj_t* _msgboxConfirm = nullptr;
+  lv_obj_t* _otaStatusCard = nullptr;
+  lv_obj_t* _lblOtaEyebrow = nullptr;
+  lv_obj_t* _lblOtaTitle = nullptr;
+  lv_obj_t* _lblOtaDetail = nullptr;
+  lv_obj_t* _barOtaProgress = nullptr;
+  lv_obj_t* _lblOtaProgress = nullptr;
 
   // Management
   lv_obj_t* _btnBacklight = nullptr;
@@ -206,6 +215,7 @@ private:
   uint8_t _requestedDashPage = UINT8_MAX;
 
   void buildDashboard();
+  void buildOtaStatusScreen();
   void buildDashboardOverviewPage(lv_obj_t* parent);
   void buildDashboardClockPage(lv_obj_t* parent);
   void buildDashboardLivePage(lv_obj_t* parent);

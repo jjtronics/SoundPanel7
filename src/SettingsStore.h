@@ -302,7 +302,7 @@ private:
   bool encryptSecret(const char* purpose, const char* plaintext, String& out) const;
   bool decryptSecret(const char* purpose, const char* stored, char* out, size_t outSize) const;
   bool loadSecret(const char* key, const char* purpose, char* out, size_t outSize, bool* migrated = nullptr);
-  void saveSecret(const char* key, const char* purpose, const char* value);
+  bool saveSecret(const char* key, const char* purpose, const char* value);
   static bool isEncryptedSecretRecord(const char* value);
   static bool isPinHashRecord(const char* value);
   static bool normalizePinStorage(char* storage, size_t storageSize);

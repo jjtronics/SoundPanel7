@@ -12,8 +12,13 @@
 #include <mbedtls/gcm.h>
 #include <mbedtls/sha256.h>
 
+#include "DebugLog.h"
+
+#define Serial0 DebugSerial0
+
 namespace {
 static constexpr const char* kEncryptedSecretPrefix = "enc:v1:";
+static constexpr const char* kPlainSecretPrefix = "raw:v1:";
 static constexpr const char* kPinHashPrefix = "h1:";
 static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
@@ -371,6 +376,9 @@ bool SettingsStore::decryptSecret(const char* purpose, const char* stored, char*
   if (!out || outSize == 0) return false;
   out[0] = '\0';
   if (!stored || !stored[0]) return true;
+  if (strncmp(stored, kPlainSecretPrefix, strlen(kPlainSecretPrefix)) == 0) {
+    return sp7json::safeCopy(out, outSize, String(stored + strlen(kPlainSecretPrefix)));
+  }
   if (!isEncryptedSecretRecord(stored)) {
     return sp7json::safeCopy(out, outSize, String(stored));
   }
@@ -450,18 +458,45 @@ bool SettingsStore::loadSecret(const char* key, const char* purpose, char* out, 
   if (isEncryptedSecretRecord(stored.c_str())) {
     return decryptSecret(purpose, stored.c_str(), out, outSize);
   }
+  if (strncmp(stored.c_str(), kPlainSecretPrefix, strlen(kPlainSecretPrefix)) == 0) {
+    return decryptSecret(purpose, stored.c_str(), out, outSize);
+  }
   if (!sp7json::safeCopy(out, outSize, stored)) return false;
   if (migrated) *migrated = true;
   return true;
 }
 
-void SettingsStore::saveSecret(const char* key, const char* purpose, const char* value) {
+bool SettingsStore::saveSecret(const char* key, const char* purpose, const char* value) {
   String encrypted;
   if (!encryptSecret(purpose, value, encrypted)) {
     Serial0.printf("[SET] Failed to encrypt secret '%s'\n", key ? key : "?");
-    return;
+    encrypted = "";
   }
-  _prefs.putString(key, encrypted);
+
+  if (encrypted.length()) {
+    const size_t written = _prefs.putString(key, encrypted);
+    if (written == encrypted.length()) return true;
+    Serial0.printf("[SET] Failed to store encrypted secret '%s' (len=%u), trying plaintext fallback\n",
+                   key ? key : "?",
+                   (unsigned)encrypted.length());
+  }
+
+  const char* plaintext = value ? value : "";
+  const bool hasPlaintext = plaintext[0] != '\0';
+  const String fallbackStored = hasPlaintext
+    ? String(kPlainSecretPrefix) + plaintext
+    : String("");
+  const size_t plainLen = fallbackStored.length();
+  const size_t plainWritten = _prefs.putString(key, fallbackStored);
+  if (plainWritten == plainLen) {
+    if (hasPlaintext) {
+      Serial0.printf("[SET] Secret '%s' stored in plaintext fallback mode\n", key ? key : "?");
+    }
+    return true;
+  }
+
+  Serial0.printf("[SET] Failed to store secret '%s' even in plaintext fallback mode\n", key ? key : "?");
+  return false;
 }
 
 bool SettingsStore::isEncryptedSecretRecord(const char* value) {
