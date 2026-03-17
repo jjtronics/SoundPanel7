@@ -14,17 +14,17 @@ jobs:
 
     steps:
       - name: Check out tagged release
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Cache PlatformIO data
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.platformio/.cache
@@ -57,7 +57,7 @@ jobs:
             --output .pio/build/soundpanel7_ota/release-manifest.json
 
       - name: Upload release workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: soundpanel7_${{ github.event.release.tag_name }}
           path: |
