@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Adafruit_NeoPixel.h>
 #include <WebServer.h>
 #include <esp_display_panel.hpp>
 
@@ -62,6 +63,13 @@ private:
 
   uint32_t _lastLivePushMs = 0;
   uint32_t _lastLiveSystemPushMs = 0;
+  Adafruit_NeoPixel _tardisInteriorRgb = Adafruit_NeoPixel(
+    SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIXEL_COUNT,
+    SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIN,
+    NEO_GRB + NEO_KHZ800
+  );
+  bool _tardisInteriorRgbReady = false;
+  uint32_t _tardisInteriorRgbAppliedColor = 0xFFFFFFFFUL;
   SharedHistory* _history = nullptr;
   WebSession _sessions[WEB_SESSION_MAX_COUNT];
   uint8_t _loginFailureCount = 0;
@@ -152,6 +160,9 @@ private:
   void applyTouchNow(bool enabled);
   void applyTardisNow();
   void applyTardisPinNow(uint8_t pin, bool enabled, const char* label);
+  void ensureTardisInteriorRgbReady();
+  void applyTardisInteriorRgbColor(uint32_t color);
+  uint32_t tardisInteriorRgbColorForCurrentState() const;
   void applySettingsRuntimeState();
   String historyJson() const;
 

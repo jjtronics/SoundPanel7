@@ -41,6 +41,10 @@ static constexpr HTTPMethod kSyncHttpPost = static_cast<HTTPMethod>(::HTTP_POST)
 static constexpr uint32_t kNotificationHttpConnectTimeoutMs = 5000UL;
 static constexpr uint32_t kNotificationHttpTimeoutMs = 8000UL;
 
+static uint32_t tardisColorHex(uint8_t r, uint8_t g, uint8_t b) {
+  return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
 struct NotificationVisualStyle {
   const char* emoji;
   const char* title;
@@ -209,11 +213,15 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"supportsDashboardDisplay\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
   json += "\"supportsDashboardPin\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
   json += "\"supportsTardisControl\":"; json += (SOUNDPANEL7_TARDIS_SUPPORTED ? "true" : "false"); json += ",";
+  json += "\"supportsTardisInteriorRgb\":"; json += (SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED ? "true" : "false"); json += ",";
   json += "\"tardisModeEnabled\":"; json += (s && s->tardisModeEnabled ? "true" : "false"); json += ",";
   json += "\"tardisInteriorLedEnabled\":"; json += (s && s->tardisInteriorLedEnabled ? "true" : "false"); json += ",";
   json += "\"tardisExteriorLedEnabled\":"; json += (s && s->tardisExteriorLedEnabled ? "true" : "false"); json += ",";
   json += "\"tardisInteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN); json += ",";
   json += "\"tardisExteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN); json += ",";
+  json += "\"tardisInteriorRgbPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIN); json += ",";
+  json += "\"tardisInteriorRgbMode\":"; json += String(s ? s->tardisInteriorRgbMode : TARDIS_INTERIOR_RGB_MODE_ALERT); json += ",";
+  json += "\"tardisInteriorRgbColor\":"; json += String(s ? s->tardisInteriorRgbColor : TARDIS_INTERIOR_RGB_DEFAULT_COLOR); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -760,6 +768,10 @@ void WebManager::updateAlertState(float dbInstant, float leq, float peak) {
   const uint8_t nextAlertState = redAlert ? 2 : (orangeAlert ? 1 : 0);
   const uint8_t previousAlertState = _alertState;
   _alertState = nextAlertState;
+  if (SOUNDPANEL7_TARDIS_SUPPORTED && SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED
+      && _s->tardisModeEnabled && _s->tardisInteriorLedEnabled) {
+    applyTardisInteriorRgbColor(tardisInteriorRgbColorForCurrentState());
+  }
 
   if (nextAlertState == previousAlertState) return;
 
@@ -1131,6 +1143,56 @@ void WebManager::applyTardisPinNow(uint8_t pin, bool enabled, const char* label)
 #endif
 }
 
+void WebManager::ensureTardisInteriorRgbReady() {
+#if !SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED
+  return;
+#else
+  if (_tardisInteriorRgbReady) return;
+  _tardisInteriorRgb.begin();
+  _tardisInteriorRgb.setBrightness(SOUNDPANEL7_TARDIS_INTERIOR_RGB_BRIGHTNESS);
+  _tardisInteriorRgb.clear();
+  _tardisInteriorRgb.show();
+  _tardisInteriorRgbReady = true;
+#endif
+}
+
+void WebManager::applyTardisInteriorRgbColor(uint32_t color) {
+#if !SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED
+  (void)color;
+  return;
+#else
+  ensureTardisInteriorRgbReady();
+  color &= 0x00FFFFFFUL;
+  if (_tardisInteriorRgbAppliedColor == color) return;
+
+  const uint8_t red = (uint8_t)((color >> 16) & 0xFFU);
+  const uint8_t green = (uint8_t)((color >> 8) & 0xFFU);
+  const uint8_t blue = (uint8_t)(color & 0xFFU);
+  const uint32_t packed = _tardisInteriorRgb.Color(red, green, blue);
+  for (uint16_t i = 0; i < SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIXEL_COUNT; i++) {
+    _tardisInteriorRgb.setPixelColor(i, packed);
+  }
+  _tardisInteriorRgb.show();
+  _tardisInteriorRgbAppliedColor = color;
+  Serial0.printf("[TARDIS] interior RGB GPIO%u -> #%06lX\n",
+                 (unsigned)SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIN,
+                 (unsigned long)color);
+#endif
+}
+
+uint32_t WebManager::tardisInteriorRgbColorForCurrentState() const {
+  if (!_s) return 0;
+  if (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_FIXED) {
+    return _s->tardisInteriorRgbColor & 0x00FFFFFFUL;
+  }
+
+  switch (_alertState) {
+    case 2: return tardisColorHex(0xFF, 0x00, 0x00);
+    case 1: return tardisColorHex(0xF0, 0xA2, 0x02);
+    default: return tardisColorHex(0x00, 0xFF, 0x00);
+  }
+}
+
 void WebManager::applyTardisNow() {
 #if !SOUNDPANEL7_TARDIS_SUPPORTED
   return;
@@ -1138,7 +1200,11 @@ void WebManager::applyTardisNow() {
   const bool modeEnabled = _s && _s->tardisModeEnabled;
   const bool interiorEnabled = modeEnabled && _s && _s->tardisInteriorLedEnabled;
   const bool exteriorEnabled = modeEnabled && _s && _s->tardisExteriorLedEnabled;
+#if SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED
+  applyTardisInteriorRgbColor(interiorEnabled ? tardisInteriorRgbColorForCurrentState() : 0U);
+#else
   applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN, interiorEnabled, "interior");
+#endif
   applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN, exteriorEnabled, "exterior");
 #endif
 }
@@ -1563,6 +1629,8 @@ void WebManager::handleUiSave() {
   const bool tardisModeEnabled = sp7json::parseBool(body, "tardisModeEnabled", _s->tardisModeEnabled != 0);
   const bool tardisInteriorLedEnabled = sp7json::parseBool(body, "tardisInteriorLedEnabled", _s->tardisInteriorLedEnabled != 0);
   const bool tardisExteriorLedEnabled = sp7json::parseBool(body, "tardisExteriorLedEnabled", _s->tardisExteriorLedEnabled != 0);
+  int tardisInteriorRgbMode = sp7json::parseInt(body, "tardisInteriorRgbMode", (int)_s->tardisInteriorRgbMode);
+  String tardisInteriorRgbColorText = sp7json::parseString(body, "tardisInteriorRgbColorHex", "");
   int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
   int dashboardFullscreenMask = sp7json::parseInt(body, "dashboardFullscreenMask", (int)_s->dashboardFullscreenMask);
   int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
@@ -1582,6 +1650,8 @@ void WebManager::handleUiSave() {
   if (audioSource > 3) audioSource = 3;
   if (arm < 0) arm = 0;
   if (arm > 1) arm = 1;
+  if (tardisInteriorRgbMode < (int)TARDIS_INTERIOR_RGB_MODE_ALERT) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_ALERT;
+  if (tardisInteriorRgbMode > (int)TARDIS_INTERIOR_RGB_MODE_FIXED) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_FIXED;
   dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
   dashboardFullscreenMask = (int)normalizedDashboardFullscreenMask((uint8_t)dashboardFullscreenMask);
   if (whs < 0) whs = 0;
@@ -1616,6 +1686,10 @@ void WebManager::handleUiSave() {
     _s->tardisModeEnabled = tardisModeEnabled ? 1 : 0;
     _s->tardisInteriorLedEnabled = tardisInteriorLedEnabled ? 1 : 0;
     _s->tardisExteriorLedEnabled = tardisExteriorLedEnabled ? 1 : 0;
+    _s->tardisInteriorRgbMode = (uint8_t)tardisInteriorRgbMode;
+    if (tardisInteriorRgbColorText.length() == 7 && tardisInteriorRgbColorText[0] == '#') {
+      _s->tardisInteriorRgbColor = (uint32_t)strtoul(tardisInteriorRgbColorText.c_str() + 1, nullptr, 16) & 0x00FFFFFFUL;
+    }
   }
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
@@ -1635,9 +1709,10 @@ void WebManager::handleUiSave() {
   applyTouchNow(_s->touchEnabled != 0);
   applyTardisNow();
 
-  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d tardis=%d int=%d ext=%d green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
+  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d tardis=%d int=%d ext=%d intRgbMode=%d intRgbColor=#%06lX green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
                  bl, touchEnabled ? 1 : 0,
                  tardisModeEnabled ? 1 : 0, tardisInteriorLedEnabled ? 1 : 0, tardisExteriorLedEnabled ? 1 : 0,
+                 tardisInteriorRgbMode, (unsigned long)(_s->tardisInteriorRgbColor & 0x00FFFFFFUL),
                  g, o, hm, dashboardPage, dashboardFullscreenMask,
                  AudioEngine::sourceLabel(_s->audioSource),
                  AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
@@ -4141,7 +4216,7 @@ R"HTML(
                       <div class="settingsSubhead">
                         <div>
                           <h3 class="settingsSubtitle">Mode TARDIS</h3>
-                          <div class="settingsSublead">Carte reservee au build headless pour piloter les LED de cabine sans toucher aux GPIO audio.</div>
+                          <div class="settingsSublead">Carte reservee au build headless pour piloter les LED de cabine sans toucher aux GPIO audio, avec la LED RGB integree pour l'interieur.</div>
                         </div>
                         <div class="pill mono" id="tardisPinsBadge">GPIO -- / --</div>
                       </div>
@@ -4170,6 +4245,18 @@ R"HTML(
                                 <span class="switchThumb"></span>
                               </button>
                             </div>
+                          </div>
+                          <div class="field" id="tardisInteriorRgbModeField">
+                            <label for="tardisInteriorRgbMode">Mode LED interieur</label>
+                            <select id="tardisInteriorRgbMode">
+                              <option value="0">Alerte sonore</option>
+                              <option value="1">Couleur fixe</option>
+                            </select>
+                            <div class="hint">Alerte: vert, orange ou rouge selon le niveau du sonometre.</div>
+                          </div>
+                          <div class="field" id="tardisInteriorRgbColorField">
+                            <label for="tardisInteriorRgbColor">Couleur fixe</label>
+                            <input id="tardisInteriorRgbColor" type="color" value="#2D9CDB">
                           </div>
                           <div class="field">
                             <div class="switchRow">
@@ -4865,6 +4952,7 @@ R"HTML(
     supportsDashboardDisplay: true,
     supportsDashboardPin: true,
     supportsTardisControl: false,
+    supportsTardisInteriorRgb: false,
     dashboardPage: 0,
     dashboardFullscreenMask: 0,
     dashboardDisplayDirty: false,
@@ -4873,6 +4961,9 @@ R"HTML(
     tardisExteriorLedEnabled: false,
     tardisInteriorLedPin: 15,
     tardisExteriorLedPin: 16,
+    tardisInteriorRgbPin: 48,
+    tardisInteriorRgbMode: 0,
+    tardisInteriorRgbColor: 0x2D9CDB,
     tardisDirty: false,
     uiDirty: false,
     uiAudioSource: 1,
@@ -4986,20 +5077,35 @@ R"HTML(
     $(valueId).textContent = active ? onLabel : "OFF";
   }
 
+  function tardisColorToHex(value) {
+    const numeric = Math.max(0, Number(value || 0)) >>> 0;
+    return `#${(numeric & 0xFFFFFF).toString(16).padStart(6, "0").toUpperCase()}`;
+  }
+
   function syncTardisUi() {
     setTardisSwitch("tardisModeEnabled", "tardisModeEnabledVal", state.tardisModeEnabled, "ACTIF");
     setTardisSwitch("tardisInteriorLedEnabled", "tardisInteriorLedEnabledVal", state.tardisInteriorLedEnabled, "ON");
     setTardisSwitch("tardisExteriorLedEnabled", "tardisExteriorLedEnabledVal", state.tardisExteriorLedEnabled, "ON");
 
-    const pinsBadge = `GPIO ${state.tardisInteriorLedPin} / ${state.tardisExteriorLedPin}`;
+    const pinsBadge = state.supportsTardisInteriorRgb
+      ? `RGB ${state.tardisInteriorRgbPin} / GPIO ${state.tardisExteriorLedPin}`
+      : `GPIO ${state.tardisInteriorLedPin} / ${state.tardisExteriorLedPin}`;
     $("tardisPinsBadge").textContent = pinsBadge;
-    $("tardisPinsHint").textContent =
-      `GPIO interieur ${state.tardisInteriorLedPin} / exterieur ${state.tardisExteriorLedPin}. ` +
-      "Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.";
+    $("tardisPinsHint").textContent = state.supportsTardisInteriorRgb
+      ? `LED RGB integree sur GPIO ${state.tardisInteriorRgbPin} pour l'interieur, GPIO exterieur ${state.tardisExteriorLedPin}. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.`
+      : `GPIO interieur ${state.tardisInteriorLedPin} / exterieur ${state.tardisExteriorLedPin}. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.`;
 
     const ledsEnabled = Boolean(state.tardisModeEnabled);
     $("tardisInteriorLedEnabled").disabled = !ledsEnabled;
     $("tardisExteriorLedEnabled").disabled = !ledsEnabled;
+    $("tardisInteriorRgbModeField").style.display = state.supportsTardisInteriorRgb ? "" : "none";
+    $("tardisInteriorRgbColorField").style.display = state.supportsTardisInteriorRgb ? "" : "none";
+    $("tardisInteriorRgbMode").value = String(Number(state.tardisInteriorRgbMode || 0));
+    $("tardisInteriorRgbColor").value = tardisColorToHex(state.tardisInteriorRgbColor);
+    $("tardisInteriorRgbMode").disabled = !ledsEnabled || !state.tardisInteriorLedEnabled;
+    $("tardisInteriorRgbColor").disabled = !ledsEnabled
+      || !state.tardisInteriorLedEnabled
+      || Number(state.tardisInteriorRgbMode || 0) !== 1;
   }
 
   function sanitizeUsernameValue(value) {
@@ -5668,12 +5774,16 @@ R"HTML(
       applyDashboardFullscreenMask(state.dashboardFullscreenMask);
     }
     if ("supportsTardisControl" in merged) state.supportsTardisControl = Boolean(merged.supportsTardisControl);
+    if ("supportsTardisInteriorRgb" in merged) state.supportsTardisInteriorRgb = Boolean(merged.supportsTardisInteriorRgb);
     if ("tardisInteriorLedPin" in merged) state.tardisInteriorLedPin = Number(merged.tardisInteriorLedPin ?? state.tardisInteriorLedPin ?? 15);
     if ("tardisExteriorLedPin" in merged) state.tardisExteriorLedPin = Number(merged.tardisExteriorLedPin ?? state.tardisExteriorLedPin ?? 16);
+    if ("tardisInteriorRgbPin" in merged) state.tardisInteriorRgbPin = Number(merged.tardisInteriorRgbPin ?? state.tardisInteriorRgbPin ?? 48);
     if (!state.tardisDirty) {
       if ("tardisModeEnabled" in merged) state.tardisModeEnabled = Boolean(merged.tardisModeEnabled);
       if ("tardisInteriorLedEnabled" in merged) state.tardisInteriorLedEnabled = Boolean(merged.tardisInteriorLedEnabled);
       if ("tardisExteriorLedEnabled" in merged) state.tardisExteriorLedEnabled = Boolean(merged.tardisExteriorLedEnabled);
+      if ("tardisInteriorRgbMode" in merged) state.tardisInteriorRgbMode = Number(merged.tardisInteriorRgbMode ?? state.tardisInteriorRgbMode ?? 0);
+      if ("tardisInteriorRgbColor" in merged) state.tardisInteriorRgbColor = Number(merged.tardisInteriorRgbColor ?? state.tardisInteriorRgbColor ?? 0x2D9CDB);
       syncTardisUi();
     }
 
@@ -6328,6 +6438,8 @@ R"HTML(
       tardisModeEnabled: state.tardisModeEnabled,
       tardisInteriorLedEnabled: state.tardisInteriorLedEnabled,
       tardisExteriorLedEnabled: state.tardisExteriorLedEnabled,
+      tardisInteriorRgbMode: Number(state.tardisInteriorRgbMode || 0),
+      tardisInteriorRgbColorHex: $("tardisInteriorRgbColor").value || "#2D9CDB",
     };
 
     try {
@@ -7103,6 +7215,18 @@ R"HTML(
     state.tardisExteriorLedEnabled = !state.tardisExteriorLedEnabled;
     state.tardisDirty = true;
     syncTardisUi();
+  });
+
+  $("tardisInteriorRgbMode").addEventListener("change", () => {
+    state.tardisInteriorRgbMode = Number($("tardisInteriorRgbMode").value || 0);
+    state.tardisDirty = true;
+    syncTardisUi();
+  });
+
+  $("tardisInteriorRgbColor").addEventListener("input", () => {
+    const value = $("tardisInteriorRgbColor").value || "#2D9CDB";
+    state.tardisInteriorRgbColor = Number.parseInt(value.slice(1), 16) || 0x2D9CDB;
+    state.tardisDirty = true;
   });
 
   document.querySelectorAll("[data-dashboard-fullscreen]").forEach((btn) => {

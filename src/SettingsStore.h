@@ -4,7 +4,7 @@
 #include "AppConfig.h"
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
-static constexpr uint16_t SETTINGS_VERSION = 7;
+static constexpr uint16_t SETTINGS_VERSION = 8;
 static constexpr uint32_t MS_PER_SECOND = 1000UL;
 static constexpr uint32_t MS_PER_MINUTE = 60UL * MS_PER_SECOND;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
@@ -54,6 +54,9 @@ static constexpr uint8_t WHATSAPP_RECIPIENT_MAX_LENGTH = 32;
 static constexpr uint8_t WHATSAPP_API_VERSION_MAX_LENGTH = 12;
 static constexpr uint8_t LIVE_DISABLED = 0;
 static constexpr uint8_t LIVE_ENABLED = 1;
+static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_ALERT = 0;
+static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_FIXED = 1;
+static constexpr uint32_t TARDIS_INTERIOR_RGB_DEFAULT_COLOR = 0x2D9CDBUL;
 static constexpr uint8_t ALERT_NOTIFY_LEVEL_CRITICAL = 0;
 static constexpr uint8_t ALERT_NOTIFY_LEVEL_WARNING = 1;
 static constexpr uint8_t DASHBOARD_PAGE_OVERVIEW = 0;
@@ -184,6 +187,8 @@ struct SettingsV1 {
   uint8_t tardisModeEnabled = 0;
   uint8_t tardisInteriorLedEnabled = 0;
   uint8_t tardisExteriorLedEnabled = 0;
+  uint8_t tardisInteriorRgbMode = TARDIS_INTERIOR_RGB_MODE_ALERT;
+  uint32_t tardisInteriorRgbColor = TARDIS_INTERIOR_RGB_DEFAULT_COLOR;
   char dashboardPin[PIN_STORAGE_MAX_LENGTH + 1] = "";
   char homeAssistantToken[HOME_ASSISTANT_TOKEN_MAX_LENGTH + 1] = "";
 

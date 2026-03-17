@@ -553,6 +553,8 @@ void SettingsStore::load(SettingsV1 &out) {
   out.tardisModeEnabled = (uint8_t)_prefs.getUChar("td_en", out.tardisModeEnabled);
   out.tardisInteriorLedEnabled = (uint8_t)_prefs.getUChar("td_in", out.tardisInteriorLedEnabled);
   out.tardisExteriorLedEnabled = (uint8_t)_prefs.getUChar("td_ex", out.tardisExteriorLedEnabled);
+  out.tardisInteriorRgbMode = (uint8_t)_prefs.getUChar("td_im", out.tardisInteriorRgbMode);
+  out.tardisInteriorRgbColor = _prefs.getUInt("td_ic", out.tardisInteriorRgbColor);
   _prefs.getString("ui_pin", out.dashboardPin, sizeof(out.dashboardPin));
   const bool pinMigrated = out.dashboardPin[0]
     && !isPinHashRecord(out.dashboardPin)
@@ -705,6 +707,8 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("td_en", persisted.tardisModeEnabled);
   _prefs.putUChar("td_in", persisted.tardisInteriorLedEnabled);
   _prefs.putUChar("td_ex", persisted.tardisExteriorLedEnabled);
+  _prefs.putUChar("td_im", persisted.tardisInteriorRgbMode);
+  _prefs.putUInt("td_ic", persisted.tardisInteriorRgbColor);
   char dashboardPin[sizeof(persisted.dashboardPin)] = {0};
   if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(persisted.dashboardPin))
       && normalizePinStorage(dashboardPin, sizeof(dashboardPin))) {
@@ -824,6 +828,10 @@ void SettingsStore::sanitize(SettingsV1& s) {
   s.tardisModeEnabled = s.tardisModeEnabled ? 1 : 0;
   s.tardisInteriorLedEnabled = s.tardisInteriorLedEnabled ? 1 : 0;
   s.tardisExteriorLedEnabled = s.tardisExteriorLedEnabled ? 1 : 0;
+  if (s.tardisInteriorRgbMode > TARDIS_INTERIOR_RGB_MODE_FIXED) {
+    s.tardisInteriorRgbMode = TARDIS_INTERIOR_RGB_MODE_ALERT;
+  }
+  s.tardisInteriorRgbColor &= 0x00FFFFFFUL;
 
   if (s.orangeAlertHoldMs > MAX_ALERT_HOLD_MS) s.orangeAlertHoldMs = MAX_ALERT_HOLD_MS;
   if (s.redAlertHoldMs > MAX_ALERT_HOLD_MS) s.redAlertHoldMs = MAX_ALERT_HOLD_MS;
@@ -1086,6 +1094,8 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
   json += "\"tardisModeEnabled\":"; json += (s.tardisModeEnabled ? "true" : "false"); json += ",";
   json += "\"tardisInteriorLedEnabled\":"; json += (s.tardisInteriorLedEnabled ? "true" : "false"); json += ",";
   json += "\"tardisExteriorLedEnabled\":"; json += (s.tardisExteriorLedEnabled ? "true" : "false"); json += ",";
+  json += "\"tardisInteriorRgbMode\":"; json += String(s.tardisInteriorRgbMode); json += ",";
+  json += "\"tardisInteriorRgbColor\":"; json += String(s.tardisInteriorRgbColor); json += ",";
   if (includeSecrets) {
     char dashboardPin[sizeof(s.dashboardPin)] = {0};
     if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(s.dashboardPin))) {
@@ -1321,6 +1331,8 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.tardisModeEnabled = sp7json::parseBool(json, "tardisModeEnabled", next.tardisModeEnabled != 0) ? 1 : 0;
   next.tardisInteriorLedEnabled = sp7json::parseBool(json, "tardisInteriorLedEnabled", next.tardisInteriorLedEnabled != 0) ? 1 : 0;
   next.tardisExteriorLedEnabled = sp7json::parseBool(json, "tardisExteriorLedEnabled", next.tardisExteriorLedEnabled != 0) ? 1 : 0;
+  next.tardisInteriorRgbMode = (uint8_t)sp7json::parseInt(json, "tardisInteriorRgbMode", next.tardisInteriorRgbMode);
+  next.tardisInteriorRgbColor = (uint32_t)sp7json::parseInt(json, "tardisInteriorRgbColor", (int)next.tardisInteriorRgbColor);
   String dashboardPin = sp7json::parseString(json, "dashboardPin", String(next.dashboardPin));
   String homeAssistantToken = sp7json::parseString(json, "homeAssistantToken", String(next.homeAssistantToken));
 
@@ -1707,6 +1719,8 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.tardisModeEnabled = def.tardisModeEnabled;
     s.tardisInteriorLedEnabled = def.tardisInteriorLedEnabled;
     s.tardisExteriorLedEnabled = def.tardisExteriorLedEnabled;
+    s.tardisInteriorRgbMode = def.tardisInteriorRgbMode;
+    s.tardisInteriorRgbColor = def.tardisInteriorRgbColor;
     s.audioResponseMode = def.audioResponseMode;
   } else if (scope == "security") {
     memcpy(s.dashboardPin, def.dashboardPin, sizeof(s.dashboardPin));
