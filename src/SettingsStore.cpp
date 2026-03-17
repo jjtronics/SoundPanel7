@@ -20,6 +20,7 @@ namespace {
 static constexpr const char* kEncryptedSecretPrefix = "enc:v1:";
 static constexpr const char* kPlainSecretPrefix = "raw:v1:";
 static constexpr const char* kPinHashPrefix = "h1:";
+static constexpr const char* kWebUsersBlobKey = "wu_blob";
 static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
 static constexpr size_t kSecretKeyLength = 32;
@@ -176,6 +177,13 @@ void appendHex(String& out, const uint8_t* data, size_t len) {
     out += kHexChars[(data[i] >> 4) & 0x0F];
     out += kHexChars[data[i] & 0x0F];
   }
+}
+
+void fillLegacyWebUserKeys(uint8_t index, char (&keyActive)[8], char (&keyUser)[8], char (&keySalt)[8], char (&keyHash)[8]) {
+  snprintf(keyActive, sizeof(keyActive), "wu%da", index + 1);
+  snprintf(keyUser, sizeof(keyUser), "wu%du", index + 1);
+  snprintf(keySalt, sizeof(keySalt), "wu%ds", index + 1);
+  snprintf(keyHash, sizeof(keyHash), "wu%dh", index + 1);
 }
 
 bool decodeHex(const char* input, uint8_t* out, size_t outLen) {
@@ -933,15 +941,23 @@ void SettingsStore::sanitizeWifiCredential(WifiCredentialRecord& credential) {
 void SettingsStore::loadWebUsers(WebUserRecord (&out)[WEB_USER_MAX_COUNT]) {
   for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
     out[i] = WebUserRecord{};
+  }
 
+  const size_t expectedBytes = sizeof(out);
+  if (_prefs.getBytesLength(kWebUsersBlobKey) == expectedBytes
+      && _prefs.getBytes(kWebUsersBlobKey, out, expectedBytes) == expectedBytes) {
+    for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+      sanitizeWebUser(out[i]);
+    }
+    return;
+  }
+
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
     char keyActive[8];
     char keyUser[8];
     char keySalt[8];
     char keyHash[8];
-    snprintf(keyActive, sizeof(keyActive), "wu%da", i + 1);
-    snprintf(keyUser, sizeof(keyUser), "wu%du", i + 1);
-    snprintf(keySalt, sizeof(keySalt), "wu%ds", i + 1);
-    snprintf(keyHash, sizeof(keyHash), "wu%dh", i + 1);
+    fillLegacyWebUserKeys(i, keyActive, keyUser, keySalt, keyHash);
 
     out[i].active = (uint8_t)_prefs.getUChar(keyActive, 0);
     _prefs.getString(keyUser, out[i].username, sizeof(out[i].username));
@@ -991,29 +1007,8 @@ bool SettingsStore::upsertWebUser(const WebUserRecord& user, String* err) {
 
   users[slot] = next;
 
-  char keyActive[8];
-  char keyUser[8];
-  char keySalt[8];
-  char keyHash[8];
-  snprintf(keyActive, sizeof(keyActive), "wu%da", slot + 1);
-  snprintf(keyUser, sizeof(keyUser), "wu%du", slot + 1);
-  snprintf(keySalt, sizeof(keySalt), "wu%ds", slot + 1);
-  snprintf(keyHash, sizeof(keyHash), "wu%dh", slot + 1);
-
-  if (_prefs.putUChar(keyActive, users[slot].active) != sizeof(uint8_t)) {
-    if (err) *err = "user active flag write failed";
-    return false;
-  }
-  if (_prefs.putString(keyUser, users[slot].username) != strlen(users[slot].username)) {
-    if (err) *err = "username write failed";
-    return false;
-  }
-  if (_prefs.putString(keySalt, users[slot].passwordSalt) != strlen(users[slot].passwordSalt)) {
-    if (err) *err = "password salt write failed";
-    return false;
-  }
-  if (_prefs.putString(keyHash, users[slot].passwordHash) != strlen(users[slot].passwordHash)) {
-    if (err) *err = "password hash write failed";
+  if (_prefs.putBytes(kWebUsersBlobKey, users, sizeof(users)) != sizeof(users)) {
+    if (err) *err = "web users write failed";
     return false;
   }
 
@@ -1025,6 +1020,18 @@ bool SettingsStore::upsertWebUser(const WebUserRecord& user, String* err) {
       || strcmp(verify[slot].passwordHash, users[slot].passwordHash) != 0) {
     if (err) *err = "user verification failed";
     return false;
+  }
+
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    char keyActive[8];
+    char keyUser[8];
+    char keySalt[8];
+    char keyHash[8];
+    fillLegacyWebUserKeys(i, keyActive, keyUser, keySalt, keyHash);
+    _prefs.remove(keyActive);
+    _prefs.remove(keyUser);
+    _prefs.remove(keySalt);
+    _prefs.remove(keyHash);
   }
   return true;
 }
@@ -1057,19 +1064,7 @@ bool SettingsStore::deleteWebUser(const char* username, String* err) {
 
   users[index] = WebUserRecord{};
 
-  char keyActive[8];
-  char keyUser[8];
-  char keySalt[8];
-  char keyHash[8];
-  snprintf(keyActive, sizeof(keyActive), "wu%da", index + 1);
-  snprintf(keyUser, sizeof(keyUser), "wu%du", index + 1);
-  snprintf(keySalt, sizeof(keySalt), "wu%ds", index + 1);
-  snprintf(keyHash, sizeof(keyHash), "wu%dh", index + 1);
-
-  if (_prefs.putUChar(keyActive, 0) != sizeof(uint8_t)
-      || _prefs.putString(keyUser, "") != 0
-      || _prefs.putString(keySalt, "") != 0
-      || _prefs.putString(keyHash, "") != 0) {
+  if (_prefs.putBytes(kWebUsersBlobKey, users, sizeof(users)) != sizeof(users)) {
     if (err) *err = "user delete write failed";
     return false;
   }
@@ -1084,15 +1079,14 @@ bool SettingsStore::deleteWebUser(const char* username, String* err) {
 }
 
 void SettingsStore::clearWebUsers() {
+  WebUserRecord emptyUsers[WEB_USER_MAX_COUNT] = {};
+  _prefs.putBytes(kWebUsersBlobKey, emptyUsers, sizeof(emptyUsers));
   for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
     char keyActive[8];
     char keyUser[8];
     char keySalt[8];
     char keyHash[8];
-    snprintf(keyActive, sizeof(keyActive), "wu%da", i + 1);
-    snprintf(keyUser, sizeof(keyUser), "wu%du", i + 1);
-    snprintf(keySalt, sizeof(keySalt), "wu%ds", i + 1);
-    snprintf(keyHash, sizeof(keyHash), "wu%dh", i + 1);
+    fillLegacyWebUserKeys(i, keyActive, keyUser, keySalt, keyHash);
 
     _prefs.putUChar(keyActive, 0);
     _prefs.putString(keyUser, "");
