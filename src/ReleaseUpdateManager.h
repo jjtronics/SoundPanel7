@@ -7,10 +7,11 @@
 #include <mbedtls/sha256.h>
 
 class NetManager;
+class UiManager;
 
 class ReleaseUpdateManager {
 public:
-  bool begin(NetManager* net);
+  bool begin(NetManager* net, UiManager* ui);
   void loop();
 
   bool checkNow();
@@ -89,6 +90,7 @@ private:
   void finishInstall(bool ok, const String& error = "");
   void cleanupInstallTransport();
   void processInstall();
+  void updateInstallUi(bool force = false);
 
   static uint32_t currentUnixTimestamp();
   static int compareVersions(const char* a, const char* b);
@@ -96,9 +98,12 @@ private:
 
   WiFiClientSecure* _installClient = nullptr;
   HTTPClient* _installHttp = nullptr;
+  UiManager* _ui = nullptr;
   mbedtls_sha256_context _installSha = {};
   bool _installShaActive = false;
   uint8_t _installBuffer[kInstallChunkSize] = {};
   Preferences _prefs;
   bool _prefsReady = false;
+  uint8_t _lastInstallUiProgressPct = 255;
+  uint8_t _lastInstallLoggedProgressPct = 255;
 };

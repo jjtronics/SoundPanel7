@@ -12,6 +12,7 @@
 #include "DebugLog.h"
 #include "JsonHelpers.h"
 #include "NetManager.h"
+#include "ui/UiManager.h"
 
 #define Serial0 DebugSerial0
 
@@ -82,8 +83,9 @@ bool selectManifestOtaForCurrentProfile(const String& payload, String& otaUrl, S
 }
 }
 
-bool ReleaseUpdateManager::begin(NetManager* net) {
+bool ReleaseUpdateManager::begin(NetManager* net, UiManager* ui) {
   _net = net;
+  _ui = ui;
   clearResult();
   clearInstallState();
   _busy = false;
@@ -151,6 +153,8 @@ void ReleaseUpdateManager::clearInstallState() {
   _installError[0] = '\0';
   _installRebootPending = false;
   _installRebootAtMs = 0;
+  _lastInstallUiProgressPct = 255;
+  _lastInstallLoggedProgressPct = 255;
 }
 
 void ReleaseUpdateManager::cleanupInstallTransport() {
@@ -182,6 +186,42 @@ void ReleaseUpdateManager::setInstallError(const String& error) {
   sp7json::safeCopy(_installError, sizeof(_installError), error);
 }
 
+void ReleaseUpdateManager::updateInstallUi(bool force) {
+  if (!_ui) return;
+
+  uint8_t uiPct = _installProgressPct;
+  if (uiPct < 100) {
+    uiPct = (uint8_t)((uiPct / 5U) * 5U);
+  }
+
+  const bool progressChanged = (uiPct != _lastInstallUiProgressPct);
+  if (!force && !progressChanged) return;
+  _lastInstallUiProgressPct = uiPct;
+
+  const char* title = "Mise a jour en cours";
+  const char* detail = "Preparation de la mise a jour GitHub...";
+  bool success = false;
+
+  if (strcmp(_installStatus, "starting") == 0) {
+    detail = "Preparation de la mise a jour GitHub...";
+  } else if (strcmp(_installStatus, "downloading") == 0) {
+    detail = "Telechargement du firmware depuis GitHub...";
+  } else if (strcmp(_installStatus, "verifying") == 0) {
+    detail = "Verification du firmware...";
+  } else if (strcmp(_installStatus, "rebooting") == 0 || strcmp(_installStatus, "success") == 0) {
+    title = "Mise a jour terminee";
+    detail = "Verification terminee. Redemarrage en cours...";
+    success = true;
+    uiPct = 100;
+    _lastInstallUiProgressPct = 100;
+  } else if (strcmp(_installStatus, "failed") == 0) {
+    _ui->hideOtaStatusScreen();
+    return;
+  }
+
+  _ui->showOtaStatusScreen(title, detail, uiPct, success);
+}
+
 void ReleaseUpdateManager::finishInstall(bool ok, const String& error) {
   _installInProgress = false;
   _installFinished = true;
@@ -193,10 +233,14 @@ void ReleaseUpdateManager::finishInstall(bool ok, const String& error) {
     _installProgressPct = 100;
     _installRebootPending = true;
     _installRebootAtMs = millis();
+    updateInstallUi(true);
   } else {
     setInstallStatus("failed");
     setInstallError(error);
     _installRebootPending = false;
+    if (_ui) {
+      _ui->hideOtaStatusScreen();
+    }
   }
 }
 
@@ -276,7 +320,10 @@ bool ReleaseUpdateManager::startInstall() {
   _installError[0] = '\0';
   _installRebootPending = false;
   _installRebootAtMs = 0;
+  _lastInstallUiProgressPct = 255;
+  _lastInstallLoggedProgressPct = 255;
   setInstallStatus("starting");
+  updateInstallUi(true);
   return true;
 }
 
@@ -291,6 +338,7 @@ void ReleaseUpdateManager::processInstall() {
 
   if (!_installHttp) {
     setInstallStatus("downloading");
+    updateInstallUi(true);
     WiFi.setSleep(false);
 
     _installClient = new WiFiClientSecure();
@@ -355,6 +403,7 @@ void ReleaseUpdateManager::processInstall() {
   if (remaining == 0) {
     uint8_t digest[32] = {0};
     setInstallStatus("verifying");
+    updateInstallUi(true);
     mbedtls_sha256_finish(&_installSha, digest);
     cleanupInstallTransport();
 
@@ -417,6 +466,11 @@ void ReleaseUpdateManager::processInstall() {
 
   _installWrittenBytes += (uint32_t)written;
   _installProgressPct = (uint8_t)(((uint64_t)_installWrittenBytes * 100ULL) / (uint64_t)_installTotalBytes);
+  if (_installProgressPct != _lastInstallLoggedProgressPct) {
+    _lastInstallLoggedProgressPct = _installProgressPct;
+    Serial0.printf("[REL] Install progress: %u%%\n", (unsigned)_installProgressPct);
+  }
+  updateInstallUi();
 }
 
 bool ReleaseUpdateManager::fetchManifest(String& payload) {
