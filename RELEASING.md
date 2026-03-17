@@ -33,6 +33,7 @@ If the current state is the one you want to publish, release:
 
 ```bash
 pio run -e soundpanel7_ota
+pio run -e soundpanel7_headless_ota
 ```
 
 4. Optionally validate the USB build too:
@@ -79,6 +80,9 @@ After a successful release build, useful firmware files are generated in:
 - `.pio/build/soundpanel7_ota/firmware.bin`
 - `.pio/build/soundpanel7_ota/bootloader.bin`
 - `.pio/build/soundpanel7_ota/partitions.bin`
+- `.pio/build/soundpanel7_headless_ota/firmware.bin`
+- `.pio/build/soundpanel7_headless_ota/bootloader.bin`
+- `.pio/build/soundpanel7_headless_ota/partitions.bin`
 - `.pio/build/soundpanel7_ota/release-manifest.json`
 
 If GitHub Actions is enabled for the repository, publishing the GitHub release will automatically build the firmware and attach these files to the release.
@@ -94,7 +98,7 @@ The release workflow also publishes `release-manifest.json`.
 Its purpose is to give the device a stable machine-readable source for:
 
 - latest version
-- OTA firmware URL
+- OTA firmware URLs per hardware profile
 - SHA-256 checksum
 - release metadata
 
@@ -108,16 +112,28 @@ Current structure:
   "published_at": "2026-03-13T12:00:00Z",
   "release_url": "https://github.com/jjtronics/SoundPanel7/releases/tag/v0.2.0",
   "ota": {
-    "name": "firmware.bin",
+    "name": "soundpanel7_ota-firmware.bin",
     "type": "firmware",
-    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/firmware.bin",
+    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_ota-firmware.bin",
+    "sha256": "..."
+  },
+  "ota_screen": {
+    "name": "soundpanel7_ota-firmware.bin",
+    "type": "firmware",
+    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_ota-firmware.bin",
+    "sha256": "..."
+  },
+  "ota_headless": {
+    "name": "soundpanel7_headless_ota-firmware.bin",
+    "type": "firmware",
+    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_headless_ota-firmware.bin",
     "sha256": "..."
   },
   "assets": [
     {
-      "name": "firmware.bin",
+      "name": "soundpanel7_ota-firmware.bin",
       "type": "firmware",
-      "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/firmware.bin",
+      "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_ota-firmware.bin",
       "sha256": "..."
     }
   ]
@@ -128,8 +144,8 @@ For the future update-check task, the recommended flow is:
 
 1. fetch `release-manifest.json`
 2. compare `version` with the current firmware version
-3. use `ota.url` for download
-4. verify `ota.sha256` before applying the update
+3. choose the correct OTA entry for the current hardware profile
+4. verify the matching SHA-256 before applying the update
 
 ## Suggested first release notes
 

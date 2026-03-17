@@ -57,6 +57,29 @@ String extractReleaseAssetField(const String& payload, const char* assetName, co
   const String scope = payload.substring(assetPos, nextAssetPos);
   return sp7json::parseString(scope, fieldName, def, false);
 }
+
+const char* preferredReleaseFirmwareAssetName() {
+#if SOUNDPANEL7_HAS_SCREEN
+  return "soundpanel7_ota-firmware.bin";
+#else
+  return "soundpanel7_headless_ota-firmware.bin";
+#endif
+}
+
+bool selectManifestOtaForCurrentProfile(const String& payload, String& otaUrl, String& otaSha256) {
+#if SOUNDPANEL7_HAS_SCREEN
+  otaUrl = sp7json::parseString(payload, "otaScreenUrl", "", false);
+  otaSha256 = sp7json::parseString(payload, "otaScreenSha256", "", false);
+#else
+  otaUrl = sp7json::parseString(payload, "otaHeadlessUrl", "", false);
+  otaSha256 = sp7json::parseString(payload, "otaHeadlessSha256", "", false);
+#endif
+  if (!otaUrl.isEmpty() && otaSha256.length() == 64) return true;
+
+  otaUrl = sp7json::parseString(payload, "url", "", false);
+  otaSha256 = sp7json::parseString(payload, "sha256", "", false);
+  return !otaUrl.isEmpty() && otaSha256.length() == 64;
+}
 }
 
 bool ReleaseUpdateManager::begin(NetManager* net) {
@@ -489,8 +512,14 @@ bool ReleaseUpdateManager::parseLatestReleaseApiPayload(const String& payload) {
   const String version = stripLeadingVersionPrefix(tag);
   const String publishedAt = sp7json::parseString(payload, "published_at", "", false);
   const String releaseUrl = sp7json::parseString(payload, "html_url", "", false);
-  const String otaUrl = extractReleaseAssetField(payload, "firmware.bin", "browser_download_url", "");
-  String otaSha256 = extractReleaseAssetField(payload, "firmware.bin", "digest", "");
+  const char* preferredAssetName = preferredReleaseFirmwareAssetName();
+  String otaUrl = extractReleaseAssetField(payload, preferredAssetName, "browser_download_url", "");
+  String otaSha256 = extractReleaseAssetField(payload, preferredAssetName, "digest", "");
+
+  if (otaUrl.isEmpty() || otaSha256.isEmpty()) {
+    otaUrl = extractReleaseAssetField(payload, "firmware.bin", "browser_download_url", "");
+    otaSha256 = extractReleaseAssetField(payload, "firmware.bin", "digest", "");
+  }
 
   if (version.isEmpty()) {
     setError("latest release missing tag_name");
@@ -561,8 +590,9 @@ bool ReleaseUpdateManager::parseManifest(const String& payload) {
   String version = sp7json::parseString(payload, "version", "", false);
   String publishedAt = sp7json::parseString(payload, "published_at", "", false);
   String releaseUrl = sp7json::parseString(payload, "release_url", "", false);
-  String otaUrl = sp7json::parseString(payload, "url", "", false);
-  String otaSha256 = sp7json::parseString(payload, "sha256", "", false);
+  String otaUrl;
+  String otaSha256;
+  selectManifestOtaForCurrentProfile(payload, otaUrl, otaSha256);
 
   if (version.isEmpty()) {
     setError("manifest missing version");

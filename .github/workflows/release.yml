@@ -39,7 +39,9 @@ jobs:
         run: pip install platformio
 
       - name: Build firmware
-        run: pio run -e soundpanel7_ota
+        run: |
+          pio run -e soundpanel7_ota
+          pio run -e soundpanel7_headless_ota
 
       - name: Generate release manifest
         env:
@@ -51,6 +53,7 @@ jobs:
             --repository "${REPOSITORY}" \
             --published-at "${{ github.event.release.published_at }}" \
             --build-dir .pio/build/soundpanel7_ota \
+            --headless-build-dir .pio/build/soundpanel7_headless_ota \
             --output .pio/build/soundpanel7_ota/release-manifest.json
 
       - name: Upload release workflow artifact
@@ -61,6 +64,9 @@ jobs:
             .pio/build/soundpanel7_ota/firmware.bin
             .pio/build/soundpanel7_ota/bootloader.bin
             .pio/build/soundpanel7_ota/partitions.bin
+            .pio/build/soundpanel7_headless_ota/firmware.bin
+            .pio/build/soundpanel7_headless_ota/bootloader.bin
+            .pio/build/soundpanel7_headless_ota/partitions.bin
             .pio/build/soundpanel7_ota/release-manifest.json
 
       - name: Attach binaries to GitHub release
@@ -71,5 +77,8 @@ jobs:
             .pio/build/soundpanel7_ota/firmware.bin#soundpanel7_ota-firmware.bin \
             .pio/build/soundpanel7_ota/bootloader.bin#soundpanel7_ota-bootloader.bin \
             .pio/build/soundpanel7_ota/partitions.bin#soundpanel7_ota-partitions.bin \
+            .pio/build/soundpanel7_headless_ota/firmware.bin#soundpanel7_headless_ota-firmware.bin \
+            .pio/build/soundpanel7_headless_ota/bootloader.bin#soundpanel7_headless_ota-bootloader.bin \
+            .pio/build/soundpanel7_headless_ota/partitions.bin#soundpanel7_headless_ota-partitions.bin \
             .pio/build/soundpanel7_ota/release-manifest.json#release-manifest.json \
             --clobber
