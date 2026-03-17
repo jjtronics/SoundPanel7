@@ -828,7 +828,7 @@ void SettingsStore::sanitize(SettingsV1& s) {
   s.tardisModeEnabled = s.tardisModeEnabled ? 1 : 0;
   s.tardisInteriorLedEnabled = s.tardisInteriorLedEnabled ? 1 : 0;
   s.tardisExteriorLedEnabled = s.tardisExteriorLedEnabled ? 1 : 0;
-  if (s.tardisInteriorRgbMode > TARDIS_INTERIOR_RGB_MODE_FIXED) {
+  if (s.tardisInteriorRgbMode > TARDIS_INTERIOR_RGB_MODE_TAKEOFF) {
     s.tardisInteriorRgbMode = TARDIS_INTERIOR_RGB_MODE_ALERT;
   }
   s.tardisInteriorRgbColor &= 0x00FFFFFFUL;

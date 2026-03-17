@@ -254,6 +254,7 @@ En mode headless :
 
 - il n'y a pas d'interface tactile locale
 - les réglages liés à l'écran, au tactile et au PIN local disparaissent de l'admin web
+- le mode TARDIS peut piloter la LED RGB intégrée de certaines cartes ESP32-S3 standard pour simuler l'éclairage de cabine
 - le reste reste identique : mesure audio, interface web, Wi-Fi, NTP, MQTT, OTA, Home Assistant, export/import de config
 
 <a id="fr-achat-esp"></a>
@@ -331,6 +332,7 @@ Notes utiles :
 - sur un `ESP32-S3` standard, ces libellés sont généralement sérigraphiés directement comme `IO4`, `IO11`, `IO12`, `IO13` ou simplement `4`, `11`, `12`, `13`
 - pour `INMP441`, relier `L/R` à `GND` pour rester sur le canal gauche
 - toutes les masses doivent être communes entre le micro et la carte
+- certaines cartes `ESP32-S3 N16R8` intègrent aussi une LED RGB adressable sur le PCB, exploitable par le mode TARDIS
 
 Par défaut, le projet compile avec un **mode audio mock** pour faciliter le développement.
 
@@ -516,6 +518,14 @@ L'interface permet notamment de régler :
 - backup / restore / import / export des réglages
 
 En build headless, les blocs liés à l'écran local, au tactile et au code PIN sont masqués automatiquement.
+
+En build headless, un bloc `Mode TARDIS` permet aussi de piloter l'éclairage cabine :
+
+- `Alerte sonore` : la LED intérieure suit l'état du sonomètre
+- `Couleur fixe` : choix manuel via palette de couleur
+- `Décollage TARDIS` : animation bleue non bloquante inspirée de la lueur de la TARDIS
+
+Sur les cartes compatibles, la LED RGB intégrée est utilisée pour l'intérieur, tandis que la LED extérieure reste pilotée par la sortie GPIO dédiée.
 
 #### Zone Paramètres
 
@@ -1204,6 +1214,7 @@ In headless mode:
 
 - there is no local touch UI
 - screen, touch, and local PIN settings disappear from the web admin
+- TARDIS mode can drive the onboard RGB LED found on some standard ESP32-S3 boards to simulate the cabin light
 - the rest stays the same: audio metering, web UI, Wi-Fi, NTP, MQTT, OTA, Home Assistant, config export/import
 
 <a id="en-buy-the-esp"></a>
@@ -1281,6 +1292,7 @@ Useful notes:
 - on a standard `ESP32-S3` board, these labels are usually printed directly as `IO4`, `IO11`, `IO12`, `IO13` or simply `4`, `11`, `12`, `13`
 - for `INMP441`, connect `L/R` to `GND` to stay on the left channel
 - make sure the microphone and the board share a common ground
+- some `ESP32-S3 N16R8` boards also expose an onboard addressable RGB LED that can be used by TARDIS mode
 
 By default, the project builds with a **mock audio mode** to make development easier without a real measurement chain.
 
@@ -1291,6 +1303,14 @@ In [`platformio.ini`](platformio.ini), this flag is enabled by default:
 ```
 
 If you connect a real analog input, check that setting first before judging the panel's behavior.
+
+On headless builds, the web admin also exposes a `TARDIS mode` block for the cabin lighting:
+
+- `Sound alert`: the interior LED follows the meter alert level
+- `Fixed color`: manual selection through a color picker
+- `TARDIS takeoff`: non-blocking blue animated effect inspired by the TARDIS beacon glow
+
+On compatible boards, the onboard RGB LED is used for the interior light, while the exterior light remains driven through its dedicated GPIO output.
 
 <a id="en-quick-start"></a>
 

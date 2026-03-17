@@ -56,6 +56,7 @@ static constexpr uint8_t LIVE_DISABLED = 0;
 static constexpr uint8_t LIVE_ENABLED = 1;
 static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_ALERT = 0;
 static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_FIXED = 1;
+static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_TAKEOFF = 2;
 static constexpr uint32_t TARDIS_INTERIOR_RGB_DEFAULT_COLOR = 0x2D9CDBUL;
 static constexpr uint8_t ALERT_NOTIFY_LEVEL_CRITICAL = 0;
 static constexpr uint8_t ALERT_NOTIFY_LEVEL_WARNING = 1;

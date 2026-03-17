@@ -70,6 +70,9 @@ private:
   );
   bool _tardisInteriorRgbReady = false;
   uint32_t _tardisInteriorRgbAppliedColor = 0xFFFFFFFFUL;
+  uint32_t _tardisAnimationCycleStartMs = 0;
+  uint32_t _tardisAnimationLastFrameMs = 0;
+  uint8_t _tardisAnimationMode = 0xFF;
   SharedHistory* _history = nullptr;
   WebSession _sessions[WEB_SESSION_MAX_COUNT];
   uint8_t _loginFailureCount = 0;
@@ -163,6 +166,7 @@ private:
   void ensureTardisInteriorRgbReady();
   void applyTardisInteriorRgbColor(uint32_t color);
   uint32_t tardisInteriorRgbColorForCurrentState() const;
+  void updateTardisAnimationNow(bool force = false);
   void applySettingsRuntimeState();
   String historyJson() const;
 
