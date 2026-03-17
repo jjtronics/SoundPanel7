@@ -20,7 +20,6 @@ namespace {
 static constexpr const char* kEncryptedSecretPrefix = "enc:v1:";
 static constexpr const char* kPlainSecretPrefix = "raw:v1:";
 static constexpr const char* kPinHashPrefix = "h1:";
-static constexpr const char* kWebUsersBlobKey = "wu_blob";
 static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
 static constexpr size_t kSecretKeyLength = 32;
@@ -28,6 +27,8 @@ static constexpr size_t kBackupChunkSize = 768;
 static constexpr uint8_t kBackupChunkMaxCount = 16;
 static constexpr const char* kBackupFilePath = "/sp7-backup.json";
 static constexpr const char* kBackupTsFilePath = "/sp7-backup.ts";
+static constexpr const char* kWebUsersFilePath = "/sp7-webusers.bin";
+static constexpr const char* kWebUsersTmpFilePath = "/sp7-webusers.tmp";
 static constexpr const char* kCalibrationProfileJsonNames[CALIBRATION_PROFILE_COUNT] = {
   "analog",
   "pdm",
@@ -184,6 +185,20 @@ void fillLegacyWebUserKeys(uint8_t index, char (&keyActive)[8], char (&keyUser)[
   snprintf(keyUser, sizeof(keyUser), "wu%du", index + 1);
   snprintf(keySalt, sizeof(keySalt), "wu%ds", index + 1);
   snprintf(keyHash, sizeof(keyHash), "wu%dh", index + 1);
+}
+
+void clearLegacyWebUserKeys(Preferences& prefs) {
+  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+    char keyActive[8];
+    char keyUser[8];
+    char keySalt[8];
+    char keyHash[8];
+    fillLegacyWebUserKeys(i, keyActive, keyUser, keySalt, keyHash);
+    prefs.remove(keyActive);
+    prefs.remove(keyUser);
+    prefs.remove(keySalt);
+    prefs.remove(keyHash);
+  }
 }
 
 bool decodeHex(const char* input, uint8_t* out, size_t outLen) {
@@ -943,13 +958,20 @@ void SettingsStore::loadWebUsers(WebUserRecord (&out)[WEB_USER_MAX_COUNT]) {
     out[i] = WebUserRecord{};
   }
 
-  const size_t expectedBytes = sizeof(out);
-  if (_prefs.getBytesLength(kWebUsersBlobKey) == expectedBytes
-      && _prefs.getBytes(kWebUsersBlobKey, out, expectedBytes) == expectedBytes) {
-    for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
-      sanitizeWebUser(out[i]);
+  if (ensureBackupFsMounted()) {
+    File file = LittleFS.open(kWebUsersFilePath, "r");
+    if (file) {
+      const size_t expectedBytes = sizeof(out);
+      if (file.size() == expectedBytes && file.read((uint8_t*)out, expectedBytes) == expectedBytes) {
+        file.close();
+        for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
+          sanitizeWebUser(out[i]);
+        }
+        return;
+      }
+      file.close();
+      LittleFS.remove(kWebUsersFilePath);
     }
-    return;
   }
 
   for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
@@ -1007,8 +1029,28 @@ bool SettingsStore::upsertWebUser(const WebUserRecord& user, String* err) {
 
   users[slot] = next;
 
-  if (_prefs.putBytes(kWebUsersBlobKey, users, sizeof(users)) != sizeof(users)) {
+  if (!ensureBackupFsMounted()) {
+    if (err) *err = "web users fs unavailable";
+    return false;
+  }
+
+  File tmp = LittleFS.open(kWebUsersTmpFilePath, "w");
+  if (!tmp) {
+    if (err) *err = "web users temp file open failed";
+    return false;
+  }
+  const size_t expectedBytes = sizeof(users);
+  const size_t written = tmp.write((const uint8_t*)users, expectedBytes);
+  tmp.close();
+  if (written != expectedBytes) {
+    LittleFS.remove(kWebUsersTmpFilePath);
     if (err) *err = "web users write failed";
+    return false;
+  }
+  LittleFS.remove(kWebUsersFilePath);
+  if (!LittleFS.rename(kWebUsersTmpFilePath, kWebUsersFilePath)) {
+    LittleFS.remove(kWebUsersTmpFilePath);
+    if (err) *err = "web users commit failed";
     return false;
   }
 
@@ -1022,17 +1064,7 @@ bool SettingsStore::upsertWebUser(const WebUserRecord& user, String* err) {
     return false;
   }
 
-  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
-    char keyActive[8];
-    char keyUser[8];
-    char keySalt[8];
-    char keyHash[8];
-    fillLegacyWebUserKeys(i, keyActive, keyUser, keySalt, keyHash);
-    _prefs.remove(keyActive);
-    _prefs.remove(keyUser);
-    _prefs.remove(keySalt);
-    _prefs.remove(keyHash);
-  }
+  clearLegacyWebUserKeys(_prefs);
   return true;
 }
 
@@ -1064,8 +1096,28 @@ bool SettingsStore::deleteWebUser(const char* username, String* err) {
 
   users[index] = WebUserRecord{};
 
-  if (_prefs.putBytes(kWebUsersBlobKey, users, sizeof(users)) != sizeof(users)) {
+  if (!ensureBackupFsMounted()) {
+    if (err) *err = "web users fs unavailable";
+    return false;
+  }
+
+  File tmp = LittleFS.open(kWebUsersTmpFilePath, "w");
+  if (!tmp) {
+    if (err) *err = "user delete temp file open failed";
+    return false;
+  }
+  const size_t expectedBytes = sizeof(users);
+  const size_t written = tmp.write((const uint8_t*)users, expectedBytes);
+  tmp.close();
+  if (written != expectedBytes) {
+    LittleFS.remove(kWebUsersTmpFilePath);
     if (err) *err = "user delete write failed";
+    return false;
+  }
+  LittleFS.remove(kWebUsersFilePath);
+  if (!LittleFS.rename(kWebUsersTmpFilePath, kWebUsersFilePath)) {
+    LittleFS.remove(kWebUsersTmpFilePath);
+    if (err) *err = "user delete commit failed";
     return false;
   }
 
@@ -1075,24 +1127,16 @@ bool SettingsStore::deleteWebUser(const char* username, String* err) {
     if (err) *err = "user delete verification failed";
     return false;
   }
+  clearLegacyWebUserKeys(_prefs);
   return true;
 }
 
 void SettingsStore::clearWebUsers() {
-  WebUserRecord emptyUsers[WEB_USER_MAX_COUNT] = {};
-  _prefs.putBytes(kWebUsersBlobKey, emptyUsers, sizeof(emptyUsers));
-  for (uint8_t i = 0; i < WEB_USER_MAX_COUNT; i++) {
-    char keyActive[8];
-    char keyUser[8];
-    char keySalt[8];
-    char keyHash[8];
-    fillLegacyWebUserKeys(i, keyActive, keyUser, keySalt, keyHash);
-
-    _prefs.putUChar(keyActive, 0);
-    _prefs.putString(keyUser, "");
-    _prefs.putString(keySalt, "");
-    _prefs.putString(keyHash, "");
+  if (ensureBackupFsMounted()) {
+    LittleFS.remove(kWebUsersTmpFilePath);
+    LittleFS.remove(kWebUsersFilePath);
   }
+  clearLegacyWebUserKeys(_prefs);
 }
 
 String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMode, String* err) const {
