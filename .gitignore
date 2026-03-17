@@ -9,3 +9,4 @@ __pycache__/
 data/video/*.mp4
 platformio.override.ini
 .release-assets/
+tmp/
