@@ -9,6 +9,7 @@ static constexpr uint32_t MS_PER_SECOND = 1000UL;
 static constexpr uint32_t MS_PER_MINUTE = 60UL * MS_PER_SECOND;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
 static constexpr uint8_t CALIBRATION_POINT_MAX = 5;
+static constexpr uint8_t CALIBRATION_PROFILE_COUNT = 3;
 static constexpr uint8_t DEFAULT_GREEN_MAX = 55;
 static constexpr uint8_t DEFAULT_ORANGE_MAX = 70;
 static constexpr uint8_t DEFAULT_HISTORY_MINUTES = 5;
@@ -78,6 +79,15 @@ static inline uint8_t normalizedCalibrationPointCount(uint8_t count) {
   return (count >= CALIBRATION_POINT_MAX) ? CALIBRATION_POINT_MAX : 3;
 }
 
+static inline uint8_t calibrationProfileIndexForAudioSource(uint8_t audioSource) {
+  switch (audioSource) {
+    case 1: return 0; // Analog Mic
+    case 2: return 1; // PDM MEMS
+    case 3: return 2; // INMP441
+    default: return 0xFF;
+  }
+}
+
 static inline size_t pinCodeLength(const char* pin) {
   if (!pin) return 0;
   size_t len = 0;
@@ -141,6 +151,22 @@ struct ThresholdsV1 {
   uint8_t orangeMax = DEFAULT_ORANGE_MAX;
 };
 
+struct CalibrationProfile {
+  float baseOffsetDb = 0.0f;
+  float extraOffsetDb = 15.0f;
+  uint8_t pointCount = 3;
+  uint32_t captureMs = DEFAULT_CALIBRATION_CAPTURE_MS;
+  float pointRefDb[CALIBRATION_POINT_MAX] = {
+    RECOMMENDED_CALIBRATION_3[0],
+    RECOMMENDED_CALIBRATION_3[1],
+    RECOMMENDED_CALIBRATION_3[2],
+    RECOMMENDED_CALIBRATION_3[3],
+    RECOMMENDED_CALIBRATION_3[4]
+  };
+  float pointRawLogRms[CALIBRATION_POINT_MAX] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+  uint8_t pointValid[CALIBRATION_POINT_MAX] = {0, 0, 0, 0, 0};
+};
+
 struct SettingsV1 {
   uint32_t magic   = SETTINGS_MAGIC;
   uint16_t version = SETTINGS_VERSION;
@@ -202,6 +228,7 @@ struct SettingsV1 {
   };
   float calPointRawLogRms[CALIBRATION_POINT_MAX] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
   uint8_t calPointValid[CALIBRATION_POINT_MAX] = {0, 0, 0, 0, 0};
+  CalibrationProfile calibrationProfiles[CALIBRATION_PROFILE_COUNT];
 
   // OTA
   uint8_t otaEnabled = 1;
@@ -257,6 +284,8 @@ public:
   uint32_t backupTimestamp() const;
   bool restoreBackup(SettingsV1& out, String* err = nullptr);
   bool resetSection(SettingsV1& s, const String& scope, String* err = nullptr);
+  static void syncActiveCalibrationProfile(SettingsV1& s);
+  static void switchCalibrationProfile(SettingsV1& s, uint8_t nextAudioSource);
   void loadWebUsers(WebUserRecord (&out)[WEB_USER_MAX_COUNT]);
   uint8_t webUserCount();
   bool upsertWebUser(const WebUserRecord& user, String* err = nullptr);

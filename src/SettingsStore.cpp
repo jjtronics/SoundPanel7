@@ -17,6 +17,11 @@ static constexpr const char* kPinHashPrefix = "h1:";
 static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
 static constexpr size_t kSecretKeyLength = 32;
+static constexpr const char* kCalibrationProfileJsonNames[CALIBRATION_PROFILE_COUNT] = {
+  "analog",
+  "pdm",
+  "inmp441",
+};
 
 void applyAudioBoardProfileDefaults(SettingsV1& s) {
   s.analogPin = SOUNDPANEL7_DEFAULT_ANALOG_PIN;
@@ -25,6 +30,87 @@ void applyAudioBoardProfileDefaults(SettingsV1& s) {
   s.inmp441BclkPin = SOUNDPANEL7_DEFAULT_INMP441_BCLK_PIN;
   s.inmp441WsPin = SOUNDPANEL7_DEFAULT_INMP441_WS_PIN;
   s.inmp441DataPin = SOUNDPANEL7_DEFAULT_INMP441_DATA_PIN;
+}
+
+void copyActiveCalibrationToProfile(const SettingsV1& s, CalibrationProfile& profile) {
+  profile.baseOffsetDb = s.analogBaseOffsetDb;
+  profile.extraOffsetDb = s.analogExtraOffsetDb;
+  profile.pointCount = s.calibrationPointCount;
+  profile.captureMs = s.calibrationCaptureMs;
+  memcpy(profile.pointRefDb, s.calPointRefDb, sizeof(profile.pointRefDb));
+  memcpy(profile.pointRawLogRms, s.calPointRawLogRms, sizeof(profile.pointRawLogRms));
+  memcpy(profile.pointValid, s.calPointValid, sizeof(profile.pointValid));
+}
+
+void applyProfileToActiveCalibration(SettingsV1& s, const CalibrationProfile& profile) {
+  s.analogBaseOffsetDb = profile.baseOffsetDb;
+  s.analogExtraOffsetDb = profile.extraOffsetDb;
+  s.calibrationPointCount = profile.pointCount;
+  s.calibrationCaptureMs = profile.captureMs;
+  memcpy(s.calPointRefDb, profile.pointRefDb, sizeof(s.calPointRefDb));
+  memcpy(s.calPointRawLogRms, profile.pointRawLogRms, sizeof(s.calPointRawLogRms));
+  memcpy(s.calPointValid, profile.pointValid, sizeof(s.calPointValid));
+}
+
+bool loadCalibrationProfile(Preferences& prefs, uint8_t index, CalibrationProfile& out) {
+  char keyCount[12];
+  snprintf(keyCount, sizeof(keyCount), "cp%u_cnt", (unsigned)index);
+  const uint8_t savedCount = (uint8_t)prefs.getUChar(keyCount, 0xFF);
+  if (savedCount == 0xFF) return false;
+
+  char keyCapture[12];
+  char keyBase[12];
+  char keyExtra[12];
+  snprintf(keyCapture, sizeof(keyCapture), "cp%u_cap", (unsigned)index);
+  snprintf(keyBase, sizeof(keyBase), "cp%u_bas", (unsigned)index);
+  snprintf(keyExtra, sizeof(keyExtra), "cp%u_ext", (unsigned)index);
+
+  out.pointCount = savedCount;
+  out.captureMs = prefs.getUInt(keyCapture, out.captureMs);
+  out.baseOffsetDb = prefs.getFloat(keyBase, out.baseOffsetDb);
+  out.extraOffsetDb = prefs.getFloat(keyExtra, out.extraOffsetDb);
+
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    char keyRef[12];
+    char keyRaw[12];
+    char keyVal[12];
+    snprintf(keyRef, sizeof(keyRef), "cp%ur%u", (unsigned)index, (unsigned)(i + 1));
+    snprintf(keyRaw, sizeof(keyRaw), "cp%ux%u", (unsigned)index, (unsigned)(i + 1));
+    snprintf(keyVal, sizeof(keyVal), "cp%uv%u", (unsigned)index, (unsigned)(i + 1));
+    out.pointRefDb[i] = prefs.getFloat(keyRef, out.pointRefDb[i]);
+    out.pointRawLogRms[i] = prefs.getFloat(keyRaw, out.pointRawLogRms[i]);
+    out.pointValid[i] = (uint8_t)prefs.getUChar(keyVal, out.pointValid[i]);
+  }
+
+  return true;
+}
+
+void saveCalibrationProfile(Preferences& prefs, uint8_t index, const CalibrationProfile& profile) {
+  char keyCount[12];
+  char keyCapture[12];
+  char keyBase[12];
+  char keyExtra[12];
+  snprintf(keyCount, sizeof(keyCount), "cp%u_cnt", (unsigned)index);
+  snprintf(keyCapture, sizeof(keyCapture), "cp%u_cap", (unsigned)index);
+  snprintf(keyBase, sizeof(keyBase), "cp%u_bas", (unsigned)index);
+  snprintf(keyExtra, sizeof(keyExtra), "cp%u_ext", (unsigned)index);
+
+  prefs.putUChar(keyCount, profile.pointCount);
+  prefs.putUInt(keyCapture, profile.captureMs);
+  prefs.putFloat(keyBase, profile.baseOffsetDb);
+  prefs.putFloat(keyExtra, profile.extraOffsetDb);
+
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    char keyRef[12];
+    char keyRaw[12];
+    char keyVal[12];
+    snprintf(keyRef, sizeof(keyRef), "cp%ur%u", (unsigned)index, (unsigned)(i + 1));
+    snprintf(keyRaw, sizeof(keyRaw), "cp%ux%u", (unsigned)index, (unsigned)(i + 1));
+    snprintf(keyVal, sizeof(keyVal), "cp%uv%u", (unsigned)index, (unsigned)(i + 1));
+    prefs.putFloat(keyRef, profile.pointRefDb[i]);
+    prefs.putFloat(keyRaw, profile.pointRawLogRms[i]);
+    prefs.putUChar(keyVal, profile.pointValid[i]);
+  }
 }
 
 bool secureEqualsRaw(const char* a, const char* b) {
@@ -171,6 +257,20 @@ bool encodePinCode(const char* pin, char* out, size_t outSize) {
 bool SettingsStore::begin(const char* nvsNamespace) {
   _ns = nvsNamespace ? nvsNamespace : "sp7";
   return _prefs.begin(_ns.c_str(), false);
+}
+
+void SettingsStore::syncActiveCalibrationProfile(SettingsV1& s) {
+  const uint8_t profileIndex = calibrationProfileIndexForAudioSource(s.audioSource);
+  if (profileIndex >= CALIBRATION_PROFILE_COUNT) return;
+  copyActiveCalibrationToProfile(s, s.calibrationProfiles[profileIndex]);
+}
+
+void SettingsStore::switchCalibrationProfile(SettingsV1& s, uint8_t nextAudioSource) {
+  syncActiveCalibrationProfile(s);
+  s.audioSource = nextAudioSource;
+  const uint8_t profileIndex = calibrationProfileIndexForAudioSource(nextAudioSource);
+  if (profileIndex >= CALIBRATION_PROFILE_COUNT) return;
+  applyProfileToActiveCalibration(s, s.calibrationProfiles[profileIndex]);
 }
 
 bool SettingsStore::deriveSecretKey(uint8_t (&outKey)[32]) const {
@@ -433,6 +533,11 @@ void SettingsStore::load(SettingsV1 &out) {
   out.calibrationPointCount = (uint8_t)_prefs.getUChar("cal_cnt", out.calibrationPointCount);
   out.calibrationCaptureMs = _prefs.getUInt("cal_capms", out.calibrationCaptureMs);
 
+  bool calibrationProfilesLoaded = false;
+  for (uint8_t i = 0; i < CALIBRATION_PROFILE_COUNT; i++) {
+    calibrationProfilesLoaded = loadCalibrationProfile(_prefs, i, out.calibrationProfiles[i]) || calibrationProfilesLoaded;
+  }
+
   out.mqttEnabled = (uint8_t)_prefs.getUChar("mq_en", out.mqttEnabled);
   _prefs.getString("mq_host", out.mqttHost, sizeof(out.mqttHost));
   out.mqttPort = (uint16_t)_prefs.getUShort("mq_pt", out.mqttPort);
@@ -482,7 +587,20 @@ void SettingsStore::load(SettingsV1 &out) {
     out.calPointValid[i]     = (uint8_t)_prefs.getUChar(keyVal, out.calPointValid[i]);
   }
 
+  if (!calibrationProfilesLoaded) {
+    const uint8_t currentProfileIndex = calibrationProfileIndexForAudioSource(out.audioSource);
+    const uint8_t fallbackProfileIndex = currentProfileIndex < CALIBRATION_PROFILE_COUNT ? currentProfileIndex : 0;
+    copyActiveCalibrationToProfile(out, out.calibrationProfiles[fallbackProfileIndex]);
+  }
+
   sanitize(out);
+
+  const uint8_t activeProfileIndex = calibrationProfileIndexForAudioSource(out.audioSource);
+  if (activeProfileIndex < CALIBRATION_PROFILE_COUNT) {
+    applyProfileToActiveCalibration(out, out.calibrationProfiles[activeProfileIndex]);
+    sanitize(out);
+    syncActiveCalibrationProfile(out);
+  }
 
   if (pinMigrated) _prefs.putString("ui_pin", out.dashboardPin);
   if (haMigrated) saveSecret("ha_tok", "ha_token", out.homeAssistantToken);
@@ -502,32 +620,35 @@ void SettingsStore::load(SettingsV1 &out) {
 }
 
 void SettingsStore::save(const SettingsV1 &s) {
+  SettingsV1 persisted = s;
+  syncActiveCalibrationProfile(persisted);
+
   _prefs.putUInt("magic", SETTINGS_MAGIC);
   _prefs.putUShort("ver", SETTINGS_VERSION);
 
-  _prefs.putUChar("ui_bl", s.backlight);
-  _prefs.putUChar("th_g", s.th.greenMax);
-  _prefs.putUChar("th_o", s.th.orangeMax);
-  _prefs.putUChar("hist_m", s.historyMinutes);
-  _prefs.putUInt("ui_ow_ms", s.orangeAlertHoldMs);
-  _prefs.putUInt("ui_rw_ms", s.redAlertHoldMs);
-  _prefs.putUChar("ui_live", s.liveEnabled);
-  _prefs.putUChar("ui_touch", s.touchEnabled);
-  _prefs.putUChar("ui_page", s.dashboardPage);
-  _prefs.putUChar("ui_fsm", s.dashboardFullscreenMask);
-  char dashboardPin[sizeof(s.dashboardPin)] = {0};
-  if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(s.dashboardPin))
+  _prefs.putUChar("ui_bl", persisted.backlight);
+  _prefs.putUChar("th_g", persisted.th.greenMax);
+  _prefs.putUChar("th_o", persisted.th.orangeMax);
+  _prefs.putUChar("hist_m", persisted.historyMinutes);
+  _prefs.putUInt("ui_ow_ms", persisted.orangeAlertHoldMs);
+  _prefs.putUInt("ui_rw_ms", persisted.redAlertHoldMs);
+  _prefs.putUChar("ui_live", persisted.liveEnabled);
+  _prefs.putUChar("ui_touch", persisted.touchEnabled);
+  _prefs.putUChar("ui_page", persisted.dashboardPage);
+  _prefs.putUChar("ui_fsm", persisted.dashboardFullscreenMask);
+  char dashboardPin[sizeof(persisted.dashboardPin)] = {0};
+  if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(persisted.dashboardPin))
       && normalizePinStorage(dashboardPin, sizeof(dashboardPin))) {
     _prefs.putString("ui_pin", dashboardPin);
   } else {
     _prefs.putString("ui_pin", "");
   }
-  saveSecret("ha_tok", "ha_token", s.homeAssistantToken);
+  saveSecret("ha_tok", "ha_token", persisted.homeAssistantToken);
 
-  _prefs.putString("tz", s.tz);
-  _prefs.putString("ntp", s.ntpServer);
-  _prefs.putUInt("ntp_ms", s.ntpSyncIntervalMs);
-  _prefs.putString("hn", s.hostname);
+  _prefs.putString("tz", persisted.tz);
+  _prefs.putString("ntp", persisted.ntpServer);
+  _prefs.putUInt("ntp_ms", persisted.ntpSyncIntervalMs);
+  _prefs.putString("hn", persisted.hostname);
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
     char keySsid[8];
     char keyPass[8];
@@ -535,54 +656,57 @@ void SettingsStore::save(const SettingsV1 &s) {
     snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(i + 1));
     snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
     snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
-    _prefs.putString(keySsid, s.wifiCredentials[i].ssid);
-    saveSecret(keyPass, purpose, s.wifiCredentials[i].password);
+    _prefs.putString(keySsid, persisted.wifiCredentials[i].ssid);
+    saveSecret(keyPass, purpose, persisted.wifiCredentials[i].password);
   }
 
-  _prefs.putUChar("ota_en", s.otaEnabled);
-  _prefs.putUShort("ota_pt", s.otaPort);
-  _prefs.putString("ota_hn", s.otaHostname);
-  saveSecret("ota_pw", "ota_password", s.otaPassword);
+  _prefs.putUChar("ota_en", persisted.otaEnabled);
+  _prefs.putUShort("ota_pt", persisted.otaPort);
+  _prefs.putString("ota_hn", persisted.otaHostname);
+  saveSecret("ota_pw", "ota_password", persisted.otaPassword);
 
-  _prefs.putUChar("a_src", s.audioSource);
+  _prefs.putUChar("a_src", persisted.audioSource);
   _prefs.remove("a_pin");
   _prefs.remove("a_pdmck");
   _prefs.remove("a_pdmdt");
   _prefs.remove("a_i2sbk");
   _prefs.remove("a_i2sws");
   _prefs.remove("a_i2sdt");
-  _prefs.putUShort("a_rms", s.analogRmsSamples);
-  _prefs.putUChar("a_resp", s.audioResponseMode);
-  _prefs.putFloat("a_ema", s.emaAlpha);
-  _prefs.putUInt("a_peak", s.peakHoldMs);
-  _prefs.putFloat("a_base", s.analogBaseOffsetDb);
-  _prefs.putFloat("a_extra", s.analogExtraOffsetDb);
-  _prefs.putUChar("cal_cnt", s.calibrationPointCount);
-  _prefs.putUInt("cal_capms", s.calibrationCaptureMs);
+  _prefs.putUShort("a_rms", persisted.analogRmsSamples);
+  _prefs.putUChar("a_resp", persisted.audioResponseMode);
+  _prefs.putFloat("a_ema", persisted.emaAlpha);
+  _prefs.putUInt("a_peak", persisted.peakHoldMs);
+  _prefs.putFloat("a_base", persisted.analogBaseOffsetDb);
+  _prefs.putFloat("a_extra", persisted.analogExtraOffsetDb);
+  _prefs.putUChar("cal_cnt", persisted.calibrationPointCount);
+  _prefs.putUInt("cal_capms", persisted.calibrationCaptureMs);
+  for (uint8_t i = 0; i < CALIBRATION_PROFILE_COUNT; i++) {
+    saveCalibrationProfile(_prefs, i, persisted.calibrationProfiles[i]);
+  }
 
-  _prefs.putUChar("mq_en", s.mqttEnabled);
-  _prefs.putString("mq_host", s.mqttHost);
-  _prefs.putUShort("mq_pt", s.mqttPort);
-  _prefs.putString("mq_usr", s.mqttUsername);
-  saveSecret("mq_pwd", "mqtt_password", s.mqttPassword);
-  _prefs.putString("mq_cid", s.mqttClientId);
-  _prefs.putString("mq_base", s.mqttBaseTopic);
-  _prefs.putUShort("mq_pubms", s.mqttPublishPeriodMs);
-  _prefs.putUChar("mq_ret", s.mqttRetain);
+  _prefs.putUChar("mq_en", persisted.mqttEnabled);
+  _prefs.putString("mq_host", persisted.mqttHost);
+  _prefs.putUShort("mq_pt", persisted.mqttPort);
+  _prefs.putString("mq_usr", persisted.mqttUsername);
+  saveSecret("mq_pwd", "mqtt_password", persisted.mqttPassword);
+  _prefs.putString("mq_cid", persisted.mqttClientId);
+  _prefs.putString("mq_base", persisted.mqttBaseTopic);
+  _prefs.putUShort("mq_pubms", persisted.mqttPublishPeriodMs);
+  _prefs.putUChar("mq_ret", persisted.mqttRetain);
 
-  _prefs.putUChar("n_lvl", s.notifyOnWarning);
-  _prefs.putUChar("n_rec", s.notifyOnRecovery);
-  _prefs.putUChar("n_s_en", s.slackEnabled);
-  saveSecret("n_s_url", "slack_webhook", s.slackWebhookUrl);
-  _prefs.putString("n_s_ch", s.slackChannel);
-  _prefs.putUChar("n_t_en", s.telegramEnabled);
-  saveSecret("n_t_tok", "telegram_token", s.telegramBotToken);
-  _prefs.putString("n_t_chat", s.telegramChatId);
-  _prefs.putUChar("n_w_en", s.whatsappEnabled);
-  saveSecret("n_w_tok", "whatsapp_token", s.whatsappAccessToken);
-  _prefs.putString("n_w_pid", s.whatsappPhoneNumberId);
-  _prefs.putString("n_w_to", s.whatsappRecipient);
-  _prefs.putString("n_w_ver", s.whatsappApiVersion);
+  _prefs.putUChar("n_lvl", persisted.notifyOnWarning);
+  _prefs.putUChar("n_rec", persisted.notifyOnRecovery);
+  _prefs.putUChar("n_s_en", persisted.slackEnabled);
+  saveSecret("n_s_url", "slack_webhook", persisted.slackWebhookUrl);
+  _prefs.putString("n_s_ch", persisted.slackChannel);
+  _prefs.putUChar("n_t_en", persisted.telegramEnabled);
+  saveSecret("n_t_tok", "telegram_token", persisted.telegramBotToken);
+  _prefs.putString("n_t_chat", persisted.telegramChatId);
+  _prefs.putUChar("n_w_en", persisted.whatsappEnabled);
+  saveSecret("n_w_tok", "whatsapp_token", persisted.whatsappAccessToken);
+  _prefs.putString("n_w_pid", persisted.whatsappPhoneNumberId);
+  _prefs.putString("n_w_to", persisted.whatsappRecipient);
+  _prefs.putString("n_w_ver", persisted.whatsappApiVersion);
 
   for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     char keyRef[8];
@@ -592,9 +716,9 @@ void SettingsStore::save(const SettingsV1 &s) {
     snprintf(keyRaw, sizeof(keyRaw), "c%dx", i + 1);
     snprintf(keyVal, sizeof(keyVal), "c%dv", i + 1);
 
-    _prefs.putFloat(keyRef, s.calPointRefDb[i]);
-    _prefs.putFloat(keyRaw, s.calPointRawLogRms[i]);
-    _prefs.putUChar(keyVal, s.calPointValid[i]);
+    _prefs.putFloat(keyRef, persisted.calPointRefDb[i]);
+    _prefs.putFloat(keyRaw, persisted.calPointRawLogRms[i]);
+    _prefs.putUChar(keyVal, persisted.calPointValid[i]);
   }
 }
 
@@ -603,6 +727,20 @@ void SettingsStore::factoryReset() {
 }
 
 void SettingsStore::sanitize(SettingsV1& s) {
+  auto sanitizeCalibrationProfile = [](CalibrationProfile& profile) {
+    profile.pointCount = normalizedCalibrationPointCount(profile.pointCount);
+    if (profile.captureMs < MIN_CALIBRATION_CAPTURE_MS) profile.captureMs = MIN_CALIBRATION_CAPTURE_MS;
+    if (profile.captureMs > MAX_CALIBRATION_CAPTURE_MS) profile.captureMs = MAX_CALIBRATION_CAPTURE_MS;
+    const float* recommended = (profile.pointCount == CALIBRATION_POINT_MAX) ? RECOMMENDED_CALIBRATION_5 : RECOMMENDED_CALIBRATION_3;
+    for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
+      profile.pointValid[i] = profile.pointValid[i] ? 1 : 0;
+      if (!isfinite(profile.pointRefDb[i])) profile.pointRefDb[i] = recommended[i];
+      if (profile.pointRefDb[i] < 35.0f) profile.pointRefDb[i] = 35.0f;
+      if (profile.pointRefDb[i] > 110.0f) profile.pointRefDb[i] = 110.0f;
+      if (!isfinite(profile.pointRawLogRms[i])) profile.pointRawLogRms[i] = 0.0f;
+    }
+  };
+
   if (s.backlight > 100) s.backlight = 100;
   if (s.th.greenMax > 100) s.th.greenMax = 100;
   if (s.th.orangeMax > 100) s.th.orangeMax = 100;
@@ -623,6 +761,9 @@ void SettingsStore::sanitize(SettingsV1& s) {
   s.homeAssistantToken[sizeof(s.homeAssistantToken) - 1] = '\0';
 
   applyAudioBoardProfileDefaults(s);
+  for (uint8_t i = 0; i < CALIBRATION_PROFILE_COUNT; i++) {
+    sanitizeCalibrationProfile(s.calibrationProfiles[i]);
+  }
   if (s.audioSource > 3) s.audioSource = 1;
   if (s.analogRmsSamples < 32) s.analogRmsSamples = 32;
   if (s.analogRmsSamples > 1024) s.analogRmsSamples = 1024;
@@ -666,6 +807,9 @@ void SettingsStore::sanitize(SettingsV1& s) {
     s.whatsappApiVersion[sizeof(s.whatsappApiVersion) - 1] = '\0';
   }
 
+  s.calibrationPointCount = normalizedCalibrationPointCount(s.calibrationPointCount);
+  if (s.calibrationCaptureMs < MIN_CALIBRATION_CAPTURE_MS) s.calibrationCaptureMs = MIN_CALIBRATION_CAPTURE_MS;
+  if (s.calibrationCaptureMs > MAX_CALIBRATION_CAPTURE_MS) s.calibrationCaptureMs = MAX_CALIBRATION_CAPTURE_MS;
   const float* recommended = (s.calibrationPointCount == CALIBRATION_POINT_MAX) ? RECOMMENDED_CALIBRATION_5 : RECOMMENDED_CALIBRATION_3;
   for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
     s.calPointValid[i] = s.calPointValid[i] ? 1 : 0;
@@ -933,6 +1077,32 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
     json += String(s.calPointValid[i]);
   }
   json += "],";
+  for (uint8_t profileIndex = 0; profileIndex < CALIBRATION_PROFILE_COUNT; profileIndex++) {
+    const CalibrationProfile& profile = s.calibrationProfiles[profileIndex];
+    const String prefix = String(kCalibrationProfileJsonNames[profileIndex]);
+    json += "\""; json += prefix; json += "CalibrationPointCount\":"; json += String(profile.pointCount); json += ",";
+    json += "\""; json += prefix; json += "CalibrationCaptureSec\":"; json += String(profile.captureMs / MS_PER_SECOND); json += ",";
+    json += "\""; json += prefix; json += "BaseOffsetDb\":"; json += String(profile.baseOffsetDb, 4); json += ",";
+    json += "\""; json += prefix; json += "ExtraOffsetDb\":"; json += String(profile.extraOffsetDb, 4); json += ",";
+    json += "\""; json += prefix; json += "CalPointRefDb\":[";
+    for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+      if (i) json += ",";
+      json += String(profile.pointRefDb[i], 2);
+    }
+    json += "],";
+    json += "\""; json += prefix; json += "CalPointRawLogRms\":[";
+    for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+      if (i) json += ",";
+      json += String(profile.pointRawLogRms[i], 4);
+    }
+    json += "],";
+    json += "\""; json += prefix; json += "CalPointValid\":[";
+    for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+      if (i) json += ",";
+      json += String(profile.pointValid[i]);
+    }
+    json += "],";
+  }
   json += "\"otaEnabled\":"; json += (s.otaEnabled ? "true" : "false"); json += ",";
   json += "\"otaPort\":"; json += String(s.otaPort); json += ",";
   json += "\"otaHostname\":\""; json += sp7json::escape(s.otaHostname); json += "\",";
@@ -1117,6 +1287,62 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   if (sp7json::parseU8Array(json, "calPointValid", calValid)) {
     for (int i = 0; i < CALIBRATION_POINT_MAX; i++) next.calPointValid[i] = calValid[i];
   }
+  bool importedCalibrationProfiles = false;
+  for (uint8_t profileIndex = 0; profileIndex < CALIBRATION_PROFILE_COUNT; profileIndex++) {
+    CalibrationProfile& profile = next.calibrationProfiles[profileIndex];
+    const String prefix = String(kCalibrationProfileJsonNames[profileIndex]);
+    const bool hasProfileCount = sp7json::findValueStart(json, (prefix + "CalibrationPointCount").c_str()) >= 0;
+    const bool hasProfileCapture = sp7json::findValueStart(json, (prefix + "CalibrationCaptureSec").c_str()) >= 0;
+    const bool hasProfileBase = sp7json::findValueStart(json, (prefix + "BaseOffsetDb").c_str()) >= 0;
+    const bool hasProfileExtra = sp7json::findValueStart(json, (prefix + "ExtraOffsetDb").c_str()) >= 0;
+    const int parsedPointCount = sp7json::parseInt(json, (prefix + "CalibrationPointCount").c_str(), profile.pointCount);
+    profile.pointCount = (uint8_t)parsedPointCount;
+    const int parsedCaptureSec = sp7json::parseInt(
+      json,
+      (prefix + "CalibrationCaptureSec").c_str(),
+      (int)(profile.captureMs / MS_PER_SECOND)
+    );
+    profile.captureMs = (uint32_t)parsedCaptureSec * MS_PER_SECOND;
+    const float parsedBaseOffset = sp7json::parseFloat(json, (prefix + "BaseOffsetDb").c_str(), profile.baseOffsetDb);
+    const float parsedExtraOffset = sp7json::parseFloat(json, (prefix + "ExtraOffsetDb").c_str(), profile.extraOffsetDb);
+    profile.baseOffsetDb = parsedBaseOffset;
+    profile.extraOffsetDb = parsedExtraOffset;
+
+    float profileRef[CALIBRATION_POINT_MAX];
+    memcpy(profileRef, profile.pointRefDb, sizeof(profileRef));
+    const bool hasProfileRef = sp7json::parseFloatArray(json, (prefix + "CalPointRefDb").c_str(), profileRef);
+    if (hasProfileRef) {
+      for (int i = 0; i < CALIBRATION_POINT_MAX; i++) profile.pointRefDb[i] = profileRef[i];
+    }
+
+    float profileRaw[CALIBRATION_POINT_MAX];
+    memcpy(profileRaw, profile.pointRawLogRms, sizeof(profileRaw));
+    const bool hasProfileRaw = sp7json::parseFloatArray(json, (prefix + "CalPointRawLogRms").c_str(), profileRaw);
+    if (hasProfileRaw) {
+      for (int i = 0; i < CALIBRATION_POINT_MAX; i++) profile.pointRawLogRms[i] = profileRaw[i];
+    }
+
+    uint8_t profileValid[CALIBRATION_POINT_MAX];
+    memcpy(profileValid, profile.pointValid, sizeof(profileValid));
+    const bool hasProfileValid = sp7json::parseU8Array(json, (prefix + "CalPointValid").c_str(), profileValid);
+    if (hasProfileValid) {
+      for (int i = 0; i < CALIBRATION_POINT_MAX; i++) profile.pointValid[i] = profileValid[i];
+    }
+    importedCalibrationProfiles = importedCalibrationProfiles
+      || hasProfileCount
+      || hasProfileCapture
+      || hasProfileBase
+      || hasProfileExtra
+      || hasProfileRef
+      || hasProfileRaw
+      || hasProfileValid
+      ;
+  }
+  if (!importedCalibrationProfiles) {
+    const uint8_t currentProfileIndex = calibrationProfileIndexForAudioSource(next.audioSource);
+    const uint8_t fallbackProfileIndex = currentProfileIndex < CALIBRATION_PROFILE_COUNT ? currentProfileIndex : 0;
+    copyActiveCalibrationToProfile(next, next.calibrationProfiles[fallbackProfileIndex]);
+  }
 
   next.otaEnabled = sp7json::parseBool(json, "otaEnabled", next.otaEnabled != 0) ? 1 : 0;
   next.otaPort = (uint16_t)sp7json::parseInt(json, "otaPort", next.otaPort);
@@ -1207,6 +1433,12 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   }
 
   sanitize(next);
+  const uint8_t activeProfileIndex = calibrationProfileIndexForAudioSource(next.audioSource);
+  if (activeProfileIndex < CALIBRATION_PROFILE_COUNT) {
+    applyProfileToActiveCalibration(next, next.calibrationProfiles[activeProfileIndex]);
+    sanitize(next);
+    syncActiveCalibrationProfile(next);
+  }
   s = next;
   return true;
 }
@@ -1274,7 +1506,7 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
   } else if (scope == "wifi") {
     memcpy(s.wifiCredentials, def.wifiCredentials, sizeof(s.wifiCredentials));
   } else if (scope == "audio") {
-    s.audioSource = def.audioSource;
+    switchCalibrationProfile(s, def.audioSource);
     s.analogPin = def.analogPin;
     s.pdmClkPin = def.pdmClkPin;
     s.pdmDataPin = def.pdmDataPin;

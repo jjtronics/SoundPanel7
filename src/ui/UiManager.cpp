@@ -1706,6 +1706,7 @@ void UiManager::onCalibrationCapture(lv_event_t* e) {
   if (row >= CALIBRATION_POINT_MAX || index >= self->_s->calibrationPointCount) return;
 
   if (g_audio.captureCalibrationPoint(*self->_s, index, self->_s->calPointRefDb[index])) {
+    SettingsStore::syncActiveCalibrationProfile(*self->_s);
     self->_store->save(*self->_s);
     self->refreshCalibrationView();
     return;
@@ -1719,6 +1720,7 @@ void UiManager::onCalibrationClear(lv_event_t* e) {
   if (!self || !self->_s || !self->_store) return;
 
   g_audio.clearCalibration(*self->_s);
+  SettingsStore::syncActiveCalibrationProfile(*self->_s);
   self->_store->save(*self->_s);
   self->refreshCalibrationView();
 }
@@ -1738,6 +1740,7 @@ void UiManager::onCalibrationRefChanged(lv_event_t* e) {
   if (next < 35.0f) next = 35.0f;
   if (next > 110.0f) next = 110.0f;
   self->_s->calPointRefDb[index] = next;
+  SettingsStore::syncActiveCalibrationProfile(*self->_s);
   self->_store->save(*self->_s);
   self->refreshCalibrationView();
 }
@@ -1753,6 +1756,7 @@ void UiManager::onCalibrationMode(lv_event_t* e) {
 
   self->_s->calibrationPointCount = pointCount;
   g_audio.clearCalibration(*self->_s);
+  SettingsStore::syncActiveCalibrationProfile(*self->_s);
   self->_store->save(*self->_s);
   self->refreshCalibrationView();
 }

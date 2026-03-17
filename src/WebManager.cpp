@@ -1519,13 +1519,20 @@ void WebManager::handleUiSave() {
   if (ccs < 1) ccs = 1;
   if (ccs > 30) ccs = 30;
 
+  const uint8_t previousAudioSource = _s->audioSource;
+  const uint8_t nextAudioSource = (uint8_t)audioSource;
+  if (nextAudioSource != previousAudioSource) {
+    SettingsStore::switchCalibrationProfile(*_s, nextAudioSource);
+  } else {
+    _s->audioSource = nextAudioSource;
+  }
+
   if (SOUNDPANEL7_HAS_SCREEN) {
     _s->backlight = (uint8_t)bl;
   }
   _s->th.greenMax = (uint8_t)g;
   _s->th.orangeMax = (uint8_t)o;
   _s->historyMinutes = (uint8_t)hm;
-  _s->audioSource = (uint8_t)audioSource;
   _s->audioResponseMode = (uint8_t)arm;
   if (SOUNDPANEL7_HAS_SCREEN) {
     _s->touchEnabled = touchEnabled ? 1 : 0;
@@ -1534,14 +1541,17 @@ void WebManager::handleUiSave() {
   }
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
-  _s->calibrationPointCount = (uint8_t)calCount;
-  _s->calibrationCaptureMs = (uint32_t)ccs * MS_PER_SECOND;
+  if (AudioEngine::sourceSupportsCalibration(_s->audioSource)) {
+    _s->calibrationPointCount = (uint8_t)calCount;
+    _s->calibrationCaptureMs = (uint32_t)ccs * MS_PER_SECOND;
+  }
   if (_history) _history->settingsChanged();
   if (SOUNDPANEL7_HAS_SCREEN) {
     if (dashboardPageRequested && _ui) _ui->requestDashboardPage(_s->dashboardPage);
     else if (dashboardFullscreenMaskRequested && _ui) _ui->refreshDashboardLayout();
   }
 
+  SettingsStore::syncActiveCalibrationProfile(*_s);
   _store->save(*_s);
   applyBacklightNow(_s->backlight);
   applyTouchNow(_s->touchEnabled != 0);
@@ -1610,6 +1620,7 @@ void WebManager::handleCalPoint() {
     return;
   }
 
+  SettingsStore::syncActiveCalibrationProfile(*_s);
   _store->save(*_s);
   Serial0.printf("[WEB] CAL point %d/%d saved @ %.1f dB\n", index + 1, _s->calibrationPointCount, refDb);
   replyOkJson();
@@ -1618,8 +1629,13 @@ void WebManager::handleCalPoint() {
 void WebManager::handleCalClear() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
+  if (!AudioEngine::sourceSupportsCalibration(_s->audioSource)) {
+    replyErrorJson(400, "source not calibratable");
+    return;
+  }
 
   g_audio.clearCalibration(*_s);
+  SettingsStore::syncActiveCalibrationProfile(*_s);
   _store->save(*_s);
   Serial0.println("[WEB] CAL cleared");
   replyOkJson();
@@ -1628,6 +1644,10 @@ void WebManager::handleCalClear() {
 void WebManager::handleCalMode() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
+  if (!AudioEngine::sourceSupportsCalibration(_s->audioSource)) {
+    replyErrorJson(400, "source not calibratable");
+    return;
+  }
 
   String body = _srv.arg("plain");
   int pointCount = sp7json::parseInt(body, "calibrationPointCount", (int)_s->calibrationPointCount);
@@ -1636,6 +1656,7 @@ void WebManager::handleCalMode() {
   if ((uint8_t)pointCount != _s->calibrationPointCount) {
     _s->calibrationPointCount = (uint8_t)pointCount;
     g_audio.clearCalibration(*_s);
+    SettingsStore::syncActiveCalibrationProfile(*_s);
     _store->save(*_s);
   }
 
