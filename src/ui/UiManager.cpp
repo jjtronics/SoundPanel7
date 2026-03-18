@@ -730,7 +730,7 @@ void UiManager::buildOtaStatusScreen() {
   lv_obj_set_flex_align(_otaStatusCard, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
   _lblOtaEyebrow = lv_label_create(_otaStatusCard);
-  lv_label_set_text(_lblOtaEyebrow, "OTA LOCALE");
+  lv_label_set_text(_lblOtaEyebrow, "OTA");
   lv_obj_set_style_text_font(_lblOtaEyebrow, &lv_font_montserrat_16, 0);
   lv_obj_set_style_text_color(_lblOtaEyebrow, lv_color_hex(0x7CC6FE), 0);
 
@@ -2236,6 +2236,8 @@ void UiManager::tick() {
       if (_net->isWifiConnected()) {
         String s = "WiFi: OK  " + _net->ipString() + "  (RSSI " + String(_net->rssi()) + " dBm)";
         setLabelTextIfChanged(_lblWifiStatus, s.c_str());
+      } else if (_net->isConfigPortalActive()) {
+        setLabelTextIfChanged(_lblWifiStatus, "WiFi: AP");
       } else {
         setLabelTextIfChanged(_lblWifiStatus, "WiFi: OFF");
       }
