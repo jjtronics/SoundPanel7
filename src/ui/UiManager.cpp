@@ -78,7 +78,7 @@ static lv_obj_t* makeCard(lv_obj_t* parent, int w, int h) {
 
 static bool isOrangeZone(const SettingsV1* s, float db) {
   if (!s) return false;
-  return db > s->th.greenMax && db <= s->th.orangeMax;
+  return db > s->th.greenMax;
 }
 
 static bool isRedZone(const SettingsV1* s, float db) {

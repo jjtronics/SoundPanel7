@@ -788,18 +788,18 @@ void WebManager::updateAlertState(float dbInstant, float leq, float peak) {
   if (!_s) return;
 
   const uint32_t now = millis();
-  const bool orangeZone = dbInstant > _s->th.greenMax && dbInstant <= _s->th.orangeMax;
+  const bool orangeZone = dbInstant > _s->th.greenMax;
   const bool redZone = dbInstant > _s->th.orangeMax;
 
   if (redZone) {
     if (_redZoneSinceMs == 0) _redZoneSinceMs = now;
-    _orangeZoneSinceMs = 0;
-  } else if (orangeZone) {
+  }
+
+  if (orangeZone) {
     if (_orangeZoneSinceMs == 0) _orangeZoneSinceMs = now;
-    _redZoneSinceMs = 0;
   } else {
-    _orangeZoneSinceMs = 0;
     _redZoneSinceMs = 0;
+    _orangeZoneSinceMs = 0;
   }
 
   const bool orangeAlert = _orangeZoneSinceMs != 0 && (now - _orangeZoneSinceMs) >= _s->orangeAlertHoldMs;
@@ -5639,7 +5639,7 @@ R"HTML(
 
   function updateAlertState(db, greenMax, orangeMax, warningHoldSec, criticalHoldSec) {
     const now = Date.now();
-    const orange = db > greenMax && db <= orangeMax;
+    const orange = db > greenMax;
     const red = db > orangeMax;
 
     if (orange) {
