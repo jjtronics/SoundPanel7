@@ -24,6 +24,13 @@ static WiFiMulti g_wifiMulti;
 static wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
 static String g_lastWifiIp;
 
+static String buildSetupApName() {
+  const uint64_t chipMac = ESP.getEfuseMac();
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%04llX", (unsigned long long)(chipMac & 0xFFFFULL));
+  return String(kSetupApName) + "-" + suffix;
+}
+
 bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   _s = settings;
   _store = store;
@@ -87,8 +94,9 @@ void NetManager::rebuildWifiMulti() {
 void NetManager::startConfigPortal() {
   if (g_wm.getConfigPortalActive()) return;
   if (_configPortalStateCallback) _configPortalStateCallback(true);
-  Serial0.printf("[Net] Starting WiFi portal '%s'\n", kSetupApName);
-  g_wm.startConfigPortal(kSetupApName);
+  const String setupApName = buildSetupApName();
+  Serial0.printf("[Net] Starting WiFi portal '%s'\n", setupApName.c_str());
+  g_wm.startConfigPortal(setupApName.c_str());
   if (g_wm.getConfigPortalActive()) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.enableSTA(true);
@@ -243,9 +251,10 @@ void NetManager::ensureWifiConnection(bool force) {
   }
 
   if (!_legacyCredentialTried && !portalActive) {
+    const String setupApName = buildSetupApName();
     Serial0.println("[Net] Trying legacy WiFiManager credential");
     _legacyCredentialTried = true;
-    if (g_wm.autoConnect(kSetupApName) || isWifiConnected()) {
+    if (g_wm.autoConnect(setupApName.c_str()) || isWifiConnected()) {
       _wifiAttemptFailures = 0;
       return;
     }
