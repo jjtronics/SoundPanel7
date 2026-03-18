@@ -2424,7 +2424,9 @@ void WebManager::handleReleaseInstall() {
     replyErrorJson(500, "release manager unavailable");
     return;
   }
-  if (!_releaseUpdate->startInstall()) {
+  const String body = _srv.arg("plain");
+  const bool force = sp7json::parseBool(body, "force", false);
+  if (!_releaseUpdate->startInstall(force)) {
     const char* error = _releaseUpdate->installError();
     replyErrorJson(409, (error && error[0]) ? String(error) : String("install start failed"));
     return;
@@ -4894,6 +4896,7 @@ R"HTML(
                       <div class="btnRow">
                         <button class="btn accent" id="checkReleaseBtn">Verifier les mises a jour</button>
                         <button class="btn" id="installReleaseBtn" disabled>Installer</button>
+                        <button class="btn warn" id="forceInstallReleaseBtn" disabled>Forcer l'installation</button>
                       </div>
                       <div class="toast" id="toastReleaseAdv"></div>
                     </div>
@@ -6955,6 +6958,7 @@ R"HTML(
     const currentVersion = String((release && (release.currentVersion ?? release.releaseCurrentVersion)) || (state.status && state.status.version) || "--");
     const publishedAt = String((release && (release.publishedAt ?? release.releasePublishedAt)) || "");
     const otaUrl = String((release && (release.otaUrl ?? release.releaseOtaUrl)) || "");
+    const otaSha256 = String((release && (release.otaSha256 ?? release.releaseOtaSha256)) || "");
     const installing = Boolean(release && (release.installing ?? release.releaseInstallInProgress));
     const installFinished = Boolean(release && (release.installFinished ?? release.releaseInstallFinished));
     const installSucceeded = Boolean(release && (release.installSucceeded ?? release.releaseInstallSucceeded));
@@ -6963,6 +6967,7 @@ R"HTML(
     const installProgressPct = Number((release && (release.installProgressPct ?? release.releaseInstallProgressPct)) || 0);
     const installWrittenBytes = Number((release && (release.installWrittenBytes ?? release.releaseInstallWrittenBytes)) || 0);
     const installTotalBytes = Number((release && (release.installTotalBytes ?? release.releaseInstallTotalBytes)) || 0);
+    const hasInstallPayload = otaUrl.length > 0 && otaSha256.length === 64;
 
     setTextIfPresent("releaseCurrentVersion", currentVersion || "--");
     setTextIfPresent("releaseLastCheck", checked ? formatEpoch(release.checkedAt ?? release.releaseUpdateCheckedAt) : "Jamais");
@@ -7014,7 +7019,9 @@ R"HTML(
         ? `Firmware pret a installer: ${otaUrl}`
         : "Une release plus recente est disponible.";
     } else if (ok && !available) {
-      hint = "Aucune release plus recente detectee.";
+      hint = hasInstallPayload
+        ? "Aucune release plus recente detectee. Tu peux forcer la reinstallation du firmware GitHub."
+        : "Aucune release plus recente detectee.";
     } else if (checked && error) {
       hint = error;
     }
@@ -7025,6 +7032,13 @@ R"HTML(
       const canInstall = ok && available && !installing;
       installBtn.disabled = !canInstall;
       installBtn.textContent = installing ? "Installation..." : "Installer";
+    }
+
+    const forceInstallBtn = $("forceInstallReleaseBtn");
+    if (forceInstallBtn) {
+      const canForceInstall = ok && hasInstallPayload && !installing;
+      forceInstallBtn.disabled = !canForceInstall;
+      forceInstallBtn.textContent = installing ? "Installation..." : "Forcer l'installation";
     }
 
     syncReleaseInstallPolling(release);
@@ -7122,6 +7136,37 @@ R"HTML(
       (release) => {
         applyReleaseStatus(release);
         return "Installation OTA demarree.";
+      },
+      async (release) => {
+        applyReleaseStatus(release);
+        await refreshStatus();
+      }
+    );
+  }
+
+  async function forceInstallReleaseNow() {
+    if (!confirm("Forcer la reinstallation du firmware GitHub verifie puis redemarrer le panneau, meme si la version est deja a jour ?")) return;
+    applyReleaseStatus({
+      ...(state.status || {}),
+      checked: true,
+      ok: true,
+      available: true,
+      installing: true,
+      installFinished: false,
+      installSucceeded: false,
+      installStatus: "starting",
+      installError: "",
+      installProgressPct: 0,
+      installWrittenBytes: 0,
+      installTotalBytes: 0,
+    });
+    await runToastRequest(
+      "toastReleaseAdv",
+      "Lancement reinstallation...",
+      () => apiPost("/api/release/install", { force: true }),
+      (release) => {
+        applyReleaseStatus(release);
+        return "Reinstallation OTA forcee demarree.";
       },
       async (release) => {
         applyReleaseStatus(release);
@@ -7471,6 +7516,7 @@ R"HTML(
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
   if ($("checkReleaseBtn")) $("checkReleaseBtn").addEventListener("click", checkReleaseNow);
   if ($("installReleaseBtn")) $("installReleaseBtn").addEventListener("click", installReleaseNow);
+  if ($("forceInstallReleaseBtn")) $("forceInstallReleaseBtn").addEventListener("click", forceInstallReleaseNow);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
   $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
   $("testNotificationsAdv").addEventListener("click", testNotificationSettings);

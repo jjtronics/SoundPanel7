@@ -15,7 +15,7 @@ public:
   void loop();
 
   bool checkNow();
-  bool startInstall();
+  bool startInstall(bool force = false);
 
   bool busy() const { return _busy; }
   bool hasChecked() const { return _hasChecked; }

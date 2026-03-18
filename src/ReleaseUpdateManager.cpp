@@ -282,7 +282,7 @@ void ReleaseUpdateManager::savePersistedState() {
   _prefs.putString("err", _lastError);
 }
 
-bool ReleaseUpdateManager::startInstall() {
+bool ReleaseUpdateManager::startInstall(bool force) {
   if (_busy || _installInProgress) {
     setInstallStatus("busy");
     setInstallError("install already running");
@@ -293,7 +293,7 @@ bool ReleaseUpdateManager::startInstall() {
     setInstallError("check updates first");
     return false;
   }
-  if (!_updateAvailable) {
+  if (!_updateAvailable && !force) {
     setInstallStatus("idle");
     setInstallError("no update available");
     return false;
