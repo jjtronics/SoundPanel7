@@ -51,27 +51,54 @@ static float clamp01f(float value) {
   return value;
 }
 
-static float smoothPulse01(float phase) {
-  return 0.5f - 0.5f * cosf(phase * 2.0f * PI);
-}
-
-static float easeInOutCubic01(float t) {
+static float smoothStep01(float t) {
   t = clamp01f(t);
-  if (t < 0.5f) return 4.0f * t * t * t;
-  const float inv = -2.0f * t + 2.0f;
-  return 1.0f - ((inv * inv * inv) * 0.5f);
+  return t * t * (3.0f - 2.0f * t);
 }
 
-static float tardisNoise01(float x) {
-  return 0.5f + 0.5f * sinf(x + 0.61f * sinf(x * 1.73f) + 0.19f * sinf(x * 4.37f));
+static float mixf(float a, float b, float amount) {
+  amount = clamp01f(amount);
+  return a + ((b - a) * amount);
 }
 
-static float bellPulse01(float t, float center, float halfWidth) {
-  if (halfWidth <= 0.0f) return 0.0f;
-  const float distance = fabsf(t - center);
-  if (distance >= halfWidth) return 0.0f;
-  const float normalized = 1.0f - (distance / halfWidth);
-  return normalized * normalized * (3.0f - 2.0f * normalized);
+static float tardisPulseWithPlateaus01(float phase,
+                                       float riseSpan,
+                                       float highHoldSpan,
+                                       float fallSpan,
+                                       bool mechanicalRamp) {
+  phase = phase - floorf(phase);
+  if (phase < 0.0f) phase += 1.0f;
+
+  riseSpan = clamp01f(riseSpan);
+  highHoldSpan = clamp01f(highHoldSpan);
+  fallSpan = clamp01f(fallSpan);
+  const float total = riseSpan + highHoldSpan + fallSpan;
+  if (total >= 1.0f || riseSpan <= 0.0f || fallSpan <= 0.0f) {
+    return 0.0f;
+  }
+
+  if (phase < riseSpan) {
+    const float t = phase / riseSpan;
+    if (mechanicalRamp) {
+      return mixf(t, smoothStep01(t), 0.42f);
+    }
+    return 0.5f - 0.5f * cosf(t * PI);
+  }
+
+  if (phase < (riseSpan + highHoldSpan)) {
+    return 1.0f;
+  }
+
+  const float fallStart = riseSpan + highHoldSpan;
+  if (phase < (fallStart + fallSpan)) {
+    const float t = (phase - fallStart) / fallSpan;
+    if (mechanicalRamp) {
+      return 1.0f - mixf(t, smoothStep01(t), 0.42f);
+    }
+    return 0.5f + 0.5f * cosf(t * PI);
+  }
+
+  return 0.0f;
 }
 
 struct NotificationVisualStyle {
@@ -1224,7 +1251,8 @@ uint32_t WebManager::tardisInteriorRgbColorForCurrentState() const {
   if (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_FIXED) {
     return _s->tardisInteriorRgbColor & 0x00FFFFFFUL;
   }
-  if (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF) {
+  if (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF
+      || _s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF_SINE) {
     return _tardisInteriorRgbAppliedColor == 0xFFFFFFFFUL ? 0U : _tardisInteriorRgbAppliedColor;
   }
 
@@ -1244,7 +1272,8 @@ void WebManager::updateTardisAnimationNow(bool force) {
 
   const bool active = _s->tardisModeEnabled
     && _s->tardisInteriorLedEnabled
-    && _s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF;
+    && (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF
+        || _s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF_SINE);
   if (!active) {
     _tardisAnimationMode = 0xFF;
     _tardisAnimationCycleStartMs = 0;
@@ -1256,61 +1285,34 @@ void WebManager::updateTardisAnimationNow(bool force) {
   if (!force && _tardisAnimationLastFrameMs != 0 && (uint32_t)(now - _tardisAnimationLastFrameMs) < 24U) {
     return;
   }
-  if (_tardisAnimationMode != TARDIS_INTERIOR_RGB_MODE_TAKEOFF || _tardisAnimationCycleStartMs == 0) {
-    _tardisAnimationMode = TARDIS_INTERIOR_RGB_MODE_TAKEOFF;
+  const uint8_t animationMode = _s->tardisInteriorRgbMode;
+  if (_tardisAnimationMode != animationMode || _tardisAnimationCycleStartMs == 0) {
+    _tardisAnimationMode = animationMode;
     _tardisAnimationCycleStartMs = now;
   }
   _tardisAnimationLastFrameMs = now;
 
-  // Repeating 3-act envelope tuned toward the classic TARDIS beacon:
-  // a dark baseline, soft lamp swells, then clustered blue pulses and a brighter arrival peak.
-  const uint32_t cycleMs = 18000U;
+  // Deterministic TARDIS envelopes:
+  // - mechanical: closer to the reference, with a firmer ramp and brief plateaus
+  // - sine: smoother and more lamp-like while keeping the exact same tempo every cycle
+  const bool mechanical = animationMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF_MECHANICAL;
+  const uint32_t cycleMs = mechanical ? 1760U : 1920U;
   const float cycleT = (float)((now - _tardisAnimationCycleStartMs) % cycleMs) / (float)cycleMs;
-  float intensity = 0.0f;
+  const float envelope = mechanical
+    ? tardisPulseWithPlateaus01(cycleT, 0.30f, 0.09f, 0.48f, true)
+    : tardisPulseWithPlateaus01(cycleT, 0.35f, 0.08f, 0.44f, false);
 
-  if (cycleT < 0.42f) {
-    const float localT = cycleT / 0.42f;
-    const float swellA = smoothPulse01(localT * 1.05f);
-    const float swellB = smoothPulse01(localT * 2.05f + 0.16f);
-    const float noise = tardisNoise01(localT * 5.7f + 0.4f);
-    intensity = 0.015f + (0.060f * swellA) + (0.050f * swellB) + (0.012f * noise);
-  } else if (cycleT < 0.80f) {
-    const float localT = (cycleT - 0.42f) / 0.38f;
-    const float ramp = easeInOutCubic01(localT);
-    const float pulse1 = bellPulse01(localT, 0.10f, 0.10f);
-    const float pulse2 = bellPulse01(localT, 0.22f, 0.09f);
-    const float pulse3 = bellPulse01(localT, 0.38f, 0.08f);
-    const float pulse4 = bellPulse01(localT, 0.52f, 0.08f);
-    const float pulse5 = bellPulse01(localT, 0.67f, 0.07f);
-    const float pulse6 = bellPulse01(localT, 0.80f, 0.06f);
-    const float shimmer = tardisNoise01(localT * 19.0f + 0.9f);
-    intensity = 0.040f
-      + (0.16f * pulse1)
-      + (0.22f * pulse2)
-      + (0.28f * pulse3 * ramp)
-      + (0.33f * pulse4 * ramp)
-      + (0.39f * pulse5 * ramp)
-      + (0.45f * pulse6 * ramp)
-      + (0.018f * shimmer);
-  } else {
-    const float localT = (cycleT - 0.80f) / 0.20f;
-    const float fade = 1.0f - easeInOutCubic01(localT);
-    const float peakA = bellPulse01(localT, 0.24f, 0.17f);
-    const float peakB = bellPulse01(localT, 0.47f, 0.13f);
-    const float tail = smoothPulse01(localT * 0.9f + 0.08f);
-    const float noise = tardisNoise01(localT * 13.0f + 2.3f);
-    intensity = (0.05f + (0.50f * peakA) + (0.72f * peakB) + (0.12f * tail) + (0.015f * noise)) * fade;
-  }
+  const float floor = mechanical ? 0.04f : 0.05f;
+  const float ceiling = mechanical ? 0.96f : 0.91f;
+  const float electric = clamp01f(floor + ((ceiling - floor) * envelope));
+  const float whiteBoost = mechanical
+    ? powf(clamp01f((electric - 0.80f) / 0.20f), 1.7f)
+    : powf(clamp01f((electric - 0.84f) / 0.16f), 2.1f);
 
-  intensity = clamp01f(intensity);
-  const float shimmer = (tardisNoise01(cycleT * 23.0f + 3.1f) - 0.5f) * 0.018f;
-  const float electric = clamp01f(intensity + shimmer);
-  const float whiteBoost = powf(clamp01f((electric - 0.72f) / 0.28f), 2.0f);
-
-  // Keep the lamp convincingly blue at low levels, then add a faint icy whitening near the peaks.
-  const uint8_t red = (uint8_t)(1.0f + (7.0f * electric) + (22.0f * whiteBoost));
-  const uint8_t green = (uint8_t)(0.0f + (2.0f * electric) + (16.0f * whiteBoost));
-  const uint8_t blue = (uint8_t)(12.0f + (188.0f * electric) + (52.0f * whiteBoost));
+  // Keep a deep blue body, then add just a small icy lift near the peak.
+  const uint8_t red = (uint8_t)(2.0f + (8.0f * electric) + (16.0f * whiteBoost));
+  const uint8_t green = (uint8_t)(0.0f + (3.0f * electric) + (11.0f * whiteBoost));
+  const uint8_t blue = (uint8_t)(14.0f + (168.0f * electric) + (34.0f * whiteBoost));
   applyTardisInteriorRgbColor(tardisColorHex(red, green, blue));
 #endif
 }
@@ -1323,7 +1325,9 @@ void WebManager::applyTardisNow() {
   const bool interiorEnabled = modeEnabled && _s && _s->tardisInteriorLedEnabled;
   const bool exteriorEnabled = modeEnabled && _s && _s->tardisExteriorLedEnabled;
 #if SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED
-  if (interiorEnabled && _s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF) {
+  if (interiorEnabled
+      && (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF
+          || _s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_TAKEOFF_SINE)) {
     _tardisAnimationMode = 0xFF;
     _tardisInteriorRgbAppliedColor = 0xFFFFFFFFUL;
     updateTardisAnimationNow(true);
@@ -1812,7 +1816,7 @@ void WebManager::handleUiSave() {
   if (arm < 0) arm = 0;
   if (arm > 1) arm = 1;
   if (tardisInteriorRgbMode < (int)TARDIS_INTERIOR_RGB_MODE_ALERT) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_ALERT;
-  if (tardisInteriorRgbMode > (int)TARDIS_INTERIOR_RGB_MODE_TAKEOFF) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_TAKEOFF;
+  if (tardisInteriorRgbMode > (int)TARDIS_INTERIOR_RGB_MODE_MAX) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_MAX;
   dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
   dashboardFullscreenMask = (int)normalizedDashboardFullscreenMask((uint8_t)dashboardFullscreenMask);
   if (whs < 0) whs = 0;
@@ -4412,9 +4416,10 @@ R"HTML(
                             <select id="tardisInteriorRgbMode">
                               <option value="0">Alerte sonore</option>
                               <option value="1">Couleur fixe</option>
-                              <option value="2">Decollage TARDIS</option>
+                              <option value="2">Decollage TARDIS mecanique</option>
+                              <option value="3">Decollage TARDIS sinusoidal</option>
                             </select>
-                            <div class="hint">Alerte: vert, orange ou rouge selon le niveau du sonometre. Decollage TARDIS: respiration bleue cinematographique.</div>
+                            <div class="hint">Alerte: vert, orange ou rouge selon le niveau du sonometre. Mecanique: rampe bleue reguliere avec plateaux courts. Sinusoidal: pulsation plus douce, mais strictement repetitive.</div>
                           </div>
                           <div class="field" id="tardisInteriorRgbColorField">
                             <label for="tardisInteriorRgbColor">Couleur fixe</label>
