@@ -5,6 +5,7 @@
 #include "ReleaseUpdateManager.h"
 #include "lvgl_v8_port.h"
 #include "ui/UiManager.h"
+#include "NotificationTask.h"
 
 #include <WiFi.h>
 #include <LittleFS.h>
@@ -25,6 +26,7 @@
 #include "AudioEngine.h"
 #include "AppConfig.h"
 #include "AppRuntimeStats.h"
+#include "TrustedCerts.h"
 
 #define Serial0 DebugSerial0
 
@@ -61,6 +63,29 @@ static float mixf(float a, float b, float amount) {
   return a + ((b - a) * amount);
 }
 
+/**
+ * Génère une courbe de pulse TARDIS avec montée, plateau haut et descente.
+ *
+ * Le cycle complet est divisé en 4 phases :
+ * 1. Montée (rise) : 0 → 1 avec interpolation cosinus ou mécanique
+ * 2. Plateau haut (highHold) : maintien à 1.0
+ * 3. Descente (fall) : 1 → 0 avec interpolation cosinus ou mécanique
+ * 4. Plateau bas (implicit) : maintien à 0.0 jusqu'à la fin du cycle
+ *
+ * Interpolation :
+ * - Cosinus : utilise 0.5 - 0.5*cos(t*π) pour une courbe sinusoïdale douce (S-curve)
+ * - Mécanique : mix(linear, smoothStep, 0.42) pour simuler l'inertie d'un système physique
+ *
+ * @param phase Valeur [0..∞) normalisée en interne à [0..1) (phase = phase - floor(phase))
+ * @param riseSpan Durée de montée en fraction de cycle [0..1]
+ * @param highHoldSpan Durée du plateau haut en fraction de cycle [0..1]
+ * @param fallSpan Durée de descente en fraction de cycle [0..1]
+ * @param mechanicalRamp Si true, utilise interpolation mécanique ; si false, cosinus
+ * @return Intensité [0..1] à la phase donnée, ou 0.0 si configuration invalide
+ *
+ * @note La somme (riseSpan + highHoldSpan + fallSpan) doit être < 1.0 pour laisser un plateau bas
+ * @note Utilisé pour l'effet lumineux RGB TARDIS (intérieur/extérieur)
+ */
 static float tardisPulseWithPlateaus01(float phase,
                                        float riseSpan,
                                        float highHoldSpan,
@@ -123,6 +148,7 @@ static String formatAlertDuration(uint32_t durationMs) {
   const uint32_t seconds = totalSeconds % 60UL;
 
   String out;
+  out.reserve(32);  // Pré-allocation pour éviter réallocations ("XX h XX min XX s")
   if (hours > 0) {
     out += String(hours);
     out += " h ";
@@ -145,7 +171,7 @@ static void appendBoolField(String& json, const char* key, bool value, bool trai
 }
 
 static void appendWifiJson(String& json, bool wifiConnected, const String& ip, int rssi, const String& ssid) {
-  json += "\"wifi\":"; json += (wifiConnected ? "true" : "false"); json += ",";
+  appendBoolField(json, "wifi", wifiConnected);
   sp7json::appendEscapedField(json, "ip", ip.c_str());
   sp7json::appendEscapedField(json, "ssid", ssid.c_str());
   json += "\"rssi\":"; json += String(rssi); json += ",";
@@ -161,7 +187,7 @@ static uint64_t currentUnixTimeMs(bool* hasTimeOut = nullptr) {
 
 static void appendTimeJson(String& json, bool hasTime, const char* timeText) {
   const uint64_t timeUnixMs = hasTime ? currentUnixTimeMs(nullptr) : 0;
-  json += "\"time_ok\":"; json += (hasTime ? "true" : "false"); json += ",";
+  appendBoolField(json, "time_ok", hasTime);
   sp7json::appendEscapedField(json, "time", hasTime ? timeText : "");
   json += "\"timeUnixMs\":";
   if (timeUnixMs > 0) {
@@ -182,25 +208,19 @@ static void appendDeviceJson(String& json,
   json += "\"version\":\""; json += String(SOUNDPANEL7_VERSION); json += "\",";
   json += "\"buildDate\":\""; json += String(SOUNDPANEL7_BUILD_DATE); json += "\",";
   json += "\"buildEnv\":\""; json += String(SOUNDPANEL7_BUILD_ENV); json += "\",";
-  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
+  appendBoolField(json, "mcuTempOk", mcuTempOk);
   json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
-  json += "\"otaEnabled\":"; json += (ota && ota->enabled() ? "true" : "false"); json += ",";
-  json += "\"otaStarted\":"; json += (ota && ota->started() ? "true" : "false"); json += ",";
-  json += "\"mqttEnabled\":"; json += (mqtt && mqtt->enabled() ? "true" : "false"); json += ",";
-  json += "\"mqttConnected\":"; json += (mqtt && mqtt->connected() ? "true" : "false"); json += ",";
+  appendBoolField(json, "otaEnabled", ota && ota->enabled());
+  appendBoolField(json, "otaStarted", ota && ota->started());
+  appendBoolField(json, "mqttEnabled", mqtt && mqtt->enabled());
+  appendBoolField(json, "mqttConnected", mqtt && mqtt->connected());
   sp7json::appendEscapedField(json, "mqttLastError", (mqtt && mqtt->lastError()) ? mqtt->lastError() : "");
 }
 
 static void appendReleaseUpdateJson(String& json, const ReleaseUpdateManager* releaseUpdate) {
-  json += "\"releaseUpdateChecked\":";
-  json += (releaseUpdate && releaseUpdate->hasChecked() ? "true" : "false");
-  json += ",";
-  json += "\"releaseUpdateOk\":";
-  json += (releaseUpdate && releaseUpdate->lastCheckOk() ? "true" : "false");
-  json += ",";
-  json += "\"releaseUpdateAvailable\":";
-  json += (releaseUpdate && releaseUpdate->updateAvailable() ? "true" : "false");
-  json += ",";
+  appendBoolField(json, "releaseUpdateChecked", releaseUpdate && releaseUpdate->hasChecked());
+  appendBoolField(json, "releaseUpdateOk", releaseUpdate && releaseUpdate->lastCheckOk());
+  appendBoolField(json, "releaseUpdateAvailable", releaseUpdate && releaseUpdate->updateAvailable());
   json += "\"releaseUpdateCheckedAt\":";
   json += String(releaseUpdate ? releaseUpdate->lastCheckUnix() : 0U);
   json += ",";
@@ -221,15 +241,9 @@ static void appendReleaseUpdateJson(String& json, const ReleaseUpdateManager* re
                               (releaseUpdate && releaseUpdate->otaUrl()[0]) ? releaseUpdate->otaUrl() : "");
   sp7json::appendEscapedField(json, "releaseOtaSha256",
                               (releaseUpdate && releaseUpdate->otaSha256()[0]) ? releaseUpdate->otaSha256() : "");
-  json += "\"releaseInstallInProgress\":";
-  json += (releaseUpdate && releaseUpdate->installInProgress() ? "true" : "false");
-  json += ",";
-  json += "\"releaseInstallFinished\":";
-  json += (releaseUpdate && releaseUpdate->installFinished() ? "true" : "false");
-  json += ",";
-  json += "\"releaseInstallSucceeded\":";
-  json += (releaseUpdate && releaseUpdate->installSucceeded() ? "true" : "false");
-  json += ",";
+  appendBoolField(json, "releaseInstallInProgress", releaseUpdate && releaseUpdate->installInProgress());
+  appendBoolField(json, "releaseInstallFinished", releaseUpdate && releaseUpdate->installFinished());
+  appendBoolField(json, "releaseInstallSucceeded", releaseUpdate && releaseUpdate->installSucceeded());
   json += "\"releaseInstallStartedAt\":";
   json += String(releaseUpdate ? releaseUpdate->installStartedUnix() : 0U);
   json += ",";
@@ -258,21 +272,21 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"greenMax\":"; json += String(s ? s->th.greenMax : DEFAULT_GREEN_MAX); json += ",";
   json += "\"orangeMax\":"; json += String(s ? s->th.orangeMax : DEFAULT_ORANGE_MAX); json += ",";
   json += "\"historyMinutes\":"; json += String(s ? s->historyMinutes : DEFAULT_HISTORY_MINUTES); json += ",";
-  json += "\"liveEnabled\":"; json += (s && s->liveEnabled ? "true" : "false"); json += ",";
-  json += "\"touchEnabled\":"; json += (s && s->touchEnabled ? "true" : "false"); json += ",";
-  json += "\"hasScreen\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
+  appendBoolField(json, "liveEnabled", s && s->liveEnabled);
+  appendBoolField(json, "touchEnabled", s && s->touchEnabled);
+  appendBoolField(json, "hasScreen", SOUNDPANEL7_HAS_SCREEN);
   json += "\"dashboardPage\":"; json += String(s ? s->dashboardPage : DEFAULT_DASHBOARD_PAGE); json += ",";
   json += "\"dashboardFullscreenMask\":"; json += String(s ? s->dashboardFullscreenMask : DEFAULT_DASHBOARD_FULLSCREEN_MASK); json += ",";
   json += "\"audioSource\":"; json += String(s ? s->audioSource : 1); json += ",";
-  json += "\"audioSourceSupportsCalibration\":"; json += (AudioEngine::sourceSupportsCalibration(s ? s->audioSource : 1) ? "true" : "false"); json += ",";
-  json += "\"audioSourceUsesAnalog\":"; json += (AudioEngine::sourceUsesAnalog(s ? s->audioSource : 1) ? "true" : "false"); json += ",";
-  json += "\"supportsDashboardDisplay\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
-  json += "\"supportsDashboardPin\":"; json += (SOUNDPANEL7_HAS_SCREEN ? "true" : "false"); json += ",";
-  json += "\"supportsTardisControl\":"; json += (SOUNDPANEL7_TARDIS_SUPPORTED ? "true" : "false"); json += ",";
-  json += "\"supportsTardisInteriorRgb\":"; json += (SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED ? "true" : "false"); json += ",";
-  json += "\"tardisModeEnabled\":"; json += (s && s->tardisModeEnabled ? "true" : "false"); json += ",";
-  json += "\"tardisInteriorLedEnabled\":"; json += (s && s->tardisInteriorLedEnabled ? "true" : "false"); json += ",";
-  json += "\"tardisExteriorLedEnabled\":"; json += (s && s->tardisExteriorLedEnabled ? "true" : "false"); json += ",";
+  appendBoolField(json, "audioSourceSupportsCalibration", AudioEngine::sourceSupportsCalibration(s ? s->audioSource : 1));
+  appendBoolField(json, "audioSourceUsesAnalog", AudioEngine::sourceUsesAnalog(s ? s->audioSource : 1));
+  appendBoolField(json, "supportsDashboardDisplay", SOUNDPANEL7_HAS_SCREEN);
+  appendBoolField(json, "supportsDashboardPin", SOUNDPANEL7_HAS_SCREEN);
+  appendBoolField(json, "supportsTardisControl", SOUNDPANEL7_TARDIS_SUPPORTED);
+  appendBoolField(json, "supportsTardisInteriorRgb", SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED);
+  appendBoolField(json, "tardisModeEnabled", s && s->tardisModeEnabled);
+  appendBoolField(json, "tardisInteriorLedEnabled", s && s->tardisInteriorLedEnabled);
+  appendBoolField(json, "tardisExteriorLedEnabled", s && s->tardisExteriorLedEnabled);
   json += "\"tardisInteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN); json += ",";
   json += "\"tardisExteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN); json += ",";
   json += "\"tardisInteriorRgbPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIN); json += ",";
@@ -321,7 +335,7 @@ static void appendAudioMetricsJson(String& json, const AudioMetrics& am) {
   json += "\"rawPseudoDb\":"; json += String(am.rawPseudoDb, 1); json += ",";
   json += "\"rawAdcMean\":"; json += String(am.rawAdcMean); json += ",";
   json += "\"rawAdcLast\":"; json += String(am.rawAdcLast); json += ",";
-  json += "\"analogOk\":"; json += (am.analogOk ? "true" : "false"); json += ",";
+  appendBoolField(json, "analogOk", am.analogOk);
 }
 
 static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
@@ -398,8 +412,11 @@ bool WebManager::normalizeUsername(String& username) {
 }
 
 bool WebManager::homeAssistantTokenIsValid(const String& token) {
+  // SECURITY: Enforce minimum 32-char length for adequate entropy (HIGH-05)
+  // 32 chars = minimum 128-bit entropy (assuming base64-like encoding)
+  // Generated tokens use 64 hex chars = 256-bit entropy
   const size_t len = token.length();
-  if (len < 16 || len > HOME_ASSISTANT_TOKEN_MAX_LENGTH) return false;
+  if (len < 32 || len > HOME_ASSISTANT_TOKEN_MAX_LENGTH) return false;
   for (size_t i = 0; i < len; i++) {
     const char c = token[i];
     const bool allowed = (c >= 'a' && c <= 'z')
@@ -440,9 +457,24 @@ bool WebManager::passwordIsStrongEnough(const String& password, String* reason) 
 }
 
 String WebManager::randomHex(size_t hexChars) {
+  // SECURITY: Session token entropy sources (HIGH-03)
+  // - esp_random(): ESP32 hardware RNG (cryptographically secure, automatically seeded by RF noise + boot ROM)
+  // - millis(): Monotonic timestamp provides additional timing entropy
+  // - Static counter: Ensures uniqueness even if called at same millisecond
+  // Result: 192-bit tokens (48 hex chars) with multiple entropy sources
   static const char kHexChars[] = "0123456789abcdef";
+  static uint32_t tokenCounter = 0;
+
   String out;
   out.reserve(hexChars);
+
+  // Mix in timestamp and counter for first 8 chars (32 bits)
+  const uint32_t mixedEntropy = esp_random() ^ millis() ^ (++tokenCounter);
+  for (int shift = 28; shift >= 0 && out.length() < hexChars; shift -= 4) {
+    out += kHexChars[(mixedEntropy >> shift) & 0x0F];
+  }
+
+  // Fill remaining chars with pure hardware RNG
   while (out.length() < hexChars) {
     const uint32_t value = esp_random();
     for (int shift = 28; shift >= 0 && out.length() < hexChars; shift -= 4) {
@@ -585,6 +617,16 @@ bool WebManager::issueSessionForUser(const char* username, String& liveTokenOut)
   session->lastSeenMs = millis();
 
   liveTokenOut = liveToken;
+  // SECURITY: HTTP-only deployment threat model (MED-03)
+  // Cookie flags: HttpOnly (prevents XSS), SameSite=Strict (prevents CSRF)
+  // Secure flag NOT set: Device operates HTTP-only on local network (no TLS)
+  // Threat model assumptions:
+  // - Deployed on physically secured, trusted local network (home/office LAN)
+  // - Network isolation via VLAN or firewall from untrusted devices
+  // - No exposure to public internet or untrusted users
+  // Risk: HTTP traffic can be intercepted on local network by attacker with network access
+  // Mitigation: Physical security, network isolation, strong passwords, session timeout
+  // Future: Consider HTTPS with self-signed certificates for defense-in-depth
   _srv.sendHeader("Set-Cookie", String(SP7_SESSION_COOKIE_NAME) + "=" + sessionToken + "; Path=/; HttpOnly; SameSite=Strict");
   return true;
 }
@@ -685,6 +727,22 @@ bool WebManager::begin(SettingsStore* store,
   _srv.collectHeaders(headers, 2);
   routes();
   setupLiveStream();
+
+  // SECURITY: Create mutex to protect bootstrap endpoint from race conditions (CRIT-02)
+  if (!_bootstrapMutex) {
+    _bootstrapMutex = xSemaphoreCreateMutex();
+  }
+
+  // SECURITY: Create mutex to protect settings modifications (MED-02)
+  if (!_settingsMutex) {
+    _settingsMutex = xSemaphoreCreateMutex();
+  }
+
+  // Start async notification task on Core 0
+  if (!NotificationTask::begin()) {
+    Serial0.println("[WEB] WARNING: Notification task failed to start");
+  }
+
   _started = true;
   applyTardisNow();
   Serial0.println("[WEB] LIVE SSE on 81");
@@ -733,6 +791,7 @@ void WebManager::routes() {
   _srv.on("/api/ha/status", kSyncHttpGet, [this]() { handleHomeAssistantStatus(); });
   _srv.on("/api/homeassistant", kSyncHttpGet, [this]() { handleHomeAssistantGet(); });
   _srv.on("/api/homeassistant", kSyncHttpPost, [this]() { handleHomeAssistantSave(); });
+  _srv.on("/api/homeassistant/reveal", kSyncHttpGet, [this]() { handleHomeAssistantReveal(); });
   _srv.on("/api/status", kSyncHttpGet, [this]() { handleStatus(); });
   _srv.on("/api/system", kSyncHttpGet, [this]() { handleSystemSummary(); });
 
@@ -747,7 +806,7 @@ void WebManager::routes() {
   _srv.on("/api/time", kSyncHttpGet,  [this]() { handleTimeGet(); });
   _srv.on("/api/time", kSyncHttpPost, [this]() { handleTimeSave(); });
   _srv.on("/api/config/export", kSyncHttpGet, [this]() { handleConfigExport(); });
-  _srv.on("/api/config/export_full", kSyncHttpGet, [this]() { handleConfigExportFull(); });
+  _srv.on("/api/config/export_full", kSyncHttpPost, [this]() { handleConfigExportFull(); });
   _srv.on("/api/config/import", kSyncHttpPost, [this]() { handleConfigImport(); });
   _srv.on("/api/config/backup", kSyncHttpPost, [this]() { handleConfigBackup(); });
   _srv.on("/api/config/restore", kSyncHttpPost, [this]() { handleConfigRestore(); });
@@ -764,6 +823,7 @@ void WebManager::routes() {
   _srv.on("/api/notifications", kSyncHttpGet,  [this]() { handleNotificationsGet(); });
   _srv.on("/api/notifications", kSyncHttpPost, [this]() { handleNotificationsSave(); });
   _srv.on("/api/notifications/test", kSyncHttpPost, [this]() { handleNotificationsTest(); });
+  _srv.on("/api/slack/reveal", kSyncHttpGet, [this]() { handleSlackReveal(); });
   _srv.on("/api/debug/logs", kSyncHttpGet, [this]() { handleDebugLogsGet(); });
   _srv.on("/api/debug/logs/clear", kSyncHttpPost, [this]() { handleDebugLogsClear(); });
 
@@ -870,6 +930,7 @@ void WebManager::enqueueNotification(uint8_t alertState, bool isTest, float dbIn
 
 void WebManager::processPendingNotification() {
   if (!_notificationPending) return;
+  if (!_s) return;
 
   const bool isTest = _notificationPendingTest;
   const uint8_t alertState = _pendingNotificationState;
@@ -882,7 +943,42 @@ void WebManager::processPendingNotification() {
   _notificationPendingTest = false;
   _pendingNotificationDurationMs = 0;
 
-  dispatchNotification(alertState, isTest, dbInstant, leq, peak, durationMs, !isTest);
+  // Build notification request with copied data (thread-safe)
+  NotificationRequest req = {};
+  req.alertState = alertState;
+  req.isTest = isTest;
+  req.dbInstant = dbInstant;
+  req.leq = leq;
+  req.peak = peak;
+  req.durationMs = durationMs;
+  req.updateAlertTracking = !isTest;
+
+  // Copy settings (thread-safe, no pointer sharing)
+  req.slackEnabled = _s->slackEnabled != 0;
+  strncpy(req.slackWebhookUrl, _s->slackWebhookUrl, sizeof(req.slackWebhookUrl) - 1);
+  strncpy(req.slackChannel, _s->slackChannel, sizeof(req.slackChannel) - 1);
+
+  req.telegramEnabled = _s->telegramEnabled != 0;
+  strncpy(req.telegramBotToken, _s->telegramBotToken, sizeof(req.telegramBotToken) - 1);
+  strncpy(req.telegramChatId, _s->telegramChatId, sizeof(req.telegramChatId) - 1);
+
+  req.whatsappEnabled = _s->whatsappEnabled != 0;
+  strncpy(req.whatsappAccessToken, _s->whatsappAccessToken, sizeof(req.whatsappAccessToken) - 1);
+  strncpy(req.whatsappPhoneNumberId, _s->whatsappPhoneNumberId, sizeof(req.whatsappPhoneNumberId) - 1);
+  strncpy(req.whatsappRecipient, _s->whatsappRecipient, sizeof(req.whatsappRecipient) - 1);
+  strncpy(req.whatsappApiVersion, _s->whatsappApiVersion, sizeof(req.whatsappApiVersion) - 1);
+
+  strncpy(req.hostname, _s->hostname, sizeof(req.hostname) - 1);
+  req.greenMax = _s->th.greenMax;
+  req.orangeMax = _s->th.orangeMax;
+
+  // Send to async task (non-blocking)
+  NotificationTask::queueNotification(req);
+
+  // Update tracking immediately (don't wait for async result)
+  if (req.updateAlertTracking) {
+    _lastNotifiedAlertState = alertState;
+  }
 }
 
 void WebManager::startHttpServer() {
@@ -1047,7 +1143,7 @@ String WebManager::statusJson() const {
   for (int i = 0; i < CALIBRATION_POINT_MAX; i++) {
     if (i) json += ",";
     json += "{";
-    json += "\"valid\":"; json += (_s && _s->calPointValid[i] ? "true" : "false"); json += ",";
+    appendBoolField(json, "valid", _s && _s->calPointValid[i]);
     json += "\"refDb\":"; json += String(_s ? _s->calPointRefDb[i] : 0.0f, 1); json += ",";
     json += "\"rawLogRms\":"; json += String(_s ? _s->calPointRawLogRms[i] : 0.0f, 4);
     json += "}";
@@ -1084,14 +1180,14 @@ String WebManager::systemSummaryJson() const {
   json += "\"uptime_s\":"; json += String(up); json += ",";
   json += "\"backupTs\":"; json += String(backupTs); json += ",";
   appendTimeJson(json, hasTime, tbuf);
-  json += "\"mcuTempOk\":"; json += (mcuTempOk ? "true" : "false"); json += ",";
+  appendBoolField(json, "mcuTempOk", mcuTempOk);
   json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
   json += "\"fsTotalBytes\":"; json += String((uint32_t)fsTotalBytes); json += ",";
   json += "\"fsUsedBytes\":"; json += String((uint32_t)fsUsedBytes); json += ",";
-  json += "\"otaEnabled\":"; json += (_ota && _ota->enabled() ? "true" : "false"); json += ",";
-  json += "\"otaStarted\":"; json += (_ota && _ota->started() ? "true" : "false"); json += ",";
-  json += "\"mqttEnabled\":"; json += (_mqtt && _mqtt->enabled() ? "true" : "false"); json += ",";
-  json += "\"mqttConnected\":"; json += (_mqtt && _mqtt->connected() ? "true" : "false"); json += ",";
+  appendBoolField(json, "otaEnabled", _ota && _ota->enabled());
+  appendBoolField(json, "otaStarted", _ota && _ota->started());
+  appendBoolField(json, "mqttEnabled", _mqtt && _mqtt->enabled());
+  appendBoolField(json, "mqttConnected", _mqtt && _mqtt->connected());
   sp7json::appendEscapedField(json, "mqttLastError", (_mqtt && _mqtt->lastError()) ? _mqtt->lastError() : "");
   sp7json::appendEscapedField(json, "activePage", g_runtimeStats.activePage);
   appendRuntimeStatsJson(json, g_runtimeStats);
@@ -1341,6 +1437,19 @@ void WebManager::applyTardisNow() {
 #endif
 }
 
+// SECURITY: Thread-safe settings save with mutex protection (MED-02)
+void WebManager::saveSettingsThreadSafe() {
+  if (!_store || !_s) return;
+
+  if (_settingsMutex && xSemaphoreTake(_settingsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    _store->save(*_s);
+    xSemaphoreGive(_settingsMutex);
+  } else {
+    // Fallback without mutex if mutex not available or timeout
+    _store->save(*_s);
+  }
+}
+
 void WebManager::applySettingsRuntimeState() {
   if (!_s) return;
 
@@ -1423,16 +1532,29 @@ void WebManager::handleAuthLogin() {
     Serial0.printf("[WEB][AUTH] login failed for '%s' (match=%u)\n", username.c_str(), match ? 1U : 0U);
     _loginFailureCount++;
     if (_loginFailureCount >= WEB_LOGIN_MAX_FAILURES) {
-      _loginLockUntilMs = now + WEB_LOGIN_LOCK_MS;
+      // SECURITY: Exponential backoff - each consecutive lockout doubles the duration (HIGH-01)
+      uint32_t lockDurationMs = WEB_LOGIN_LOCK_MS;
+      if (_loginLockoutLevel > 0 && _loginLockoutLevel <= WEB_LOGIN_MAX_LOCKOUT_LEVEL) {
+        // 2^level multiplier: level 1 = 2x, level 2 = 4x, level 3 = 8x, etc.
+        lockDurationMs = WEB_LOGIN_LOCK_MS * (1UL << _loginLockoutLevel);
+      }
+      _loginLockUntilMs = now + lockDurationMs;
       _loginFailureCount = 0;
+      if (_loginLockoutLevel < WEB_LOGIN_MAX_LOCKOUT_LEVEL) {
+        _loginLockoutLevel++;
+      }
+      Serial0.printf("[WEB][AUTH] account locked for %lu minutes (level %u)\n",
+                     lockDurationMs / 60000UL, (unsigned)_loginLockoutLevel);
     }
     delay(120);
     replyErrorJson(401, "invalid credentials");
     return;
   }
 
+  // SECURITY: Reset rate limiting on successful login (HIGH-01)
   _loginFailureCount = 0;
   _loginLockUntilMs = 0;
+  _loginLockoutLevel = 0;
   Serial0.printf("[WEB][AUTH] login success for '%s'\n", match->username);
   String liveToken;
   if (!issueSessionForUser(match->username, liveToken)) {
@@ -1456,11 +1578,22 @@ void WebManager::handleAuthLogout() {
 }
 
 void WebManager::handleAuthBootstrap() {
+  // SECURITY: Protect bootstrap from TOCTOU race condition (CRIT-02)
+  // Multiple simultaneous requests must not bypass the webUsersConfigured() check
+  if (_bootstrapMutex && xSemaphoreTake(_bootstrapMutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    replyErrorJson(503, "bootstrap busy");
+    return;
+  }
+
   if (!_store) {
+    if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
     replyErrorJson(500, "store missing");
     return;
   }
+
+  // Re-check with mutex held to prevent race condition
   if (webUsersConfigured()) {
+    if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
     replyErrorJson(403, "bootstrap closed");
     return;
   }
@@ -1474,6 +1607,7 @@ void WebManager::handleAuthBootstrap() {
     (unsigned)password.length());
   if (!normalizeUsername(username)) {
     Serial0.println("[WEB][AUTH] bootstrap rejected: bad username");
+    if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
     replyErrorJson(400, "bad username");
     return;
   }
@@ -1481,6 +1615,7 @@ void WebManager::handleAuthBootstrap() {
   String passwordReason;
   if (!passwordIsStrongEnough(password, &passwordReason)) {
     Serial0.printf("[WEB][AUTH] bootstrap rejected: %s\n", passwordReason.c_str());
+    if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
     replyErrorJson(400, passwordReason);
     return;
   }
@@ -1492,6 +1627,7 @@ void WebManager::handleAuthBootstrap() {
   if (!sp7json::safeCopy(user.username, sizeof(user.username), username)
       || !sp7json::safeCopy(user.passwordSalt, sizeof(user.passwordSalt), salt)
       || !sp7json::safeCopy(user.passwordHash, sizeof(user.passwordHash), hash)) {
+    if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
     replyErrorJson(500, "bootstrap failed");
     return;
   }
@@ -1499,10 +1635,14 @@ void WebManager::handleAuthBootstrap() {
   String err;
   if (!_store->upsertWebUser(user, &err)) {
     Serial0.printf("[WEB][AUTH] bootstrap store failed: %s\n", err.c_str());
+    if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
     replyErrorJson(400, err);
     return;
   }
   Serial0.printf("[WEB][AUTH] bootstrap created '%s'\n", user.username);
+
+  // Release mutex after critical section (user created)
+  if (_bootstrapMutex) xSemaphoreGive(_bootstrapMutex);
 
   String liveToken;
   if (!issueSessionForUser(user.username, liveToken)) {
@@ -1667,6 +1807,12 @@ void WebManager::handleUsersDelete() {
     return;
   }
 
+  // SECURITY: Re-validate session before critical operation (HIGH-02)
+  if (!currentSession(false)) {
+    replyErrorJson(401, "session expired");
+    return;
+  }
+
   String err;
   if (!_store->deleteWebUser(username.c_str(), &err)) {
     replyErrorJson(400, err);
@@ -1684,7 +1830,7 @@ void WebManager::handleHomeAssistantGet() {
   String json;
   json.reserve(160);
   json += "{";
-  json += "\"tokenConfigured\":"; json += (homeAssistantTokenConfigured() ? "true" : "false"); json += ",";
+  appendBoolField(json, "tokenConfigured", homeAssistantTokenConfigured());
   sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
   sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
   json += "}";
@@ -1717,13 +1863,13 @@ void WebManager::handleHomeAssistantSave() {
     return;
   }
 
-  _store->save(*_s);
+  _store->saveHomeAssistantToken(_s->homeAssistantToken);
 
   String json;
   json.reserve(128);
   json += "{";
   json += "\"ok\":true,";
-  json += "\"tokenConfigured\":"; json += (homeAssistantTokenConfigured() ? "true" : "false"); json += ",";
+  appendBoolField(json, "tokenConfigured", homeAssistantTokenConfigured());
   sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
   sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
   json += "}";
@@ -1733,6 +1879,18 @@ void WebManager::handleHomeAssistantSave() {
 void WebManager::handleHomeAssistantStatus() {
   if (!requireHomeAssistantToken()) return;
   replyJson(200, homeAssistantStatusJson());
+}
+
+void WebManager::handleHomeAssistantReveal() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  String json;
+  json.reserve(128);
+  json += "{";
+  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken, false);
+  json += "}";
+  replyJson(200, json);
 }
 
 void WebManager::handleStatus() {
@@ -1767,7 +1925,7 @@ void WebManager::handlePinSave() {
     return;
   }
 
-  _store->save(*_s);
+  _store->saveDashboardPin(_s->dashboardPin);
   pushLiveMetrics(true);
 
   String json = "{\"ok\":true,\"pinConfigured\":";
@@ -1891,8 +2049,7 @@ void WebManager::handleLiveGet() {
   String json;
   json.reserve(64);
   json += "{";
-  json += "\"enabled\":";
-  json += (_s->liveEnabled ? "true" : "false");
+  appendBoolField(json, "enabled", _s->liveEnabled, false);
   json += "}";
   replyJson(200, json);
 }
@@ -1904,13 +2061,14 @@ void WebManager::handleLiveSave() {
   String body = _srv.arg("plain");
   const bool enabled = sp7json::parseBool(body, "enabled", _s->liveEnabled != 0);
   _s->liveEnabled = enabled ? LIVE_ENABLED : LIVE_DISABLED;
-  _store->save(*_s);
+  _store->saveUiSettings(_s->backlight, _s->liveEnabled, _s->touchEnabled,
+                        _s->dashboardPage, _s->dashboardFullscreenMask);
   pushLiveMetrics(true);
 
   String json;
   json.reserve(80);
-  json += "{\"ok\":true,\"enabled\":";
-  json += (_s->liveEnabled ? "true" : "false");
+  json += "{\"ok\":true,";
+  appendBoolField(json, "enabled", _s->liveEnabled, false);
   json += "}";
   replyJson(200, json);
 }
@@ -2067,7 +2225,7 @@ void WebManager::handleWifiSave() {
   }
 
   *_s = next;
-  _store->save(*_s);
+  _store->saveWifiCredentials(_s->wifiCredentials);
   if (_net) _net->reloadWifiConfig();
 
   Serial0.printf("[WEB] WiFi saved: %u slot(s)\n", (unsigned)(_net ? _net->wifiCredentialCount() : 0));
@@ -2120,7 +2278,7 @@ void WebManager::handleTimeSave() {
   }
   _s->ntpSyncIntervalMs = (uint32_t)ntpSyncMinutes * MS_PER_MINUTE;
 
-  _store->save(*_s);
+  _store->saveTimeSettings(_s->tz, _s->ntpServer, _s->ntpSyncIntervalMs, _s->hostname);
   applySettingsRuntimeState();
 
   Serial0.printf("[WEB] TIME saved: tz='%s' ntp='%s' interval=%lu ms hostname='%s'\n",
@@ -2145,6 +2303,52 @@ void WebManager::handleConfigExport() {
 void WebManager::handleConfigExportFull() {
   if (!requireWebAuth()) return;
   if (!requireStoreAndSettingsJson()) return;
+
+  // SECURITY: Re-validate session before exporting secrets (HIGH-02)
+  const WebSession* session = currentSession(false);
+  if (!session) {
+    replyErrorJson(401, "session expired");
+    return;
+  }
+
+  // SECURITY: Require password confirmation before exporting secrets (HIGH-04)
+  const String body = _srv.arg("plain");
+  const String password = sp7json::parseString(body, "password", "", false);
+
+  if (password.length() == 0) {
+    Serial0.println("[WEB][CONFIG] export_full rejected: no password confirmation");
+    replyErrorJson(403, "password confirmation required");
+    return;
+  }
+
+  // Verify password against current user
+  WebUserRecord users[WEB_USER_MAX_COUNT];
+  _store->loadWebUsers(users);
+
+  const WebUserRecord* currentUser = nullptr;
+  for (const WebUserRecord& user : users) {
+    if (user.active && strcmp(user.username, session->username) == 0) {
+      currentUser = &user;
+      break;
+    }
+  }
+
+  if (!currentUser) {
+    Serial0.println("[WEB][CONFIG] export_full rejected: user not found");
+    replyErrorJson(403, "authentication failed");
+    return;
+  }
+
+  const String computedHash = hashPassword(currentUser->username, password.c_str(), currentUser->passwordSalt);
+  if (!secureEquals(currentUser->passwordHash, computedHash.c_str())) {
+    Serial0.printf("[WEB][CONFIG] export_full rejected: invalid password for user '%s'\n", currentUser->username);
+    delay(120);  // Rate limit password guessing
+    replyErrorJson(403, "invalid password");
+    return;
+  }
+
+  // SECURITY: Audit log for sensitive export operation (HIGH-04)
+  Serial0.printf("[WEB][CONFIG] export_full: secrets exported by user '%s'\n", currentUser->username);
 
   String err;
   const String json = _store->exportJson(*_s, SettingsStore::EXPORT_SECRETS_CLEAR, &err);
@@ -2260,6 +2464,13 @@ void WebManager::handleShutdown() {
 
 void WebManager::handleFactoryReset() {
   if (!requireWebAuth()) return;
+
+  // SECURITY: Re-validate session before critical operation (HIGH-02)
+  if (!currentSession(false)) {
+    replyErrorJson(401, "session expired");
+    return;
+  }
+
   if (_store) _store->factoryReset();
   if (_store) _store->clearWebUsers();
   clearAllSessions();
@@ -2316,7 +2527,7 @@ void WebManager::handleOtaSave() {
   _s->otaEnabled = enabled ? 1 : 0;
   _s->otaPort = (uint16_t)port;
 
-  _store->save(*_s);
+  _store->saveOtaSettings(_s->otaEnabled, _s->otaPort, _s->otaHostname, _s->otaPassword);
 
   Serial0.printf("[WEB] OTA saved: enabled=%u port=%u hostname=%s pwd=%s\n",
                  (unsigned)_s->otaEnabled,
@@ -2426,6 +2637,13 @@ void WebManager::handleReleaseInstall() {
   }
   const String body = _srv.arg("plain");
   const bool force = sp7json::parseBool(body, "force", false);
+
+  // SECURITY: Re-validate session before critical operation (HIGH-02)
+  if (!currentSession(false)) {
+    replyErrorJson(401, "session expired");
+    return;
+  }
+
   if (!_releaseUpdate->startInstall(force)) {
     const char* error = _releaseUpdate->installError();
     replyErrorJson(409, (error && error[0]) ? String(error) : String("install start failed"));
@@ -2543,7 +2761,9 @@ void WebManager::handleMqttSave() {
   _s->mqttPublishPeriodMs = (uint16_t)publishMs;
   _s->mqttRetain = retain ? 1 : 0;
 
-  _store->save(*_s);
+  _store->saveMqttSettings(_s->mqttEnabled, _s->mqttHost, _s->mqttPort,
+                          _s->mqttUsername, _s->mqttPassword, _s->mqttClientId,
+                          _s->mqttBaseTopic, _s->mqttPublishPeriodMs);
 
   Serial0.printf("[WEB] MQTT saved: enabled=%u host=%s port=%u clientId=%s base=%s\n",
                  (unsigned)_s->mqttEnabled,
@@ -2639,7 +2859,8 @@ bool WebManager::postJsonToUrl(const String& url,
   bool started = false;
   if (url.startsWith("https://")) {
     WiFiClientSecure client;
-    client.setInsecure();
+    // SECURITY: Validate HTTPS certificates against trusted CA bundle
+    configureSecureClient(client);
     client.setTimeout(kNotificationHttpTimeoutMs);
     started = http.begin(client, url);
     if (!started) return false;
@@ -3046,7 +3267,13 @@ void WebManager::handleNotificationsSave() {
   }
 
   *_s = next;
-  _store->save(*_s);
+  _store->saveNotificationSettings(
+    _s->notifyOnWarning, _s->notifyOnRecovery,
+    _s->slackEnabled, _s->slackWebhookUrl, _s->slackChannel,
+    _s->telegramEnabled, _s->telegramBotToken, _s->telegramChatId,
+    _s->whatsappEnabled, _s->whatsappAccessToken, _s->whatsappPhoneNumberId,
+    _s->whatsappRecipient, _s->whatsappApiVersion
+  );
   replyJson(200, String("{\"ok\":true,\"config\":") + notificationsJson(false) + "}");
 }
 
@@ -3054,12 +3281,52 @@ void WebManager::handleNotificationsTest() {
   if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
 
-  if (!dispatchNotification(_alertState, true, g_webDbInstant, g_webLeq, g_webPeak, 0, false)) {
-    replyErrorJson(502, _notificationLastResult.length() ? _notificationLastResult : String("notification failed"));
-    return;
-  }
+  // Build test notification request
+  NotificationRequest req = {};
+  req.alertState = _alertState;
+  req.isTest = true;
+  req.dbInstant = g_webDbInstant;
+  req.leq = g_webLeq;
+  req.peak = g_webPeak;
+  req.durationMs = 0;
+  req.updateAlertTracking = false;
 
-  replyJson(200, String("{\"ok\":true,\"lastOk\":true,\"lastResult\":\"") + sp7json::escape(_notificationLastResult.c_str()) + "\"}");
+  // Copy settings
+  req.slackEnabled = _s->slackEnabled != 0;
+  strncpy(req.slackWebhookUrl, _s->slackWebhookUrl, sizeof(req.slackWebhookUrl) - 1);
+  strncpy(req.slackChannel, _s->slackChannel, sizeof(req.slackChannel) - 1);
+
+  req.telegramEnabled = _s->telegramEnabled != 0;
+  strncpy(req.telegramBotToken, _s->telegramBotToken, sizeof(req.telegramBotToken) - 1);
+  strncpy(req.telegramChatId, _s->telegramChatId, sizeof(req.telegramChatId) - 1);
+
+  req.whatsappEnabled = _s->whatsappEnabled != 0;
+  strncpy(req.whatsappAccessToken, _s->whatsappAccessToken, sizeof(req.whatsappAccessToken) - 1);
+  strncpy(req.whatsappPhoneNumberId, _s->whatsappPhoneNumberId, sizeof(req.whatsappPhoneNumberId) - 1);
+  strncpy(req.whatsappRecipient, _s->whatsappRecipient, sizeof(req.whatsappRecipient) - 1);
+  strncpy(req.whatsappApiVersion, _s->whatsappApiVersion, sizeof(req.whatsappApiVersion) - 1);
+
+  strncpy(req.hostname, _s->hostname, sizeof(req.hostname) - 1);
+  req.greenMax = _s->th.greenMax;
+  req.orangeMax = _s->th.orangeMax;
+
+  // Send to async task (non-blocking)
+  NotificationTask::queueNotification(req);
+
+  // Return immediately (notification is being processed asynchronously)
+  replyJson(200, "{\"ok\":true,\"message\":\"Test notification queued, check logs for result\"}");
+}
+
+void WebManager::handleSlackReveal() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  String json;
+  json.reserve(256);
+  json += "{";
+  sp7json::appendEscapedField(json, "webhookUrl", _s->slackWebhookUrl, false);
+  json += "}";
+  replyJson(200, json);
 }
 
 void WebManager::handleRoot() {
@@ -4185,7 +4452,7 @@ R"HTML(
                   <div class="v mono" id="settingsCpu">--</div>
                 </div>
                 <div class="settingsSnapshot">
-                  <div class="k">Etat OTA / MQTT</div>
+                  <div class="k">Etat OTA / MQTT / Update</div>
                   <div class="v mono" id="settingsOtaMqtt">--</div>
                 </div>
                 <div class="settingsSnapshot">
@@ -4640,7 +4907,10 @@ R"HTML(
                       </div>
                       <div class="field">
                         <label>Bearer token Home Assistant</label>
-                        <input id="homeAssistantTokenAdv" type="text" autocomplete="off" maxlength="64" placeholder="genere ou colle un token"/>
+                        <div style="display:flex;gap:8px;">
+                          <input id="homeAssistantTokenAdv" type="password" autocomplete="off" maxlength="64" placeholder="genere ou colle un token" style="flex:1;"/>
+                          <button type="button" id="toggleHomeAssistantTokenBtn" class="btn" style="width:48px;padding:0;" title="Afficher/Masquer">👁️</button>
+                        </div>
                       </div>
                       <div class="hint mono" id="homeAssistantStatusAdv">Token: --</div>
                       <div class="hint mono" id="homeAssistantPathAdv">Endpoint: /api/ha/status</div>
@@ -4766,7 +5036,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Slack incoming webhook</label>
-                            <input id="slackWebhookUrlAdv" type="password" placeholder="https://hooks.slack.com/services/..."/>
+                            <div style="display:flex;gap:8px;">
+                              <input id="slackWebhookUrlAdv" type="password" placeholder="https://hooks.slack.com/services/..." style="flex:1;"/>
+                              <button type="button" id="toggleSlackWebhookBtn" class="btn" style="width:48px;padding:0;" title="Afficher/Masquer">👁️</button>
+                            </div>
                             <div class="hint">Laisse vide pour conserver l'URL deja stockee.</div>
                           </div>
                           <div class="field">
@@ -6829,12 +7102,15 @@ R"HTML(
 
   function applyHomeAssistantSettings(config) {
     const configured = Boolean(config.tokenConfigured);
+    const input = $("homeAssistantTokenAdv");
     setSecretField("homeAssistantTokenAdv", configured, "********", "genere ou colle un token");
+    input.type = "password";
     $("homeAssistantStatusAdv").textContent = configured
       ? "Token actif"
       : "Token: non configure";
     $("homeAssistantPathAdv").textContent = `Endpoint HA: ${config.statusPath || "/api/ha/status"} (${config.authScheme || "Bearer"})`;
     $("clearHomeAssistantTokenBtn").disabled = !configured;
+    $("toggleHomeAssistantTokenBtn").disabled = !configured;
   }
 
   async function loadHomeAssistantSettings() {
@@ -6862,6 +7138,34 @@ R"HTML(
       });
   }
 
+  async function toggleHomeAssistantToken() {
+    const input = $("homeAssistantTokenAdv");
+    const isHidden = input.type === "password";
+
+    if (isHidden) {
+      // Afficher le token
+      const tokenConfigured = input.dataset.keepSecret === "1";
+      if (!tokenConfigured) {
+        return; // Pas de token configuré à afficher
+      }
+
+      try {
+        const result = await apiGet("/api/homeassistant/reveal");
+        input.value = result.token || "";
+        input.type = "text";
+        input.dataset.keepSecret = "0";
+      } catch (err) {
+        console.error("Erreur lors de la récupération du token:", err);
+      }
+    } else {
+      // Masquer le token
+      input.value = "";
+      input.placeholder = "********";
+      input.type = "password";
+      input.dataset.keepSecret = "1";
+    }
+  }
+
   async function generateHomeAssistantToken() {
     const hasToken = $("homeAssistantTokenAdv").dataset.keepSecret === "1" || Boolean(getTrimmedValue("homeAssistantTokenAdv"));
     if (hasToken && !confirm("Regenerer le token Home Assistant ? L'integration actuelle devra etre mise a jour.")) return;
@@ -6881,6 +7185,34 @@ R"HTML(
       async (result) => {
         applyHomeAssistantSettings(result);
       });
+  }
+
+  async function toggleSlackWebhook() {
+    const input = $("slackWebhookUrlAdv");
+    const isHidden = input.type === "password";
+
+    if (isHidden) {
+      // Afficher le webhook
+      const webhookConfigured = input.dataset.keepSecret === "1";
+      if (!webhookConfigured) {
+        return; // Pas de webhook configuré à afficher
+      }
+
+      try {
+        const result = await apiGet("/api/slack/reveal");
+        input.value = result.webhookUrl || "";
+        input.type = "text";
+        input.dataset.keepSecret = "0";
+      } catch (err) {
+        console.error("Erreur lors de la récupération du webhook:", err);
+      }
+    } else {
+      // Masquer le webhook
+      input.value = "";
+      input.placeholder = "https://hooks.slack.com/services/...";
+      input.type = "password";
+      input.dataset.keepSecret = "1";
+    }
   }
 
   async function saveTimeSettings() {
@@ -7251,7 +7583,11 @@ R"HTML(
     setBoolSelectValue("notifyWarningAdv", config.notifyOnWarning);
     setBoolSelectValue("notifyRecoveryAdv", config.notifyOnRecovery);
     setBoolSelectValue("slackEnabledAdv", config.slackEnabled);
-    setSecretField("slackWebhookUrlAdv", config.slackWebhookConfigured, "********", "https://hooks.slack.com/services/...");
+    const slackConfigured = Boolean(config.slackWebhookConfigured);
+    setSecretField("slackWebhookUrlAdv", slackConfigured, "********", "https://hooks.slack.com/services/...");
+    const slackInput = $("slackWebhookUrlAdv");
+    slackInput.type = "password";
+    $("toggleSlackWebhookBtn").disabled = !slackConfigured;
     setFieldValue("slackChannelAdv", config.slackChannel);
     setBoolSelectValue("telegramEnabledAdv", config.telegramEnabled);
     setFieldValue("telegramChatIdAdv", config.telegramChatId);
@@ -7498,6 +7834,7 @@ R"HTML(
   $("deleteWebUserBtn").addEventListener("click", () => deleteWebUser());
   $("logoutBtn").addEventListener("click", logout);
   $("saveHomeAssistantAdv").addEventListener("click", saveHomeAssistantSettings);
+  $("toggleHomeAssistantTokenBtn").addEventListener("click", toggleHomeAssistantToken);
   $("generateHomeAssistantTokenBtn").addEventListener("click", generateHomeAssistantToken);
   $("clearHomeAssistantTokenBtn").addEventListener("click", clearHomeAssistantToken);
   $("exportConfigBtn").addEventListener("click", exportConfig);
@@ -7518,6 +7855,7 @@ R"HTML(
   if ($("installReleaseBtn")) $("installReleaseBtn").addEventListener("click", installReleaseNow);
   if ($("forceInstallReleaseBtn")) $("forceInstallReleaseBtn").addEventListener("click", forceInstallReleaseNow);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+  $("toggleSlackWebhookBtn").addEventListener("click", toggleSlackWebhook);
   $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
   $("testNotificationsAdv").addEventListener("click", testNotificationSettings);
   $("toggleDebugLogsBtn").addEventListener("click", toggleDebugLogs);

@@ -2314,7 +2314,11 @@ void UiManager::onLiveToggle(lv_event_t* e) {
   self->_lastLiveEnabled = 255;
   self->refreshLiveControls();
 
-  if (self->_store) self->_store->save(*self->_s);
+  if (self->_store) {
+    self->_store->saveUiSettings(self->_s->backlight, self->_s->liveEnabled,
+                                self->_s->touchEnabled, self->_s->dashboardPage,
+                                self->_s->dashboardFullscreenMask);
+  }
 }
 
 void UiManager::onToggleBacklight(lv_event_t* e) {
@@ -2325,7 +2329,11 @@ void UiManager::onToggleBacklight(lv_event_t* e) {
   self->refreshSettingsControls();
   self->applyBacklight(self->_s->backlight);
 
-  if (self->_store && self->_s) self->_store->save(*self->_s);
+  if (self->_store && self->_s) {
+    self->_store->saveUiSettings(self->_s->backlight, self->_s->liveEnabled,
+                                self->_s->touchEnabled, self->_s->dashboardPage,
+                                self->_s->dashboardFullscreenMask);
+  }
 }
 
 void UiManager::onSliderThresholds(lv_event_t* e) {
@@ -2354,7 +2362,7 @@ void UiManager::onSliderThresholds(lv_event_t* e) {
   memset(self->_redHistory, 0, sizeof(self->_redHistory));
   self->applyAlertVisuals(millis());
 
-  if (self->_store && self->_s) self->_store->save(*self->_s);
+  if (self->_store && self->_s) self->_store->saveThresholds(self->_s->th);
 }
 
 void UiManager::onSliderHistory(lv_event_t* e) {
@@ -2379,7 +2387,10 @@ void UiManager::onResponseMode(lv_event_t* e) {
   if (mode > 1) mode = 0;
   self->_s->audioResponseMode = mode;
   self->refreshSettingsControls();
-  self->_store->save(*self->_s);
+  self->_store->saveAudioSettings(self->_s->audioSource, self->_s->analogRmsSamples,
+                                  self->_s->audioResponseMode, self->_s->emaAlpha,
+                                  self->_s->peakHoldMs, self->_s->analogBaseOffsetDb,
+                                  self->_s->analogExtraOffsetDb);
 }
 
 void UiManager::onReboot(lv_event_t* e) {

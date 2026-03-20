@@ -105,6 +105,9 @@ float AudioEngine::computeAnalogRms(uint8_t pin, uint16_t sampleCount, uint16_t&
 
   double n = (double)sampleCount;
   double mean = sum / n;
+  // Variance avec formule one-pass : Var(X) = E[X²] - E[X]²
+  // où E[X²] = sum2/n et E[X]² = (sum/n)²
+  // Clamp à 0 pour éviter variance négative due à erreurs d'arrondi flottant
   double var = (sum2 / n) - (mean * mean);
   if (var < 0.0) var = 0.0;
 

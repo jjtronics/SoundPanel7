@@ -10,3 +10,6 @@ data/video/*.mp4
 platformio.override.ini
 .release-assets/
 tmp/
+
+# Claude Code local configuration
+.claude/

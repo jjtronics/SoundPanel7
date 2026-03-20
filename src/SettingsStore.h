@@ -32,7 +32,9 @@ static constexpr uint8_t PIN_CODE_MIN_LENGTH = 4;
 static constexpr uint8_t PIN_CODE_MAX_LENGTH = 8;
 static constexpr uint8_t PIN_HASH_SALT_LENGTH = 32;
 static constexpr uint8_t PIN_HASH_LENGTH = 64;
-static constexpr uint16_t PIN_HASH_ROUNDS = 20000;
+// SECURITY: Increased from 20,000 to 100,000 rounds (MED-04)
+// Modern recommendation for PBKDF2-like key derivation
+static constexpr uint32_t PIN_HASH_ROUNDS = 100000;
 static constexpr size_t PIN_STORAGE_MAX_LENGTH = 3 + PIN_HASH_SALT_LENGTH + 1 + PIN_HASH_LENGTH;
 static constexpr uint8_t WEB_USER_MAX_COUNT = 4;
 static constexpr uint8_t WEB_USERNAME_MAX_LENGTH = 24;
@@ -289,6 +291,23 @@ public:
   bool begin(const char* nvsNamespace = "sp7");
   void load(SettingsV1 &out);
   void save(const SettingsV1 &s);
+
+  // Granular save methods - only write what changed to reduce NVS fragmentation
+  void saveWifiCredentials(const WifiCredentialRecord (&credentials)[WIFI_CREDENTIAL_MAX_COUNT]);
+  void saveThresholds(const ThresholdsV1& th);
+  void saveUiSettings(uint8_t backlight, uint8_t liveEnabled, uint8_t touchEnabled, uint8_t dashboardPage, uint8_t dashboardFullscreenMask);
+  void saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs);
+  void saveOtaSettings(bool enabled, uint16_t port, const char* hostname, const char* password);
+  void saveAudioSettings(uint8_t audioSource, uint16_t analogRmsSamples, uint8_t audioResponseMode, float emaAlpha, uint32_t peakHoldMs, float analogBaseOffsetDb, float analogExtraOffsetDb);
+  void saveTimeSettings(const char* tz, const char* ntpServer, uint32_t ntpSyncIntervalMs, const char* hostname);
+  void saveNotificationSettings(uint8_t notifyOnWarning, uint8_t notifyOnRecovery,
+                                bool slackEnabled, const char* slackWebhookUrl, const char* slackChannel,
+                                bool telegramEnabled, const char* telegramBotToken, const char* telegramChatId,
+                                bool whatsappEnabled, const char* whatsappAccessToken, const char* whatsappPhoneNumberId,
+                                const char* whatsappRecipient, const char* whatsappApiVersion);
+  void saveHomeAssistantToken(const char* token);
+  void saveDashboardPin(const char* pin);
+
   void factoryReset();
   String exportJson(const SettingsV1& s, SecretExportMode secretMode = EXPORT_SECRETS_OMIT, String* err = nullptr) const;
   bool importJson(SettingsV1& s, const String& json, String* err = nullptr);

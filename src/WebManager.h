@@ -35,10 +35,17 @@ private:
   static constexpr uint32_t LIVE_SYSTEM_PUSH_PERIOD_MS = 1000;
   static constexpr uint8_t WEB_SESSION_MAX_COUNT = 6;
   static constexpr uint32_t WEB_SESSION_IDLE_TIMEOUT_MS = 12UL * 60UL * 60UL * 1000UL;
-  static constexpr uint8_t WEB_LOGIN_MAX_FAILURES = 5;
-  static constexpr uint32_t WEB_LOGIN_LOCK_MS = 15UL * 60UL * 1000UL;
+  static constexpr uint8_t WEB_LOGIN_MAX_FAILURES = 3;  // SECURITY: Reduced from 5 to 3 (HIGH-01)
+  static constexpr uint32_t WEB_LOGIN_LOCK_MS = 30UL * 60UL * 1000UL;  // SECURITY: Increased from 15min to 30min (HIGH-01)
+  static constexpr uint8_t WEB_LOGIN_MAX_LOCKOUT_LEVEL = 5;  // SECURITY: Exponential backoff up to 5 levels (HIGH-01)
   static constexpr uint16_t WEB_PASSWORD_HASH_ROUNDS = 12000;
 
+  // SECURITY: Session token security properties (HIGH-03 documentation)
+  // - Token length: 48 hex characters = 192 bits of entropy
+  // - Entropy sources: ESP32 hardware RNG (RF noise + boot ROM seed) + timestamp + counter
+  // - Token storage: HttpOnly cookie (prevents XSS) + SameSite=Strict (prevents CSRF)
+  // - Session timeout: 12 hours idle timeout with automatic cleanup
+  // - Threat model: Assumes HTTP-only deployment on trusted local network (no TLS)
   struct WebSession {
     bool active = false;
     char sessionToken[49] = "";
@@ -77,6 +84,9 @@ private:
   WebSession _sessions[WEB_SESSION_MAX_COUNT];
   uint8_t _loginFailureCount = 0;
   uint32_t _loginLockUntilMs = 0;
+  uint8_t _loginLockoutLevel = 0;  // SECURITY: Track consecutive lockouts for exponential backoff (HIGH-01)
+  SemaphoreHandle_t _bootstrapMutex = nullptr;
+  SemaphoreHandle_t _settingsMutex = nullptr;  // SECURITY: Protect settings modifications (MED-02)
 
   void routes();
   void startHttpServer();
@@ -157,6 +167,7 @@ private:
   void handleFactoryReset();
   void handleHomeAssistantGet();
   void handleHomeAssistantSave();
+  void handleHomeAssistantReveal();
   void handleHomeAssistantStatus();
 
   void applyBacklightNow(uint8_t percent);
@@ -168,6 +179,7 @@ private:
   uint32_t tardisInteriorRgbColorForCurrentState() const;
   void updateTardisAnimationNow(bool force = false);
   void applySettingsRuntimeState();
+  void saveSettingsThreadSafe();  // SECURITY: Mutex-protected settings save (MED-02)
   String historyJson() const;
 
   void handleCalPoint();
@@ -183,6 +195,7 @@ private:
   void handleNotificationsGet();
   void handleNotificationsSave();
   void handleNotificationsTest();
+  void handleSlackReveal();
   void handleDebugLogsGet();
   void handleDebugLogsClear();
 

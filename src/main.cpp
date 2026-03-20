@@ -3,6 +3,9 @@
 #include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <freertos/idf_additions.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 #include <esp_display_panel.hpp>
 
 #include "AppConfig.h"
@@ -49,6 +52,13 @@ static constexpr bool kAudioDebugLogEnabled = false;
 static constexpr uint32_t kAudioUpdatePeriodMs = 80;
 static constexpr uint32_t kLvglSpikeThresholdUs = 30000;
 static constexpr uint32_t kLvglSpikeLogIntervalMs = 1500;
+
+// Audio task isolation on Core 1
+static SemaphoreHandle_t g_audioMutex = nullptr;
+static AudioMetrics g_audioMetricsShared = {};
+static TaskHandle_t g_audioTaskHandle = nullptr;
+static constexpr uint8_t kAudioTaskPriority = 20;  // HIGHEST priority - audio measurement must NEVER be blocked
+static constexpr uint32_t kAudioTaskStackSize = 8192;
 
 static const char* otaStateLabel(esp_ota_img_states_t state) {
   switch (state) {
@@ -163,6 +173,61 @@ static bool dueOnFixedPeriod(uint32_t& anchorMs, uint32_t periodMs, uint32_t now
   return true;
 }
 
+// Thread-safe read of audio metrics
+static AudioMetrics getAudioMetrics() {
+  AudioMetrics m;
+  if (g_audioMutex && xSemaphoreTake(g_audioMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    m = g_audioMetricsShared;
+    xSemaphoreGive(g_audioMutex);
+  }
+  return m;
+}
+
+// Audio task running on Core 1 with high priority
+static void audioTask(void* parameter) {
+  (void)parameter;
+  Serial0.printf("[AUDIO] task started on core %d priority %d\n",
+                 xPortGetCoreID(),
+                 uxTaskPriorityGet(nullptr));
+
+  uint32_t audioTickAnchorMs = 0;
+  uint32_t lastDbg = 0;
+
+  while (true) {
+    uint32_t now = millis();
+
+    if (dueOnFixedPeriod(audioTickAnchorMs, kAudioUpdatePeriodMs, now)) {
+      // Audio acquisition - isolated from WiFi/MQTT/Web
+      g_audio.update(&g_settings);
+      const AudioMetrics& m = g_audio.metrics();
+      g_history.update(m.dbInstant, now);
+
+      // Thread-safe copy for main loop
+      if (g_audioMutex && xSemaphoreTake(g_audioMutex, portMAX_DELAY) == pdTRUE) {
+        g_audioMetricsShared = m;
+        xSemaphoreGive(g_audioMutex);
+      }
+
+      // Debug log
+      if (kAudioDebugLogEnabled && (now - lastDbg >= 1000)) {
+        lastDbg = now;
+        Serial0.printf("[AUDIO][DBG] ok=%d adcLast=%d adcMean=%u rms=%.2f pdb=%.1f db=%.1f leq=%.1f peak=%.1f\n",
+                       m.analogOk ? 1 : 0,
+                       m.rawAdcLast,
+                       m.rawAdcMean,
+                       m.rawRms,
+                       m.rawPseudoDb,
+                       m.dbInstant,
+                       m.leq,
+                       m.peak);
+      }
+    }
+
+    // Small delay to prevent task starvation (10ms)
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
 void setup() {
   Serial0.begin(115200);
   delay(200);
@@ -217,88 +282,45 @@ void setup() {
                  g_settings.emaAlpha,
                  (unsigned long)g_settings.peakHoldMs);
 
+  // Create mutex for thread-safe audio metrics
+  g_audioMutex = xSemaphoreCreateMutex();
+  if (!g_audioMutex) {
+    Serial0.println("[AUDIO] FATAL: mutex creation failed");
+    while (true) delay(1000);
+  }
+
+  // Start audio task on Core 1 with high priority
+  BaseType_t ret = xTaskCreatePinnedToCore(
+    audioTask,
+    "audio",
+    kAudioTaskStackSize,
+    nullptr,
+    kAudioTaskPriority,
+    &g_audioTaskHandle,
+    1  // Core 1
+  );
+
+  if (ret != pdPASS || !g_audioTaskHandle) {
+    Serial0.println("[AUDIO] FATAL: task creation failed");
+    while (true) delay(1000);
+  }
+
   Serial0.println("READY");
 }
 
 void loop() {
   static uint32_t lastLvglSpikeLogMs = 0;
-  g_ota.loop();
-  if (g_ota.inProgress()) {
-    // OTA is timing-sensitive on the ESP32. Keep the loop as quiet as possible
-    // so the upload stream and flash writes are not disturbed by UI, audio, MQTT,
-    // or web activity. Let WebManager run once so it can drop live SSE clients.
-    g_web.loop();
-    delay(1);
-    return;
-  }
-  g_net.loop();
-  g_releaseUpdate.loop();
-  if (g_releaseUpdate.installInProgress()) {
-    g_web.loop();
-    delay(1);
-    return;
-  }
-  g_mqtt.loop();
-  g_web.loop();
 
-  static uint32_t audioTickAnchorMs = 0;
+  // Check for OTA/install in progress early
+  const bool otaInProgress = g_ota.inProgress();
+  const bool installInProgress = g_releaseUpdate.installInProgress();
+
+  // Audio acquisition now runs in dedicated task on Core 1
+  // Read metrics in a thread-safe way
+  const AudioMetrics m = getAudioMetrics();
   uint32_t now = millis();
 
-  if (dueOnFixedPeriod(audioTickAnchorMs, kAudioUpdatePeriodMs, now)) {
-    g_audio.update(&g_settings);
-    const AudioMetrics& m = g_audio.metrics();
-    g_history.update(m.dbInstant, now);
-
-    static uint32_t lastDbg = 0;
-    if (kAudioDebugLogEnabled && (now - lastDbg >= 1000)) {
-      lastDbg = now;
-      Serial0.printf("[AUDIO][DBG] ok=%d adcLast=%d adcMean=%u rms=%.2f pdb=%.1f db=%.1f leq=%.1f peak=%.1f\n",
-                     m.analogOk ? 1 : 0,
-                     m.rawAdcLast,
-                     m.rawAdcMean,
-                     m.rawRms,
-                     m.rawPseudoDb,
-                     m.dbInstant,
-                     m.leq,
-                     m.peak);
-    }
-
-    uint32_t uiStartUs = micros();
-#if SOUNDPANEL7_HAS_SCREEN
-    lvgl_port_lock(-1);
-    g_ui.tick();
-    g_ui.setDb(m.dbInstant, m.leq, m.peak);
-    sampleRuntimeStats();
-    lvgl_port_unlock();
-#else
-    g_ui.tick();
-    g_ui.setDb(m.dbInstant, m.leq, m.peak);
-    sampleRuntimeStats();
-#endif
-    g_runtimeStats.uiWorkLastUs = micros() - uiStartUs;
-    if (g_runtimeStats.uiWorkLastUs > g_runtimeStats.uiWorkMaxUs) {
-      g_runtimeStats.uiWorkMaxUs = g_runtimeStats.uiWorkLastUs;
-    }
-
-    g_web.updateMetrics(m.dbInstant, m.leq, m.peak);
-    g_mqtt.updateMetrics(m.dbInstant, m.leq, m.peak);
-  } else {
-    uint32_t uiStartUs = micros();
-#if SOUNDPANEL7_HAS_SCREEN
-    lvgl_port_lock(-1);
-    g_ui.tick();
-    sampleRuntimeStats();
-    lvgl_port_unlock();
-#else
-    g_ui.tick();
-    sampleRuntimeStats();
-#endif
-    g_runtimeStats.uiWorkLastUs = micros() - uiStartUs;
-    if (g_runtimeStats.uiWorkLastUs > g_runtimeStats.uiWorkMaxUs) {
-      g_runtimeStats.uiWorkMaxUs = g_runtimeStats.uiWorkLastUs;
-    }
-  }
-
+  // PRIORITY 1: Process touch input and UI FIRST (before any blocking operations)
 #if SOUNDPANEL7_HAS_SCREEN
   uint32_t lvHandlerStartUs = micros();
   lv_timer_handler();
@@ -306,6 +328,29 @@ void loop() {
   if (g_runtimeStats.lvHandlerLastUs > g_runtimeStats.lvHandlerMaxUs) {
     g_runtimeStats.lvHandlerMaxUs = g_runtimeStats.lvHandlerLastUs;
   }
+#else
+  g_runtimeStats.lvHandlerLastUs = 0;
+#endif
+
+  // PRIORITY 2: Update UI state
+  uint32_t uiStartUs = micros();
+#if SOUNDPANEL7_HAS_SCREEN
+  lvgl_port_lock(-1);
+  g_ui.tick();
+  g_ui.setDb(m.dbInstant, m.leq, m.peak);
+  sampleRuntimeStats();
+  lvgl_port_unlock();
+#else
+  g_ui.tick();
+  g_ui.setDb(m.dbInstant, m.leq, m.peak);
+  sampleRuntimeStats();
+#endif
+  g_runtimeStats.uiWorkLastUs = micros() - uiStartUs;
+  if (g_runtimeStats.uiWorkLastUs > g_runtimeStats.uiWorkMaxUs) {
+    g_runtimeStats.uiWorkMaxUs = g_runtimeStats.uiWorkLastUs;
+  }
+
+#if SOUNDPANEL7_HAS_SCREEN
   if ((g_runtimeStats.uiWorkLastUs >= kLvglSpikeThresholdUs || g_runtimeStats.lvHandlerLastUs >= kLvglSpikeThresholdUs) &&
       (now - lastLvglSpikeLogMs >= kLvglSpikeLogIntervalMs)) {
     lastLvglSpikeLogMs = now;
@@ -319,8 +364,32 @@ void loop() {
                    (unsigned long)g_runtimeStats.lvObjCount,
                    (unsigned long)(g_runtimeStats.heapInternalFree / 1024));
   }
-#else
-  g_runtimeStats.lvHandlerLastUs = 0;
 #endif
-  delay(5);
+
+  // PRIORITY 3: Network operations (can block, but after UI is responsive)
+  g_ota.loop();
+  if (otaInProgress) {
+    // OTA is timing-sensitive on the ESP32. Keep the loop as quiet as possible
+    // so the upload stream and flash writes are not disturbed by UI, audio, MQTT,
+    // or web activity. Let WebManager run once so it can drop live SSE clients.
+    g_web.loop();
+    delay(1);
+    return;
+  }
+
+  g_net.loop();
+  g_releaseUpdate.loop();
+  if (installInProgress) {
+    g_web.loop();
+    delay(1);
+    return;
+  }
+
+  g_mqtt.loop();
+  g_web.loop();
+
+  g_web.updateMetrics(m.dbInstant, m.leq, m.peak);
+  g_mqtt.updateMetrics(m.dbInstant, m.leq, m.peak);
+
+  delay(1);
 }

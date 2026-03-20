@@ -38,7 +38,7 @@
  */
 #define LVGL_PORT_BUFFER_MALLOC_CAPS            (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)         // Prefer PSRAM on RGB panel builds
 #define LVGL_PORT_BUFFER_MALLOC_CAPS_FALLBACK   (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)       // Fallback if PSRAM is unavailable
-#define LVGL_PORT_BUFFER_SIZE_HEIGHT            (10)
+#define LVGL_PORT_BUFFER_SIZE_HEIGHT            (240)  // Increased from 10 to 240 for faster screen refresh (half-screen buffer)
 #define LVGL_PORT_BUFFER_NUM                    (2)
 
 /**
@@ -47,7 +47,7 @@
 #define LVGL_PORT_TASK_MAX_DELAY_MS             (500)       // The maximum delay of the LVGL timer task, in milliseconds
 #define LVGL_PORT_TASK_MIN_DELAY_MS             (2)         // The minimum delay of the LVGL timer task, in milliseconds
 #define LVGL_PORT_TASK_STACK_SIZE               (6 * 1024)  // The stack size of the LVGL timer task, in bytes
-#define LVGL_PORT_TASK_PRIORITY                 (2)         // The priority of the LVGL timer task
+#define LVGL_PORT_TASK_PRIORITY                 (10)        // UI priority (increased from 2 to 10 to prevent freezing during network operations)
 #ifdef ARDUINO_RUNNING_CORE
 #define LVGL_PORT_TASK_CORE                     (ARDUINO_RUNNING_CORE)  // Valid if using Arduino
 #else
@@ -74,7 +74,7 @@
 #define LVGL_PORT_AVOID_TEARING_MODE            (CONFIG_LVGL_PORT_AVOID_TEARING_MODE)
                                                         // Valid if using ESP-IDF
 #else
-#define LVGL_PORT_AVOID_TEARING_MODE            (0)     // Valid if using Arduino
+#define LVGL_PORT_AVOID_TEARING_MODE            (0)     // Valid if using Arduino (mode 3 not compatible with this hardware)
 #endif
 
 #if LVGL_PORT_AVOID_TEARING_MODE != 0

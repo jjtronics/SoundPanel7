@@ -2,7 +2,7 @@
 #include "AppConfig.h"
 
 static constexpr uint16_t kMqttClientBufferSize = 2048;
-static constexpr uint32_t kMqttReconnectIntervalMs = 5000;
+static constexpr uint32_t kMqttReconnectIntervalMs = 15000;
 
 MqttManager* MqttManager::_instance = nullptr;
 
@@ -20,7 +20,7 @@ bool MqttManager::begin(SettingsStore* store, SettingsV1* settings) {
 
   if (!_s->mqttEnabled) {
     _lastError = "disabled";
-    Serial0.println("[MQTT] disabled");
+    Serial0.println("[MQTT] status: disabled");
     return false;
   }
 
@@ -254,7 +254,7 @@ bool MqttManager::connectIfNeeded() {
     _lastError = "";
     _discoveryPublished = false;
     _lastPublishedLiveEnabled = 255;
-    Serial0.println("[MQTT] connected");
+    Serial0.println("[MQTT] connection: established");
     _client.publish(availabilityTopic().c_str(), "online", true);
     const bool subOk = _client.subscribe(commandTopic("live/set").c_str());
     Serial0.printf("[MQTT] subscribe %s %s\n",
@@ -323,7 +323,10 @@ void MqttManager::handleMessage(char* topicName, uint8_t* payload, unsigned int 
 
   const uint8_t previous = _s->liveEnabled ? LIVE_ENABLED : LIVE_DISABLED;
   _s->liveEnabled = (uint8_t)next;
-  if (_store && previous != _s->liveEnabled) _store->save(*_s);
+  if (_store && previous != _s->liveEnabled) {
+    _store->saveUiSettings(_s->backlight, _s->liveEnabled, _s->touchEnabled,
+                          _s->dashboardPage, _s->dashboardFullscreenMask);
+  }
 
   Serial0.printf("[MQTT] LIVE %s via %s\n", _s->liveEnabled ? "ON" : "OFF", topicName);
   if (_client.connected()) {

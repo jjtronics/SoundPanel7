@@ -193,7 +193,8 @@ void NetManager::rememberWifiCredential(const String& ssid, const String& passwo
     _s->wifiCredentials[WIFI_CREDENTIAL_MAX_COUNT - 1] = credential;
   }
 
-  _store->save(*_s);
+  // Use granular save: 8 NVS writes instead of ~50 (reduces fragmentation)
+  _store->saveWifiCredentials(_s->wifiCredentials);
   rebuildWifiMulti();
   Serial0.printf("[Net] WiFi credential stored for SSID=%s\n", ssid.c_str());
 }

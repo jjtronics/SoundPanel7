@@ -12,6 +12,7 @@
 #include "DebugLog.h"
 #include "JsonHelpers.h"
 #include "NetManager.h"
+#include "TrustedCerts.h"
 #include "ui/UiManager.h"
 
 #define Serial0 DebugSerial0
@@ -349,7 +350,8 @@ void ReleaseUpdateManager::processInstall() {
       return;
     }
 
-    _installClient->setInsecure();
+    // SECURITY: Validate HTTPS certificates against trusted CA bundle
+    configureSecureClient(*_installClient);
     _installClient->setTimeout(kHttpTimeoutMs);
 
     _installHttp->setConnectTimeout(kHttpConnectTimeoutMs);
@@ -508,7 +510,8 @@ bool ReleaseUpdateManager::fetchManifest(String& payload) {
 bool ReleaseUpdateManager::fetchUrl(const String& url, String& payload, int& httpCode, String& error) {
   WiFi.setSleep(false);
   WiFiClientSecure client;
-  client.setInsecure();
+  // SECURITY: Validate HTTPS certificates against trusted CA bundle
+  configureSecureClient(client);
 
   HTTPClient http;
   http.setConnectTimeout(kHttpConnectTimeoutMs);

@@ -243,7 +243,8 @@ String hashPinValue(const char* pin, const char* saltHex) {
   };
 
   runRound(true);
-  for (uint16_t i = 1; i < PIN_HASH_ROUNDS; i++) runRound(false);
+  // SECURITY: 100,000 rounds for PIN hashing (MED-04)
+  for (uint32_t i = 1; i < PIN_HASH_ROUNDS; i++) runRound(false);
   mbedtls_sha256_free(&ctx);
 
   String out;
@@ -710,6 +711,9 @@ void SettingsStore::load(SettingsV1 &out) {
   if (versionMismatch && ver < SETTINGS_VERSION) save(out);
 }
 
+// Full save - writes ALL settings to NVS (~50 keys)
+// WARNING: Causes NVS fragmentation. Prefer granular save methods when updating a single section.
+// Use this only for: initial setup, factory defaults, backup/restore, or bulk changes.
 void SettingsStore::save(const SettingsV1 &s) {
   SettingsV1 persisted = s;
   syncActiveCalibrationProfile(persisted);
@@ -816,6 +820,97 @@ void SettingsStore::save(const SettingsV1 &s) {
     _prefs.putFloat(keyRaw, persisted.calPointRawLogRms[i]);
     _prefs.putUChar(keyVal, persisted.calPointValid[i]);
   }
+}
+
+// Granular save methods - reduce NVS writes from ~50 to ~2-10 keys per update
+
+void SettingsStore::saveWifiCredentials(const WifiCredentialRecord (&credentials)[WIFI_CREDENTIAL_MAX_COUNT]) {
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    char keySsid[8];
+    char keyPass[8];
+    char purpose[8];
+    snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(i + 1));
+    snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(i + 1));
+    snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(i + 1));
+    _prefs.putString(keySsid, credentials[i].ssid);
+    saveSecret(keyPass, purpose, credentials[i].password);
+  }
+}
+
+void SettingsStore::saveThresholds(const ThresholdsV1& th) {
+  _prefs.putUChar("th_g", th.greenMax);
+  _prefs.putUChar("th_o", th.orangeMax);
+}
+
+void SettingsStore::saveUiSettings(uint8_t backlight, uint8_t liveEnabled, uint8_t touchEnabled, uint8_t dashboardPage, uint8_t dashboardFullscreenMask) {
+  _prefs.putUChar("ui_bl", backlight);
+  _prefs.putUChar("ui_live", liveEnabled);
+  _prefs.putUChar("ui_touch", touchEnabled);
+  _prefs.putUChar("ui_page", dashboardPage);
+  _prefs.putUChar("ui_fsm", dashboardFullscreenMask);
+}
+
+void SettingsStore::saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs) {
+  _prefs.putUChar("mq_en", enabled ? 1 : 0);
+  _prefs.putString("mq_host", host);
+  _prefs.putUShort("mq_pt", port);
+  _prefs.putString("mq_usr", username);
+  saveSecret("mq_pwd", "mqtt_password", password);
+  _prefs.putString("mq_cid", clientId);
+  _prefs.putString("mq_base", baseTopic);
+  _prefs.putUShort("mq_pubms", publishPeriodMs);
+}
+
+void SettingsStore::saveOtaSettings(bool enabled, uint16_t port, const char* hostname, const char* password) {
+  _prefs.putUChar("ota_en", enabled ? 1 : 0);
+  _prefs.putUShort("ota_pt", port);
+  _prefs.putString("ota_hn", hostname);
+  saveSecret("ota_pw", "ota_password", password);
+}
+
+void SettingsStore::saveAudioSettings(uint8_t audioSource, uint16_t analogRmsSamples, uint8_t audioResponseMode, float emaAlpha, uint32_t peakHoldMs, float analogBaseOffsetDb, float analogExtraOffsetDb) {
+  _prefs.putUChar("a_src", audioSource);
+  _prefs.putUShort("a_rms", analogRmsSamples);
+  _prefs.putUChar("a_resp", audioResponseMode);
+  _prefs.putFloat("a_ema", emaAlpha);
+  _prefs.putUInt("a_peak", peakHoldMs);
+  _prefs.putFloat("a_base", analogBaseOffsetDb);
+  _prefs.putFloat("a_extra", analogExtraOffsetDb);
+}
+
+void SettingsStore::saveTimeSettings(const char* tz, const char* ntpServer, uint32_t ntpSyncIntervalMs, const char* hostname) {
+  _prefs.putString("tz", tz);
+  _prefs.putString("ntp_srv", ntpServer);
+  _prefs.putUInt("ntp_int", ntpSyncIntervalMs);
+  _prefs.putString("hostname", hostname);
+}
+
+void SettingsStore::saveNotificationSettings(uint8_t notifyOnWarning, uint8_t notifyOnRecovery,
+                                             bool slackEnabled, const char* slackWebhookUrl, const char* slackChannel,
+                                             bool telegramEnabled, const char* telegramBotToken, const char* telegramChatId,
+                                             bool whatsappEnabled, const char* whatsappAccessToken, const char* whatsappPhoneNumberId,
+                                             const char* whatsappRecipient, const char* whatsappApiVersion) {
+  _prefs.putUChar("n_warn", notifyOnWarning);
+  _prefs.putUChar("n_recov", notifyOnRecovery);
+  _prefs.putUChar("n_s_en", slackEnabled ? 1 : 0);
+  saveSecret("n_s_url", "slack_webhook", slackWebhookUrl);
+  _prefs.putString("n_s_ch", slackChannel);
+  _prefs.putUChar("n_t_en", telegramEnabled ? 1 : 0);
+  saveSecret("n_t_tok", "telegram_token", telegramBotToken);
+  _prefs.putString("n_t_ch", telegramChatId);
+  _prefs.putUChar("n_w_en", whatsappEnabled ? 1 : 0);
+  saveSecret("n_w_tok", "whatsapp_token", whatsappAccessToken);
+  _prefs.putString("n_w_ph", whatsappPhoneNumberId);
+  _prefs.putString("n_w_rec", whatsappRecipient);
+  _prefs.putString("n_w_ver", whatsappApiVersion);
+}
+
+void SettingsStore::saveHomeAssistantToken(const char* token) {
+  saveSecret("ha_token", "ha_token", token);
+}
+
+void SettingsStore::saveDashboardPin(const char* pin) {
+  _prefs.putString("ui_pin", pin);
 }
 
 void SettingsStore::factoryReset() {
