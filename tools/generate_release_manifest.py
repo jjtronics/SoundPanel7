@@ -31,11 +31,13 @@ def main() -> int:
     parser.add_argument("--repository", required=True, help="GitHub repository, for example jjtronics/SoundPanel7")
     parser.add_argument("--published-at", required=True, help="Release publication timestamp")
     parser.add_argument("--build-dir", required=True, help="Directory containing screen firmware artifacts")
+    parser.add_argument("--build-7b-dir", required=True, help="Directory containing 7B firmware artifacts")
     parser.add_argument("--headless-build-dir", required=True, help="Directory containing headless firmware artifacts")
     parser.add_argument("--output", required=True, help="Output manifest path")
     args = parser.parse_args()
 
     build_dir = Path(args.build_dir)
+    build_7b_dir = Path(args.build_7b_dir)
     headless_build_dir = Path(args.headless_build_dir)
     output = Path(args.output)
     version = args.tag[1:] if args.tag.startswith("v") else args.tag
@@ -54,6 +56,13 @@ def main() -> int:
         "firmware",
         headless_build_dir / "firmware.bin",
     )
+    firmware_7b = build_asset(
+        args.repository,
+        args.tag,
+        "soundpanel7b_ota-firmware.bin",
+        "firmware",
+        build_7b_dir / "firmware.bin",
+    )
     bootloader = build_asset(
         args.repository,
         args.tag,
@@ -67,6 +76,13 @@ def main() -> int:
         "soundpanel7_headless_ota-bootloader.bin",
         "bootloader",
         headless_build_dir / "bootloader.bin",
+    )
+    bootloader_7b = build_asset(
+        args.repository,
+        args.tag,
+        "soundpanel7b_ota-bootloader.bin",
+        "bootloader",
+        build_7b_dir / "bootloader.bin",
     )
     partitions = build_asset(
         args.repository,
@@ -82,6 +98,13 @@ def main() -> int:
         "partitions",
         headless_build_dir / "partitions.bin",
     )
+    partitions_7b = build_asset(
+        args.repository,
+        args.tag,
+        "soundpanel7b_ota-partitions.bin",
+        "partitions",
+        build_7b_dir / "partitions.bin",
+    )
 
     manifest = {
         "project": "SoundPanel7",
@@ -91,15 +114,21 @@ def main() -> int:
         "release_url": f"https://github.com/{args.repository}/releases/tag/{args.tag}",
         "ota": firmware,
         "ota_screen": firmware,
+        "ota_7b": firmware_7b,
         "ota_headless": firmware_headless,
         "otaScreenUrl": firmware["url"],
         "otaScreenSha256": firmware["sha256"],
+        "ota7bUrl": firmware_7b["url"],
+        "ota7bSha256": firmware_7b["sha256"],
         "otaHeadlessUrl": firmware_headless["url"],
         "otaHeadlessSha256": firmware_headless["sha256"],
         "assets": [
             firmware,
             bootloader,
             partitions,
+            firmware_7b,
+            bootloader_7b,
+            partitions_7b,
             firmware_headless,
             bootloader_headless,
             partitions_headless,

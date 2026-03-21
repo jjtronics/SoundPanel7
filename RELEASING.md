@@ -33,6 +33,7 @@ If the current state is the one you want to publish, release:
 
 ```bash
 pio run -e soundpanel7_ota
+pio run -e soundpanel7b_ota
 pio run -e soundpanel7_headless_ota
 ```
 
@@ -80,6 +81,9 @@ After a successful release build, useful firmware files are generated in:
 - `.pio/build/soundpanel7_ota/firmware.bin`
 - `.pio/build/soundpanel7_ota/bootloader.bin`
 - `.pio/build/soundpanel7_ota/partitions.bin`
+- `.pio/build/soundpanel7b_ota/firmware.bin`
+- `.pio/build/soundpanel7b_ota/bootloader.bin`
+- `.pio/build/soundpanel7b_ota/partitions.bin`
 - `.pio/build/soundpanel7_headless_ota/firmware.bin`
 - `.pio/build/soundpanel7_headless_ota/bootloader.bin`
 - `.pio/build/soundpanel7_headless_ota/partitions.bin`
@@ -121,6 +125,12 @@ Current structure:
     "name": "soundpanel7_ota-firmware.bin",
     "type": "firmware",
     "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7_ota-firmware.bin",
+    "sha256": "..."
+  },
+  "ota_7b": {
+    "name": "soundpanel7b_ota-firmware.bin",
+    "type": "firmware",
+    "url": "https://github.com/jjtronics/SoundPanel7/releases/download/v0.2.0/soundpanel7b_ota-firmware.bin",
     "sha256": "..."
   },
   "ota_headless": {

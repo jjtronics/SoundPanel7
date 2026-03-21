@@ -61,7 +61,9 @@ String extractReleaseAssetField(const String& payload, const char* assetName, co
 }
 
 const char* preferredReleaseFirmwareAssetName() {
-#if SOUNDPANEL7_HAS_SCREEN
+#if defined(BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_7B)
+  return "soundpanel7b_ota-firmware.bin";
+#elif SOUNDPANEL7_HAS_SCREEN
   return "soundpanel7_ota-firmware.bin";
 #else
   return "soundpanel7_headless_ota-firmware.bin";
@@ -69,7 +71,14 @@ const char* preferredReleaseFirmwareAssetName() {
 }
 
 bool selectManifestOtaForCurrentProfile(const String& payload, String& otaUrl, String& otaSha256) {
-#if SOUNDPANEL7_HAS_SCREEN
+#if defined(BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_7B)
+  otaUrl = sp7json::parseString(payload, "ota7bUrl", "", false);
+  otaSha256 = sp7json::parseString(payload, "ota7bSha256", "", false);
+  if (!otaUrl.isEmpty() && otaSha256.length() == 64) return true;
+
+  otaUrl = sp7json::parseString(payload, "ota_7b.url", "", false);
+  otaSha256 = sp7json::parseString(payload, "ota_7b.sha256", "", false);
+#elif SOUNDPANEL7_HAS_SCREEN
   otaUrl = sp7json::parseString(payload, "otaScreenUrl", "", false);
   otaSha256 = sp7json::parseString(payload, "otaScreenSha256", "", false);
 #else

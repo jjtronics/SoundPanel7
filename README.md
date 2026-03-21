@@ -232,6 +232,7 @@ en labo, en studio, et en usage quotidien.
 #### 🧠 Carte principale
 
 - **Waveshare ESP32-S3-Touch-LCD-7**
+- **Waveshare ESP32-S3-Touch-LCD-7B**
 - écran tactile 7"
 - ESP32-S3
 - Wi-Fi
@@ -242,12 +243,16 @@ en labo, en studio, et en usage quotidien.
 Pour la documentation constructeur de la carte, voir aussi :
 
 - <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7</a>
+- <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7B" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7B</a>
+
+La carte `ESP32-S3-Touch-LCD-7B` utilise une géométrie d'affichage différente de la `7` (`1024x600` au lieu de `800x480`), donc elle nécessite des environnements `PlatformIO` dédiés (`soundpanel7b_usb`, `soundpanel7b_ota`) pour éviter les problèmes d'affichage.
 
 #### 🧱 Variantes matérielles supportées
 
-Le firmware gère maintenant deux profils matériels distincts via `PlatformIO` :
+Le firmware gère maintenant trois profils matériels distincts via `PlatformIO` :
 
 - `soundpanel7_usb` / `soundpanel7_ota` : profil **Waveshare 7"** avec écran tactile, UI locale LVGL, PIN local, contrôle d'affichage et admin web complète
+- `soundpanel7b_usb` / `soundpanel7b_ota` : profil **Waveshare 7B 1024x600** avec écran tactile, UI locale LVGL, PIN local, contrôle d'affichage et admin web complète
 - `soundpanel7_headless_usb` / `soundpanel7_headless_ota` : profil **ESP32-S3 standard sans écran**, pour un sonomètre **web only**
 
 En mode headless :
@@ -322,6 +327,19 @@ Notes utiles :
 - si tu branches un micro numérique sur ces pins, évite d'utiliser la carte TF en même temps
 - pour `INMP441`, relier `L/R` à `GND` pour lire le canal gauche
 
+##### Waveshare ESP32-S3-Touch-LCD-7B
+
+Le profil `soundpanel7b_*` réutilise le même câblage audio par défaut que la `Waveshare ESP32-S3-Touch-LCD-7`.
+
+| Type de micro | Signal module | GPIO firmware | Marquage visible sur la carte |
+| --- | --- | --- | --- |
+| Analog Mic (`MAX4466`) | `OUT` | `GPIO6` | `Sensor AD` |
+| PDM MEMS | `CLK` | `GPIO12` | `SCK` |
+| PDM MEMS | `DATA` | `GPIO13` | `MISO` |
+| INMP441 | `SCK / BCLK` | `GPIO12` | `SCK` |
+| INMP441 | `WS / LRCL` | `GPIO11` | `MOSI` |
+| INMP441 | `SD` | `GPIO13` | `MISO` |
+
 ##### ESP32-S3 standard headless
 
 Le profil headless cible un `ESP32-S3 DevKitC-1` ou équivalent, sans écran.
@@ -382,8 +400,11 @@ Build explicite par profil :
 
 ```bash
 pio run -e soundpanel7_usb
+pio run -e soundpanel7b_usb
 pio run -e soundpanel7_headless_usb
 ```
+
+L'environnement par défaut reste `soundpanel7_usb`. Pour une `Waveshare ESP32-S3-Touch-LCD-7B`, sélectionne explicitement `soundpanel7b_usb`.
 
 #### 4. Flasher en USB
 
@@ -391,6 +412,12 @@ L'environnement par défaut est `soundpanel7_usb`.
 
 ```bash
 pio run -e soundpanel7_usb -t upload
+```
+
+Pour une `Waveshare ESP32-S3-Touch-LCD-7B` :
+
+```bash
+pio run -e soundpanel7b_usb -t upload
 ```
 
 Pour un `ESP32-S3` standard sans écran :
@@ -411,6 +438,12 @@ Quand l'OTA est configurée sur l'appareil :
 
 ```bash
 pio run -e soundpanel7_ota -t upload
+```
+
+Version `7B` :
+
+```bash
+pio run -e soundpanel7b_ota -t upload
 ```
 
 Version headless :
@@ -897,6 +930,13 @@ Tu peux aussi passer l'IP à la volée :
 pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
 ```
 
+Pour la variante `7B` :
+
+```bash
+pio run -e soundpanel7b_ota -t upload
+pio run -e soundpanel7b_ota -t upload --upload-port 192.168.1.138
+```
+
 L'OTA `espota` suppose que le poste de build et l'appareil sont sur le même réseau joignable.
 
 #### OTA GitHub depuis l'interface web
@@ -1208,6 +1248,7 @@ lab space, recording studio, and day-to-day use.
 #### 🧠 Main board
 
 - **Waveshare ESP32-S3-Touch-LCD-7**
+- **Waveshare ESP32-S3-Touch-LCD-7B**
 - 7" touchscreen
 - ESP32-S3
 - Wi-Fi
@@ -1218,12 +1259,16 @@ lab space, recording studio, and day-to-day use.
 For the official board documentation, see also:
 
 - <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7</a>
+- <a href="https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-7B" target="_blank" rel="noopener noreferrer">Waveshare Wiki - ESP32-S3-Touch-LCD-7B</a>
+
+The `ESP32-S3-Touch-LCD-7B` uses a different display geometry than the `7` (`1024x600` instead of `800x480`), so it requires dedicated `PlatformIO` environments (`soundpanel7b_usb`, `soundpanel7b_ota`) to avoid display issues.
 
 #### 🧱 Supported hardware profiles
 
-The firmware now supports two distinct hardware profiles through `PlatformIO`:
+The firmware now supports three distinct hardware profiles through `PlatformIO`:
 
 - `soundpanel7_usb` / `soundpanel7_ota`: **Waveshare 7-inch touchscreen** profile with local LVGL UI, local PIN, display control, and full web administration
+- `soundpanel7b_usb` / `soundpanel7b_ota`: **Waveshare 7B 1024x600 touchscreen** profile with local LVGL UI, local PIN, display control, and full web administration
 - `soundpanel7_headless_usb` / `soundpanel7_headless_ota`: **standard ESP32-S3 without screen** for a **web-only sound meter**
 
 In headless mode:
@@ -1297,6 +1342,19 @@ Useful notes:
 - on the Waveshare board, `GPIO11`, `GPIO12`, and `GPIO13` are also the exposed `TF` bus labeled `MOSI`, `SCK`, `MISO`
 - if you wire a digital microphone there, avoid using the TF card at the same time
 - for `INMP441`, connect `L/R` to `GND` to read the left channel
+
+##### Waveshare ESP32-S3-Touch-LCD-7B
+
+The `soundpanel7b_*` profile reuses the same default audio wiring as the `Waveshare ESP32-S3-Touch-LCD-7`.
+
+| Microphone type | Module signal | Firmware GPIO | Board label / silk screen |
+| --- | --- | --- | --- |
+| Analog Mic (`MAX4466`) | `OUT` | `GPIO6` | `Sensor AD` |
+| PDM MEMS | `CLK` | `GPIO12` | `SCK` |
+| PDM MEMS | `DATA` | `GPIO13` | `MISO` |
+| INMP441 | `SCK / BCLK` | `GPIO12` | `SCK` |
+| INMP441 | `WS / LRCL` | `GPIO11` | `MOSI` |
+| INMP441 | `SD` | `GPIO13` | `MISO` |
 
 ##### Standard ESP32-S3 headless board
 
@@ -1374,8 +1432,11 @@ Explicit per-profile builds:
 
 ```bash
 pio run -e soundpanel7_usb
+pio run -e soundpanel7b_usb
 pio run -e soundpanel7_headless_usb
 ```
+
+The default environment remains `soundpanel7_usb`. For a `Waveshare ESP32-S3-Touch-LCD-7B`, explicitly select `soundpanel7b_usb`.
 
 #### 4. Flash over USB
 
@@ -1383,6 +1444,12 @@ The default environment is `soundpanel7_usb`.
 
 ```bash
 pio run -e soundpanel7_usb -t upload
+```
+
+For a `Waveshare ESP32-S3-Touch-LCD-7B`:
+
+```bash
+pio run -e soundpanel7b_usb -t upload
 ```
 
 For a standard `ESP32-S3` without screen:
@@ -1403,6 +1470,12 @@ Once OTA is configured on the device:
 
 ```bash
 pio run -e soundpanel7_ota -t upload
+```
+
+`7B` variant:
+
+```bash
+pio run -e soundpanel7b_ota -t upload
 ```
 
 Headless variant:
@@ -1851,6 +1924,13 @@ You can also pass the target IP directly:
 
 ```bash
 pio run -e soundpanel7_ota -t upload --upload-port 192.168.1.137
+```
+
+For the `7B` variant:
+
+```bash
+pio run -e soundpanel7b_ota -t upload
+pio run -e soundpanel7b_ota -t upload --upload-port 192.168.1.138
 ```
 
 `espota` assumes the build machine and the device are on the same reachable network.

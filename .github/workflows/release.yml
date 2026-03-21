@@ -81,6 +81,7 @@ jobs:
       - name: Build firmware
         run: |
           pio run -e soundpanel7_ota
+          pio run -e soundpanel7b_ota
           pio run -e soundpanel7_headless_ota
 
       - name: Generate release manifest
@@ -93,6 +94,7 @@ jobs:
             --repository "${REPOSITORY}" \
             --published-at "${{ steps.resolve_release_metadata.outputs.published_at }}" \
             --build-dir .pio/build/soundpanel7_ota \
+            --build-7b-dir .pio/build/soundpanel7b_ota \
             --headless-build-dir .pio/build/soundpanel7_headless_ota \
             --output .pio/build/soundpanel7_ota/release-manifest.json
 
@@ -102,6 +104,9 @@ jobs:
           cp .pio/build/soundpanel7_ota/firmware.bin .release-assets/soundpanel7_ota-firmware.bin
           cp .pio/build/soundpanel7_ota/bootloader.bin .release-assets/soundpanel7_ota-bootloader.bin
           cp .pio/build/soundpanel7_ota/partitions.bin .release-assets/soundpanel7_ota-partitions.bin
+          cp .pio/build/soundpanel7b_ota/firmware.bin .release-assets/soundpanel7b_ota-firmware.bin
+          cp .pio/build/soundpanel7b_ota/bootloader.bin .release-assets/soundpanel7b_ota-bootloader.bin
+          cp .pio/build/soundpanel7b_ota/partitions.bin .release-assets/soundpanel7b_ota-partitions.bin
           cp .pio/build/soundpanel7_headless_ota/firmware.bin .release-assets/soundpanel7_headless_ota-firmware.bin
           cp .pio/build/soundpanel7_headless_ota/bootloader.bin .release-assets/soundpanel7_headless_ota-bootloader.bin
           cp .pio/build/soundpanel7_headless_ota/partitions.bin .release-assets/soundpanel7_headless_ota-partitions.bin
@@ -130,6 +135,9 @@ jobs:
             .release-assets/soundpanel7_ota-firmware.bin \
             .release-assets/soundpanel7_ota-bootloader.bin \
             .release-assets/soundpanel7_ota-partitions.bin \
+            .release-assets/soundpanel7b_ota-firmware.bin \
+            .release-assets/soundpanel7b_ota-bootloader.bin \
+            .release-assets/soundpanel7b_ota-partitions.bin \
             .release-assets/soundpanel7_headless_ota-firmware.bin \
             .release-assets/soundpanel7_headless_ota-bootloader.bin \
             .release-assets/soundpanel7_headless_ota-partitions.bin \

@@ -239,6 +239,20 @@ private:
   void refreshCalibrationView();
   void refreshLiveControls();
   void refreshSettingsControls();
+  lv_coord_t screenWidth() const;
+  lv_coord_t screenHeight() const;
+  lv_coord_t scaleX(lv_coord_t value) const;
+  lv_coord_t scaleY(lv_coord_t value) const;
+  lv_coord_t dashboardTopHeight() const;
+  lv_coord_t dashboardContentTop() const;
+  lv_coord_t dashboardContentHeight() const;
+  lv_coord_t dashboardFullscreenCardHeight() const;
+  lv_coord_t dashboardMainCardWidth() const;
+  lv_coord_t dashboardSideCardWidth() const;
+  lv_coord_t dashboardClockWrapWidth() const;
+  lv_coord_t dashboardSoundMetricsWidth() const;
+  lv_coord_t dashboardHistoryWidth() const;
+  lv_coord_t dashboardFullscreenMargin() const;
   bool updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                           const char* dateText, const char* mainText, const char* secText);
   void layoutClockFocus();
