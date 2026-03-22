@@ -992,6 +992,34 @@ Le firmware permet aussi :
 
 Le firmware stocke ensuite les points et corrige la lecture.
 
+#### Exemple d'import JSON pour micro analogique `MAX4466`
+
+Pour réinjecter rapidement une calibration connue via l'interface web (`Configuration > Importer JSON`), voici un exemple prêt à l'emploi pour un `MAX4466` :
+
+```json
+{
+  "type": "soundpanel7-config",
+  "version": 8,
+  "audioSource": 1,
+  "calibrationPointCount": 5,
+  "calibrationCaptureSec": 3,
+  "analogBaseOffsetDb": 0,
+  "analogExtraOffsetDb": 15,
+  "calPointRefDb": [35, 50, 70, 80, 90],
+  "calPointRawLogRms": [1.3779, 1.4131, 1.9797, 2.4076, 2.9448],
+  "calPointValid": [1, 1, 1, 1, 1],
+  "analogCalibrationPointCount": 5,
+  "analogCalibrationCaptureSec": 3,
+  "analogBaseOffsetDb": 0,
+  "analogExtraOffsetDb": 15,
+  "analogCalPointRefDb": [35, 50, 70, 80, 90],
+  "analogCalPointRawLogRms": [1.3779, 1.4131, 1.9797, 2.4076, 2.9448],
+  "analogCalPointValid": [1, 1, 1, 1, 1]
+}
+```
+
+`audioSource: 1` correspond à `Analog Mic`. Cet exemple remplit à la fois la calibration active et le profil analogique persistant.
+
 #### Validation avec sonomètre de référence
 
 Une vidéo de démonstration montre le SoundPanel 7 à côté d'un vrai sonomètre professionnel,
@@ -1987,6 +2015,34 @@ The firmware also lets you:
 - keep fallback offsets in settings
 
 The firmware stores those points and applies the correction curve accordingly.
+
+#### Example JSON import for an analog `MAX4466` microphone
+
+To quickly restore a known calibration through the web UI (`Configuration > Import JSON`), here is a ready-to-use example for a `MAX4466`:
+
+```json
+{
+  "type": "soundpanel7-config",
+  "version": 8,
+  "audioSource": 1,
+  "calibrationPointCount": 5,
+  "calibrationCaptureSec": 3,
+  "analogBaseOffsetDb": 0,
+  "analogExtraOffsetDb": 15,
+  "calPointRefDb": [35, 50, 70, 80, 90],
+  "calPointRawLogRms": [1.3779, 1.4131, 1.9797, 2.4076, 2.9448],
+  "calPointValid": [1, 1, 1, 1, 1],
+  "analogCalibrationPointCount": 5,
+  "analogCalibrationCaptureSec": 3,
+  "analogBaseOffsetDb": 0,
+  "analogExtraOffsetDb": 15,
+  "analogCalPointRefDb": [35, 50, 70, 80, 90],
+  "analogCalPointRawLogRms": [1.3779, 1.4131, 1.9797, 2.4076, 2.9448],
+  "analogCalPointValid": [1, 1, 1, 1, 1]
+}
+```
+
+`audioSource: 1` maps to `Analog Mic`. This example fills both the active calibration and the persisted analog profile.
 
 #### Reference meter validation
 

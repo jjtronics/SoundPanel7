@@ -2027,7 +2027,7 @@ void WebManager::handleUiSave() {
   }
 
   SettingsStore::syncActiveCalibrationProfile(*_s);
-  _store->save(*_s);
+  _store->saveRuntimeSettings(*_s);
   applyBacklightNow(_s->backlight);
   applyTouchNow(_s->touchEnabled != 0);
   applyTardisNow();
@@ -2100,7 +2100,7 @@ void WebManager::handleCalPoint() {
   }
 
   SettingsStore::syncActiveCalibrationProfile(*_s);
-  _store->save(*_s);
+  _store->saveRuntimeSettings(*_s);
   Serial0.printf("[WEB] CAL point %d/%d saved @ %.1f dB\n", index + 1, _s->calibrationPointCount, refDb);
   replyOkJson();
 }
@@ -2115,7 +2115,7 @@ void WebManager::handleCalClear() {
 
   g_audio.clearCalibration(*_s);
   SettingsStore::syncActiveCalibrationProfile(*_s);
-  _store->save(*_s);
+  _store->saveRuntimeSettings(*_s);
   Serial0.println("[WEB] CAL cleared");
   replyOkJson();
 }
@@ -2136,7 +2136,7 @@ void WebManager::handleCalMode() {
     _s->calibrationPointCount = (uint8_t)pointCount;
     g_audio.clearCalibration(*_s);
     SettingsStore::syncActiveCalibrationProfile(*_s);
-    _store->save(*_s);
+    _store->saveRuntimeSettings(*_s);
   }
 
   Serial0.printf("[WEB] CAL mode set to %d points\n", pointCount);
@@ -2763,7 +2763,7 @@ void WebManager::handleMqttSave() {
 
   _store->saveMqttSettings(_s->mqttEnabled, _s->mqttHost, _s->mqttPort,
                           _s->mqttUsername, _s->mqttPassword, _s->mqttClientId,
-                          _s->mqttBaseTopic, _s->mqttPublishPeriodMs);
+                          _s->mqttBaseTopic, _s->mqttPublishPeriodMs, _s->mqttRetain != 0);
 
   Serial0.printf("[WEB] MQTT saved: enabled=%u host=%s port=%u clientId=%s base=%s\n",
                  (unsigned)_s->mqttEnabled,

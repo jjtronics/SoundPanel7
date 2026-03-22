@@ -19,10 +19,22 @@
 namespace {
 static constexpr const char* kEncryptedSecretPrefix = "enc:v1:";
 static constexpr const char* kPlainSecretPrefix = "raw:v1:";
-static constexpr const char* kPinHashPrefix = "h1:";
+static constexpr const char* kPinHashPrefixLegacy = "h1:";
+static constexpr const char* kPinHashPrefix = "h2:";
+static constexpr size_t kEncryptedSecretPrefixLength = 7;
+static constexpr size_t kPlainSecretPrefixLength = 7;
 static constexpr size_t kEncryptedSecretNonceLength = 12;
 static constexpr size_t kEncryptedSecretTagLength = 16;
 static constexpr size_t kSecretKeyLength = 32;
+static constexpr size_t kMaxSecretPlaintextLength = SLACK_WEBHOOK_URL_MAX_LENGTH;
+static constexpr size_t kMaxEncryptedSecretBlobLength =
+  kEncryptedSecretNonceLength + kEncryptedSecretTagLength + kMaxSecretPlaintextLength;
+static constexpr size_t kMaxStoredSecretLength =
+  kEncryptedSecretPrefixLength + (kMaxEncryptedSecretBlobLength * 2U);
+static constexpr size_t kMaxStoredPlainSecretLength =
+  kPlainSecretPrefixLength + kMaxSecretPlaintextLength;
+static constexpr size_t kMaxStoredSecretRecordLength =
+  (kMaxStoredSecretLength > kMaxStoredPlainSecretLength ? kMaxStoredSecretLength : kMaxStoredPlainSecretLength);
 static constexpr size_t kBackupChunkSize = 768;
 static constexpr uint8_t kBackupChunkMaxCount = 16;
 static constexpr const char* kBackupFilePath = "/sp7-backup.json";
@@ -227,7 +239,7 @@ String randomHex(size_t hexChars) {
   return out;
 }
 
-String hashPinValue(const char* pin, const char* saltHex) {
+String hashPinValue(const char* pin, const char* saltHex, uint32_t rounds) {
   uint8_t digest[32] = {0};
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
@@ -243,8 +255,7 @@ String hashPinValue(const char* pin, const char* saltHex) {
   };
 
   runRound(true);
-  // SECURITY: 100,000 rounds for PIN hashing (MED-04)
-  for (uint32_t i = 1; i < PIN_HASH_ROUNDS; i++) runRound(false);
+  for (uint32_t i = 1; i < rounds; i++) runRound(false);
   mbedtls_sha256_free(&ctx);
 
   String out;
@@ -253,11 +264,26 @@ String hashPinValue(const char* pin, const char* saltHex) {
   return out;
 }
 
+const char* pinHashPrefixForRecord(const char* value) {
+  if (!value) return nullptr;
+  if (strncmp(value, kPinHashPrefix, strlen(kPinHashPrefix)) == 0) return kPinHashPrefix;
+  if (strncmp(value, kPinHashPrefixLegacy, strlen(kPinHashPrefixLegacy)) == 0) return kPinHashPrefixLegacy;
+  return nullptr;
+}
+
+uint32_t pinHashRoundsForPrefix(const char* prefix) {
+  if (!prefix) return 0;
+  if (strcmp(prefix, kPinHashPrefixLegacy) == 0) return PIN_HASH_ROUNDS_LEGACY;
+  if (strcmp(prefix, kPinHashPrefix) == 0) return PIN_HASH_ROUNDS;
+  return 0;
+}
+
 bool isPinHashRecordRaw(const char* value) {
   if (!value) return false;
-  const size_t prefixLen = strlen(kPinHashPrefix);
+  const char* prefix = pinHashPrefixForRecord(value);
+  if (!prefix) return false;
+  const size_t prefixLen = strlen(prefix);
   const size_t expectedLen = prefixLen + PIN_HASH_SALT_LENGTH + 1U + PIN_HASH_LENGTH;
-  if (strncmp(value, kPinHashPrefix, prefixLen) != 0) return false;
   if (strlen(value) != expectedLen) return false;
   if (value[prefixLen + PIN_HASH_SALT_LENGTH] != ':') return false;
   for (size_t i = prefixLen; i < prefixLen + PIN_HASH_SALT_LENGTH; i++) {
@@ -278,12 +304,15 @@ bool pinCodeMatches(const char* storedPin, const char* candidate) {
   if (!storedPin || !storedPin[0] || !candidate || !candidate[0]) return false;
   if (!pinCodeIsValid(candidate)) return false;
   if (isPinHashRecordRaw(storedPin)) {
-    const size_t prefixLen = strlen(kPinHashPrefix);
+    const char* prefix = pinHashPrefixForRecord(storedPin);
+    const uint32_t rounds = pinHashRoundsForPrefix(prefix);
+    if (!prefix || rounds == 0) return false;
+    const size_t prefixLen = strlen(prefix);
     char salt[PIN_HASH_SALT_LENGTH + 1] = {0};
     char expectedHash[PIN_HASH_LENGTH + 1] = {0};
     memcpy(salt, storedPin + prefixLen, PIN_HASH_SALT_LENGTH);
     memcpy(expectedHash, storedPin + prefixLen + PIN_HASH_SALT_LENGTH + 1U, PIN_HASH_LENGTH);
-    const String computed = hashPinValue(candidate, salt);
+    const String computed = hashPinValue(candidate, salt, rounds);
     return secureEqualsRaw(expectedHash, computed.c_str());
   }
   return secureEqualsRaw(storedPin, candidate);
@@ -302,7 +331,7 @@ bool encodePinCode(const char* pin, char* out, size_t outSize) {
   if (!pinCodeIsValid(pin)) return false;
 
   const String salt = randomHex(PIN_HASH_SALT_LENGTH);
-  const String hash = hashPinValue(pin, salt.c_str());
+  const String hash = hashPinValue(pin, salt.c_str(), PIN_HASH_ROUNDS);
   const String encoded = String(kPinHashPrefix) + salt + ":" + hash;
   if (encoded.length() >= outSize) return false;
   memcpy(out, encoded.c_str(), encoded.length() + 1U);
@@ -351,6 +380,7 @@ bool SettingsStore::encryptSecret(const char* purpose, const char* plaintext, St
   if (!plaintext || !plaintext[0]) return true;
 
   const size_t len = strlen(plaintext);
+  if (len > kMaxSecretPlaintextLength) return false;
   uint8_t key[kSecretKeyLength] = {0};
   if (!deriveSecretKey(key)) return false;
 
@@ -387,7 +417,7 @@ bool SettingsStore::encryptSecret(const char* purpose, const char* plaintext, St
     return false;
   }
 
-  out.reserve(strlen(kEncryptedSecretPrefix) + ((sizeof(nonce) + sizeof(tag) + len) * 2U));
+  out.reserve(kEncryptedSecretPrefixLength + ((sizeof(nonce) + sizeof(tag) + len) * 2U));
   out += kEncryptedSecretPrefix;
   appendHex(out, nonce, sizeof(nonce));
   appendHex(out, tag, sizeof(tag));
@@ -400,48 +430,33 @@ bool SettingsStore::decryptSecret(const char* purpose, const char* stored, char*
   if (!out || outSize == 0) return false;
   out[0] = '\0';
   if (!stored || !stored[0]) return true;
-  if (strncmp(stored, kPlainSecretPrefix, strlen(kPlainSecretPrefix)) == 0) {
-    return sp7json::safeCopy(out, outSize, String(stored + strlen(kPlainSecretPrefix)));
+  if (strncmp(stored, kPlainSecretPrefix, kPlainSecretPrefixLength) == 0) {
+    return sp7json::safeCopy(out, outSize, String(stored + kPlainSecretPrefixLength));
   }
   if (!isEncryptedSecretRecord(stored)) {
     return sp7json::safeCopy(out, outSize, String(stored));
   }
 
-  const char* hex = stored + strlen(kEncryptedSecretPrefix);
+  const char* hex = stored + kEncryptedSecretPrefixLength;
   const size_t hexLen = strlen(hex);
   if ((hexLen & 1U) != 0) return false;
   const size_t blobLen = hexLen / 2U;
   if (blobLen < (kEncryptedSecretNonceLength + kEncryptedSecretTagLength)) return false;
+  if (blobLen > kMaxEncryptedSecretBlobLength) return false;
 
-  uint8_t* blob = (uint8_t*)malloc(blobLen ? blobLen : 1U);
-  uint8_t* plain = (uint8_t*)malloc((blobLen - kEncryptedSecretNonceLength - kEncryptedSecretTagLength) + 1U);
-  if (!blob || !plain) {
-    if (blob) free(blob);
-    if (plain) free(plain);
-    return false;
-  }
-  if (!decodeHex(hex, blob, blobLen)) {
-    free(blob);
-    free(plain);
-    return false;
-  }
+  uint8_t blob[kMaxEncryptedSecretBlobLength] = {0};
+  uint8_t plain[kMaxSecretPlaintextLength + 1U] = {0};
+  if (!decodeHex(hex, blob, blobLen)) return false;
 
   const size_t cipherLen = blobLen - kEncryptedSecretNonceLength - kEncryptedSecretTagLength;
-  if ((cipherLen + 1U) > outSize) {
-    free(blob);
-    free(plain);
-    return false;
-  }
+  if (cipherLen > kMaxSecretPlaintextLength) return false;
+  if ((cipherLen + 1U) > outSize) return false;
 
   const uint8_t* nonce = blob;
   const uint8_t* tag = blob + kEncryptedSecretNonceLength;
   const uint8_t* cipher = blob + kEncryptedSecretNonceLength + kEncryptedSecretTagLength;
   uint8_t key[kSecretKeyLength] = {0};
-  if (!deriveSecretKey(key)) {
-    free(blob);
-    free(plain);
-    return false;
-  }
+  if (!deriveSecretKey(key)) return false;
 
   mbedtls_gcm_context ctx;
   mbedtls_gcm_init(&ctx);
@@ -459,33 +474,38 @@ bool SettingsStore::decryptSecret(const char* purpose, const char* stored, char*
                                   plain);
   }
   mbedtls_gcm_free(&ctx);
-  if (rc != 0) {
-    free(blob);
-    free(plain);
-    return false;
-  }
+  if (rc != 0) return false;
 
   plain[cipherLen] = '\0';
   memcpy(out, plain, cipherLen + 1U);
-  free(blob);
-  free(plain);
   return true;
 }
 
 bool SettingsStore::loadSecret(const char* key, const char* purpose, char* out, size_t outSize, bool* migrated) {
   if (migrated) *migrated = false;
-  String stored = _prefs.getString(key, "");
-  if (!stored.length()) {
+  if (!out || outSize == 0) return false;
+  out[0] = '\0';
+  if (!_prefs.isKey(key)) {
+    return true;
+  }
+
+  char stored[kMaxStoredSecretRecordLength + 1U] = {0};
+  const size_t storedLen = _prefs.getString(key, stored, sizeof(stored));
+  if (storedLen == 0) {
+    Serial0.printf("[SET] Failed to load secret '%s' from NVS\n", key ? key : "?");
+    return false;
+  }
+  if (stored[0] == '\0') {
     if (outSize) out[0] = '\0';
     return true;
   }
-  if (isEncryptedSecretRecord(stored.c_str())) {
-    return decryptSecret(purpose, stored.c_str(), out, outSize);
+  if (isEncryptedSecretRecord(stored)) {
+    return decryptSecret(purpose, stored, out, outSize);
   }
-  if (strncmp(stored.c_str(), kPlainSecretPrefix, strlen(kPlainSecretPrefix)) == 0) {
-    return decryptSecret(purpose, stored.c_str(), out, outSize);
+  if (strncmp(stored, kPlainSecretPrefix, kPlainSecretPrefixLength) == 0) {
+    return decryptSecret(purpose, stored, out, outSize);
   }
-  if (!sp7json::safeCopy(out, outSize, stored)) return false;
+  if (!sp7json::safeCopy(out, outSize, String(stored))) return false;
   if (migrated) *migrated = true;
   return true;
 }
@@ -558,6 +578,9 @@ void SettingsStore::load(SettingsV1 &out) {
   uint32_t magic = _prefs.getUInt("magic", 0);
   uint16_t ver   = _prefs.getUShort("ver", 0);
   const bool versionMismatch = (ver != SETTINGS_VERSION);
+  bool timeMigrated = false;
+  bool notificationKeyMigrated = false;
+  bool homeAssistantKeyMigrated = false;
 
   if (magic != SETTINGS_MAGIC) {
     save(out);
@@ -592,6 +615,18 @@ void SettingsStore::load(SettingsV1 &out) {
   _prefs.getString("ntp", out.ntpServer, sizeof(out.ntpServer));
   out.ntpSyncIntervalMs = _prefs.getUInt("ntp_ms", out.ntpSyncIntervalMs);
   _prefs.getString("hn", out.hostname, sizeof(out.hostname));
+  if (_prefs.isKey("ntp_srv")) {
+    _prefs.getString("ntp_srv", out.ntpServer, sizeof(out.ntpServer));
+    timeMigrated = true;
+  }
+  if (_prefs.isKey("ntp_int")) {
+    out.ntpSyncIntervalMs = _prefs.getUInt("ntp_int", out.ntpSyncIntervalMs);
+    timeMigrated = true;
+  }
+  if (_prefs.isKey("hostname")) {
+    _prefs.getString("hostname", out.hostname, sizeof(out.hostname));
+    timeMigrated = true;
+  }
   bool wifiMigrated[WIFI_CREDENTIAL_MAX_COUNT] = {false, false, false, false};
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
     char keySsid[8];
@@ -664,6 +699,33 @@ void SettingsStore::load(SettingsV1 &out) {
   _prefs.getString("n_w_pid", out.whatsappPhoneNumberId, sizeof(out.whatsappPhoneNumberId));
   _prefs.getString("n_w_to", out.whatsappRecipient, sizeof(out.whatsappRecipient));
   _prefs.getString("n_w_ver", out.whatsappApiVersion, sizeof(out.whatsappApiVersion));
+  if (_prefs.isKey("n_warn")) {
+    out.notifyOnWarning = (uint8_t)_prefs.getUChar("n_warn", out.notifyOnWarning);
+    notificationKeyMigrated = true;
+  }
+  if (_prefs.isKey("n_recov")) {
+    out.notifyOnRecovery = (uint8_t)_prefs.getUChar("n_recov", out.notifyOnRecovery);
+    notificationKeyMigrated = true;
+  }
+  if (_prefs.isKey("n_t_ch")) {
+    _prefs.getString("n_t_ch", out.telegramChatId, sizeof(out.telegramChatId));
+    notificationKeyMigrated = true;
+  }
+  if (_prefs.isKey("n_w_ph")) {
+    _prefs.getString("n_w_ph", out.whatsappPhoneNumberId, sizeof(out.whatsappPhoneNumberId));
+    notificationKeyMigrated = true;
+  }
+  if (_prefs.isKey("n_w_rec")) {
+    _prefs.getString("n_w_rec", out.whatsappRecipient, sizeof(out.whatsappRecipient));
+    notificationKeyMigrated = true;
+  }
+
+  if (_prefs.isKey("ha_token")) {
+    bool legacyHaMigrated = false;
+    if (loadSecret("ha_token", "ha_token", out.homeAssistantToken, sizeof(out.homeAssistantToken), &legacyHaMigrated)) {
+      homeAssistantKeyMigrated = out.homeAssistantToken[0] != '\0' || _prefs.getString("ha_token", "").length() == 0;
+    }
+  }
 
   for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
     char keyRef[8];
@@ -695,6 +757,16 @@ void SettingsStore::load(SettingsV1 &out) {
 
   if (pinMigrated) _prefs.putString("ui_pin", out.dashboardPin);
   if (haMigrated) saveSecret("ha_tok", "ha_token", out.homeAssistantToken);
+  if (homeAssistantKeyMigrated) {
+    saveSecret("ha_tok", "ha_token", out.homeAssistantToken);
+    _prefs.remove("ha_token");
+  }
+  if (timeMigrated) {
+    saveTimeSettings(out.tz, out.ntpServer, out.ntpSyncIntervalMs, out.hostname);
+    _prefs.remove("ntp_srv");
+    _prefs.remove("ntp_int");
+    _prefs.remove("hostname");
+  }
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
     if (!wifiMigrated[i]) continue;
     char keyPass[8];
@@ -708,6 +780,18 @@ void SettingsStore::load(SettingsV1 &out) {
   if (slackMigrated) saveSecret("n_s_url", "slack_webhook", out.slackWebhookUrl);
   if (telegramMigrated) saveSecret("n_t_tok", "telegram_token", out.telegramBotToken);
   if (whatsappMigrated) saveSecret("n_w_tok", "whatsapp_token", out.whatsappAccessToken);
+  if (notificationKeyMigrated) {
+    saveNotificationSettings(out.notifyOnWarning, out.notifyOnRecovery,
+                             out.slackEnabled != 0, out.slackWebhookUrl, out.slackChannel,
+                             out.telegramEnabled != 0, out.telegramBotToken, out.telegramChatId,
+                             out.whatsappEnabled != 0, out.whatsappAccessToken, out.whatsappPhoneNumberId,
+                             out.whatsappRecipient, out.whatsappApiVersion);
+    _prefs.remove("n_warn");
+    _prefs.remove("n_recov");
+    _prefs.remove("n_t_ch");
+    _prefs.remove("n_w_ph");
+    _prefs.remove("n_w_rec");
+  }
   if (versionMismatch && ver < SETTINGS_VERSION) save(out);
 }
 
@@ -824,6 +908,54 @@ void SettingsStore::save(const SettingsV1 &s) {
 
 // Granular save methods - reduce NVS writes from ~50 to ~2-10 keys per update
 
+void SettingsStore::saveRuntimeSettings(const SettingsV1& s) {
+  SettingsV1 persisted = s;
+  syncActiveCalibrationProfile(persisted);
+
+  _prefs.putUChar("ui_bl", persisted.backlight);
+  _prefs.putUChar("th_g", persisted.th.greenMax);
+  _prefs.putUChar("th_o", persisted.th.orangeMax);
+  _prefs.putUChar("hist_m", persisted.historyMinutes);
+  _prefs.putUInt("ui_ow_ms", persisted.orangeAlertHoldMs);
+  _prefs.putUInt("ui_rw_ms", persisted.redAlertHoldMs);
+  _prefs.putUChar("ui_live", persisted.liveEnabled);
+  _prefs.putUChar("ui_touch", persisted.touchEnabled);
+  _prefs.putUChar("ui_page", persisted.dashboardPage);
+  _prefs.putUChar("ui_fsm", persisted.dashboardFullscreenMask);
+  _prefs.putUChar("td_en", persisted.tardisModeEnabled);
+  _prefs.putUChar("td_in", persisted.tardisInteriorLedEnabled);
+  _prefs.putUChar("td_ex", persisted.tardisExteriorLedEnabled);
+  _prefs.putUChar("td_im", persisted.tardisInteriorRgbMode);
+  _prefs.putUInt("td_ic", persisted.tardisInteriorRgbColor);
+
+  _prefs.putUChar("a_src", persisted.audioSource);
+  _prefs.putUShort("a_rms", persisted.analogRmsSamples);
+  _prefs.putUChar("a_resp", persisted.audioResponseMode);
+  _prefs.putFloat("a_ema", persisted.emaAlpha);
+  _prefs.putUInt("a_peak", persisted.peakHoldMs);
+  _prefs.putFloat("a_base", persisted.analogBaseOffsetDb);
+  _prefs.putFloat("a_extra", persisted.analogExtraOffsetDb);
+  _prefs.putUChar("cal_cnt", persisted.calibrationPointCount);
+  _prefs.putUInt("cal_capms", persisted.calibrationCaptureMs);
+
+  for (uint8_t i = 0; i < CALIBRATION_PROFILE_COUNT; i++) {
+    saveCalibrationProfile(_prefs, i, persisted.calibrationProfiles[i]);
+  }
+
+  for (uint8_t i = 0; i < CALIBRATION_POINT_MAX; i++) {
+    char keyRef[8];
+    char keyRaw[8];
+    char keyVal[8];
+    snprintf(keyRef, sizeof(keyRef), "c%dr", i + 1);
+    snprintf(keyRaw, sizeof(keyRaw), "c%dx", i + 1);
+    snprintf(keyVal, sizeof(keyVal), "c%dv", i + 1);
+
+    _prefs.putFloat(keyRef, persisted.calPointRefDb[i]);
+    _prefs.putFloat(keyRaw, persisted.calPointRawLogRms[i]);
+    _prefs.putUChar(keyVal, persisted.calPointValid[i]);
+  }
+}
+
 void SettingsStore::saveWifiCredentials(const WifiCredentialRecord (&credentials)[WIFI_CREDENTIAL_MAX_COUNT]) {
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
     char keySsid[8];
@@ -850,7 +982,7 @@ void SettingsStore::saveUiSettings(uint8_t backlight, uint8_t liveEnabled, uint8
   _prefs.putUChar("ui_fsm", dashboardFullscreenMask);
 }
 
-void SettingsStore::saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs) {
+void SettingsStore::saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs, bool retain) {
   _prefs.putUChar("mq_en", enabled ? 1 : 0);
   _prefs.putString("mq_host", host);
   _prefs.putUShort("mq_pt", port);
@@ -859,6 +991,7 @@ void SettingsStore::saveMqttSettings(bool enabled, const char* host, uint16_t po
   _prefs.putString("mq_cid", clientId);
   _prefs.putString("mq_base", baseTopic);
   _prefs.putUShort("mq_pubms", publishPeriodMs);
+  _prefs.putUChar("mq_ret", retain ? 1 : 0);
 }
 
 void SettingsStore::saveOtaSettings(bool enabled, uint16_t port, const char* hostname, const char* password) {
@@ -880,9 +1013,9 @@ void SettingsStore::saveAudioSettings(uint8_t audioSource, uint16_t analogRmsSam
 
 void SettingsStore::saveTimeSettings(const char* tz, const char* ntpServer, uint32_t ntpSyncIntervalMs, const char* hostname) {
   _prefs.putString("tz", tz);
-  _prefs.putString("ntp_srv", ntpServer);
-  _prefs.putUInt("ntp_int", ntpSyncIntervalMs);
-  _prefs.putString("hostname", hostname);
+  _prefs.putString("ntp", ntpServer);
+  _prefs.putUInt("ntp_ms", ntpSyncIntervalMs);
+  _prefs.putString("hn", hostname);
 }
 
 void SettingsStore::saveNotificationSettings(uint8_t notifyOnWarning, uint8_t notifyOnRecovery,
@@ -890,27 +1023,38 @@ void SettingsStore::saveNotificationSettings(uint8_t notifyOnWarning, uint8_t no
                                              bool telegramEnabled, const char* telegramBotToken, const char* telegramChatId,
                                              bool whatsappEnabled, const char* whatsappAccessToken, const char* whatsappPhoneNumberId,
                                              const char* whatsappRecipient, const char* whatsappApiVersion) {
-  _prefs.putUChar("n_warn", notifyOnWarning);
-  _prefs.putUChar("n_recov", notifyOnRecovery);
+  _prefs.putUChar("n_lvl", notifyOnWarning);
+  _prefs.putUChar("n_rec", notifyOnRecovery);
   _prefs.putUChar("n_s_en", slackEnabled ? 1 : 0);
   saveSecret("n_s_url", "slack_webhook", slackWebhookUrl);
   _prefs.putString("n_s_ch", slackChannel);
   _prefs.putUChar("n_t_en", telegramEnabled ? 1 : 0);
   saveSecret("n_t_tok", "telegram_token", telegramBotToken);
-  _prefs.putString("n_t_ch", telegramChatId);
+  _prefs.putString("n_t_chat", telegramChatId);
   _prefs.putUChar("n_w_en", whatsappEnabled ? 1 : 0);
   saveSecret("n_w_tok", "whatsapp_token", whatsappAccessToken);
-  _prefs.putString("n_w_ph", whatsappPhoneNumberId);
-  _prefs.putString("n_w_rec", whatsappRecipient);
+  _prefs.putString("n_w_pid", whatsappPhoneNumberId);
+  _prefs.putString("n_w_to", whatsappRecipient);
   _prefs.putString("n_w_ver", whatsappApiVersion);
 }
 
 void SettingsStore::saveHomeAssistantToken(const char* token) {
-  saveSecret("ha_token", "ha_token", token);
+  saveSecret("ha_tok", "ha_token", token);
 }
 
 void SettingsStore::saveDashboardPin(const char* pin) {
-  _prefs.putString("ui_pin", pin);
+  char normalized[PIN_STORAGE_MAX_LENGTH + 1U] = {0};
+  const char* source = pin ? pin : "";
+  if (strlen(source) >= sizeof(normalized)) {
+    _prefs.putString("ui_pin", "");
+    return;
+  }
+  memcpy(normalized, source, strlen(source) + 1U);
+  if (!normalizePinStorage(normalized, sizeof(normalized))) {
+    _prefs.putString("ui_pin", "");
+    return;
+  }
+  _prefs.putString("ui_pin", normalized);
 }
 
 void SettingsStore::factoryReset() {

@@ -32,9 +32,10 @@ static constexpr uint8_t PIN_CODE_MIN_LENGTH = 4;
 static constexpr uint8_t PIN_CODE_MAX_LENGTH = 8;
 static constexpr uint8_t PIN_HASH_SALT_LENGTH = 32;
 static constexpr uint8_t PIN_HASH_LENGTH = 64;
-// SECURITY: Increased from 20,000 to 100,000 rounds (MED-04)
-// Modern recommendation for PBKDF2-like key derivation
-static constexpr uint32_t PIN_HASH_ROUNDS = 100000;
+static constexpr uint32_t PIN_HASH_ROUNDS_LEGACY = 100000;
+// Touch PIN saves happen on the UI thread, so keep the KDF cost bounded enough to
+// avoid multi-second freezes on the ESP32-S3 while still storing a salted hash.
+static constexpr uint32_t PIN_HASH_ROUNDS = 8000;
 static constexpr size_t PIN_STORAGE_MAX_LENGTH = 3 + PIN_HASH_SALT_LENGTH + 1 + PIN_HASH_LENGTH;
 static constexpr uint8_t WEB_USER_MAX_COUNT = 4;
 static constexpr uint8_t WEB_USERNAME_MAX_LENGTH = 24;
@@ -293,10 +294,11 @@ public:
   void save(const SettingsV1 &s);
 
   // Granular save methods - only write what changed to reduce NVS fragmentation
+  void saveRuntimeSettings(const SettingsV1& s);
   void saveWifiCredentials(const WifiCredentialRecord (&credentials)[WIFI_CREDENTIAL_MAX_COUNT]);
   void saveThresholds(const ThresholdsV1& th);
   void saveUiSettings(uint8_t backlight, uint8_t liveEnabled, uint8_t touchEnabled, uint8_t dashboardPage, uint8_t dashboardFullscreenMask);
-  void saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs);
+  void saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs, bool retain);
   void saveOtaSettings(bool enabled, uint16_t port, const char* hostname, const char* password);
   void saveAudioSettings(uint8_t audioSource, uint16_t analogRmsSamples, uint8_t audioResponseMode, float emaAlpha, uint32_t peakHoldMs, float analogBaseOffsetDb, float analogExtraOffsetDb);
   void saveTimeSettings(const char* tz, const char* ntpServer, uint32_t ntpSyncIntervalMs, const char* hostname);

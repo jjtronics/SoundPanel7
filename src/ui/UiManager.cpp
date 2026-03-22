@@ -962,7 +962,7 @@ void UiManager::submitPinEntry() {
       setPinOverlayStatus("Erreur de securite");
       return;
     }
-    _store->save(*_s);
+    _store->saveDashboardPin(_s->dashboardPin);
     _touchPinUnlocked = true;
     refreshSettingsControls();
     closePinOverlay();
@@ -1816,7 +1816,7 @@ void UiManager::onCalibrationCapture(lv_event_t* e) {
 
   if (g_audio.captureCalibrationPoint(*self->_s, index, self->_s->calPointRefDb[index])) {
     SettingsStore::syncActiveCalibrationProfile(*self->_s);
-    self->_store->save(*self->_s);
+    self->_store->saveRuntimeSettings(*self->_s);
     self->refreshCalibrationView();
     return;
   }
@@ -1830,7 +1830,7 @@ void UiManager::onCalibrationClear(lv_event_t* e) {
 
   g_audio.clearCalibration(*self->_s);
   SettingsStore::syncActiveCalibrationProfile(*self->_s);
-  self->_store->save(*self->_s);
+  self->_store->saveRuntimeSettings(*self->_s);
   self->refreshCalibrationView();
 }
 
@@ -1850,7 +1850,7 @@ void UiManager::onCalibrationRefChanged(lv_event_t* e) {
   if (next > 110.0f) next = 110.0f;
   self->_s->calPointRefDb[index] = next;
   SettingsStore::syncActiveCalibrationProfile(*self->_s);
-  self->_store->save(*self->_s);
+  self->_store->saveRuntimeSettings(*self->_s);
   self->refreshCalibrationView();
 }
 
@@ -1866,7 +1866,7 @@ void UiManager::onCalibrationMode(lv_event_t* e) {
   self->_s->calibrationPointCount = pointCount;
   g_audio.clearCalibration(*self->_s);
   SettingsStore::syncActiveCalibrationProfile(*self->_s);
-  self->_store->save(*self->_s);
+  self->_store->saveRuntimeSettings(*self->_s);
   self->refreshCalibrationView();
 }
 
@@ -2428,7 +2428,7 @@ void UiManager::onSliderHistory(lv_event_t* e) {
   if (self->_history) self->_history->settingsChanged();
   self->refreshCalibrationView();
 
-  if (self->_store && self->_s) self->_store->save(*self->_s);
+  if (self->_store && self->_s) self->_store->saveRuntimeSettings(*self->_s);
 }
 
 void UiManager::onResponseMode(lv_event_t* e) {
@@ -2579,7 +2579,7 @@ void UiManager::onPinDisable(lv_event_t* e) {
   UiManager* self = selfFromEvent(e);
   if (!self || !self->_s || !self->_store) return;
   self->_s->dashboardPin[0] = '\0';
-  self->_store->save(*self->_s);
+  self->_store->saveDashboardPin("");
   self->_touchPinUnlocked = false;
   self->refreshSettingsControls();
 }

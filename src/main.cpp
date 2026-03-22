@@ -246,16 +246,39 @@ void setup() {
   // g_store.factoryReset();
 
   g_store.load(g_settings);
+  uint8_t wifiCredentialCount = 0;
+  for (const WifiCredentialRecord& credential : g_settings.wifiCredentials) {
+    if (credential.ssid[0]) wifiCredentialCount++;
+  }
+  Serial0.printf("[SET] ui backlight=%u touch=%u page=%u pin=%u wifiSlots=%u ota=%u slack=%u\n",
+                 (unsigned)g_settings.backlight,
+                 (unsigned)g_settings.touchEnabled,
+                 (unsigned)g_settings.dashboardPage,
+                 pinCodeIsConfigured(g_settings.dashboardPin) ? 1U : 0U,
+                 (unsigned)wifiCredentialCount,
+                 (unsigned)g_settings.otaEnabled,
+                 (unsigned)g_settings.slackEnabled);
   g_history.begin(&g_settings);
 
 #if SOUNDPANEL7_HAS_SCREEN
   g_board = new Board();
+  Serial0.println("[BOOT] board init start");
   g_board->init();
+  Serial0.println("[BOOT] board init done");
 
+#if defined(BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_7B)
+  if (auto* lcd = g_board->getLCD()) {
+    Serial0.println("[BOOT] 7B forcing RGB frame buffer count=2");
+    lcd->configFrameBufferNumber(2);
+  }
+#endif
+
+  Serial0.println("[BOOT] board begin start");
   if (!g_board->begin()) {
     Serial0.println("board->begin() failed");
     while (true) delay(1000);
   }
+  Serial0.println("[BOOT] board begin ok");
 
   lvgl_port_init(g_board->getLCD(), g_board->getTouch());
 
