@@ -157,6 +157,34 @@ For the future update-check task, the recommended flow is:
 3. choose the correct OTA entry for the current hardware profile
 4. verify the matching SHA-256 before applying the update
 
+## HTTPS Certificate Bundle
+
+GitHub OTA now uses an Espressif X.509 certificate bundle via `setCACertBundle(...)` instead of a hand-maintained PEM string.
+
+Relevant files:
+
+- `src/TrustedCerts.h`
+- `src/TrustedCertsBundle.h`
+
+If GitHub or the OTA HTTPS chain changes in the future, regenerate the bundle with the tool shipped in the Arduino-ESP32 package:
+
+```bash
+python3 ~/.platformio/packages/framework-arduinoespressif32/tools/gen_crt_bundle.py --input /path/to/cert/folder
+xxd -i x509_crt_bundle > /tmp/sp7_ca_bundle.inc
+```
+
+Current bundle contents:
+
+- `ISRG Root X1`
+- `USERTrust ECC Certification Authority`
+
+After regenerating:
+
+1. Replace the byte array in `src/TrustedCertsBundle.h`
+2. Build `pio run -e soundpanel7_usb`
+3. Validate `POST /api/release/check`
+4. Validate a real GitHub OTA install from device
+
 ## Suggested first release notes
 
 Example:

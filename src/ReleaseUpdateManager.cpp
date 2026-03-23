@@ -150,6 +150,7 @@ void ReleaseUpdateManager::setError(const String& error) {
 
 void ReleaseUpdateManager::clearInstallState() {
   cleanupInstallTransport();
+  _installDownloadUrl = "";
   _installInProgress = false;
   _installFinished = false;
   _installSucceeded = false;
@@ -351,6 +352,17 @@ void ReleaseUpdateManager::processInstall() {
     updateInstallUi(true);
     WiFi.setSleep(false);
 
+    if (_installDownloadUrl.isEmpty()) {
+      int resolvedCode = 0;
+      String resolvedError;
+      String resolvedUrl;
+      if (resolveGithubAssetUrl(String(_otaUrl), resolvedUrl, resolvedCode, resolvedError) && !resolvedUrl.isEmpty()) {
+        _installDownloadUrl = resolvedUrl;
+      } else {
+        _installDownloadUrl = String(_otaUrl);
+      }
+    }
+
     _installClient = new WiFiClientSecure();
     _installHttp = new HTTPClient();
     if (!_installClient || !_installHttp) {
@@ -368,7 +380,7 @@ void ReleaseUpdateManager::processInstall() {
     _installHttp->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     _installHttp->setReuse(false);
     _installHttp->setUserAgent(String("SoundPanel7/") + SOUNDPANEL7_VERSION);
-    if (!_installHttp->begin(*_installClient, _otaUrl)) {
+    if (!_installHttp->begin(*_installClient, _installDownloadUrl)) {
       cleanupInstallTransport();
       finishInstall(false, "ota request init failed");
       return;
@@ -571,6 +583,63 @@ bool ReleaseUpdateManager::fetchUrl(const String& url, String& payload, int& htt
   }
 
   return true;
+}
+
+bool ReleaseUpdateManager::resolveGithubAssetUrl(const String& url, String& resolvedUrl, int& httpCode, String& error) {
+  resolvedUrl = url;
+  httpCode = 0;
+  error = "";
+
+  if (!url.startsWith("https://github.com/")) {
+    return true;
+  }
+
+  WiFi.setSleep(false);
+  WiFiClientSecure client;
+  configureSecureClient(client);
+  client.setTimeout(kHttpTimeoutMs);
+
+  HTTPClient http;
+  http.setConnectTimeout(kHttpConnectTimeoutMs);
+  http.setTimeout(kHttpTimeoutMs);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  http.setReuse(false);
+  http.setUserAgent(String("SoundPanel7/") + SOUNDPANEL7_VERSION);
+
+  const char* headerKeys[] = {"Location"};
+  http.collectHeaders(headerKeys, 1);
+
+  if (!http.begin(client, url)) {
+    error = "resolve init failed";
+    return false;
+  }
+
+  httpCode = http.sendRequest("HEAD");
+  if (httpCode == HTTP_CODE_FOUND || httpCode == HTTP_CODE_MOVED_PERMANENTLY ||
+      httpCode == HTTP_CODE_TEMPORARY_REDIRECT || httpCode == HTTP_CODE_PERMANENT_REDIRECT) {
+    const String location = http.header("Location");
+    http.end();
+    if (location.isEmpty()) {
+      error = "redirect missing location";
+      return false;
+    }
+    resolvedUrl = location;
+    return true;
+  }
+
+  if (httpCode == HTTP_CODE_OK) {
+    http.end();
+    return true;
+  }
+
+  error = "resolve http ";
+  error += String(httpCode);
+  if (httpCode < 0) {
+    error += " ";
+    error += http.errorToString(httpCode);
+  }
+  http.end();
+  return false;
 }
 
 bool ReleaseUpdateManager::parseLatestReleaseApiPayload(const String& payload) {

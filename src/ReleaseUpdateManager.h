@@ -77,6 +77,7 @@ private:
 
   bool fetchManifest(String& payload);
   bool fetchUrl(const String& url, String& payload, int& httpCode, String& error);
+  bool resolveGithubAssetUrl(const String& url, String& resolvedUrl, int& httpCode, String& error);
   bool parseLatestReleaseApiPayload(const String& payload);
   bool fetchManifestViaLatestReleaseApi(String& payload, int& httpCode, String& error);
   bool parseManifest(const String& payload);
@@ -102,6 +103,7 @@ private:
   mbedtls_sha256_context _installSha = {};
   bool _installShaActive = false;
   uint8_t _installBuffer[kInstallChunkSize] = {};
+  String _installDownloadUrl;
   Preferences _prefs;
   bool _prefsReady = false;
   uint8_t _lastInstallUiProgressPct = 255;
