@@ -4130,6 +4130,23 @@ R"HTML(
       .histScale{width:52px;flex-basis:52px}
       .histBars{gap:1px}
     }
+    .secretModal{
+      position:fixed;inset:0;z-index:1200;
+      display:flex;align-items:center;justify-content:center;
+      padding:20px;background:rgba(7,12,26,.72);backdrop-filter:blur(8px);
+    }
+    .secretModal.hidden{display:none}
+    .secretModalCard{
+      width:min(100%,420px);
+      background:linear-gradient(180deg,rgba(14,23,46,.97),rgba(8,15,31,.98));
+      border:1px solid rgba(114,147,198,.24);
+      border-radius:22px;
+      box-shadow:0 28px 70px rgba(0,0,0,.45);
+      padding:22px;
+    }
+    .secretModalTitle{font-size:20px;font-weight:700;margin:0 0 8px}
+    .secretModalLead{color:var(--muted);font-size:14px;line-height:1.5;margin-bottom:16px}
+    .secretModalActions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
   </style>
 </head>
 <body>
@@ -4152,6 +4169,22 @@ R"HTML(
         <button class="btn accent" id="authSubmitBtn">Se connecter</button>
       </div>
       <div class="toast" id="authToast"></div>
+    </div>
+  </div>
+  <div class="secretModal hidden" id="secretModal" aria-hidden="true">
+    <div class="secretModalCard">
+      <div class="sectionKicker">Confirmation</div>
+      <h2 class="secretModalTitle" id="secretModalTitle">Confirme ton mot de passe</h2>
+      <div class="secretModalLead" id="secretModalLead">Saisis ton mot de passe pour continuer.</div>
+      <div class="field">
+        <label for="secretModalPassword">Mot de passe</label>
+        <input id="secretModalPassword" type="password" autocomplete="current-password" placeholder="Mot de passe"/>
+      </div>
+      <div class="toast" id="secretModalToast"></div>
+      <div class="secretModalActions">
+        <button class="btn" id="secretModalCancelBtn" type="button">Annuler</button>
+        <button class="btn accent" id="secretModalConfirmBtn" type="button">Continuer</button>
+      </div>
     </div>
   </div>
   <div class="top">
@@ -7004,6 +7037,72 @@ R"HTML(
     return `soundpanel7-config-full-clear-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
   }
 
+  function requestPasswordConfirmation(title, lead) {
+    return new Promise((resolve) => {
+      const modal = $("secretModal");
+      const titleEl = $("secretModalTitle");
+      const leadEl = $("secretModalLead");
+      const input = $("secretModalPassword");
+      const toast = $("secretModalToast");
+      const confirmBtn = $("secretModalConfirmBtn");
+      const cancelBtn = $("secretModalCancelBtn");
+      const previousActive = document.activeElement;
+
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        modal.classList.add("hidden");
+        modal.setAttribute("aria-hidden", "true");
+        input.value = "";
+        toast.textContent = "";
+        input.removeEventListener("keydown", onKeyDown);
+        modal.removeEventListener("click", onBackdropClick);
+        confirmBtn.removeEventListener("click", onConfirm);
+        cancelBtn.removeEventListener("click", onCancel);
+        document.removeEventListener("keydown", onEscape);
+        if (previousActive && typeof previousActive.focus === "function") previousActive.focus();
+        resolve(value);
+      };
+
+      const onConfirm = () => {
+        const password = String(input.value || "");
+        if (!password.trim()) {
+          toast.textContent = "Mot de passe requis.";
+          input.focus();
+          return;
+        }
+        finish(password);
+      };
+      const onCancel = () => finish(null);
+      const onBackdropClick = (event) => {
+        if (event.target === modal) finish(null);
+      };
+      const onEscape = (event) => {
+        if (event.key === "Escape") finish(null);
+      };
+      const onKeyDown = (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onConfirm();
+        }
+      };
+
+      titleEl.textContent = title;
+      leadEl.textContent = lead;
+      toast.textContent = "";
+      input.value = "";
+      modal.classList.remove("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      confirmBtn.addEventListener("click", onConfirm);
+      cancelBtn.addEventListener("click", onCancel);
+      modal.addEventListener("click", onBackdropClick);
+      document.addEventListener("keydown", onEscape);
+      input.addEventListener("keydown", onKeyDown);
+      setTimeout(() => input.focus(), 0);
+    });
+  }
+
   async function exportConfig() {
     setToast("configToast", "Export...");
     try {
@@ -7025,9 +7124,15 @@ R"HTML(
     );
     if (!confirmed) return;
 
+    const password = await requestPasswordConfirmation(
+      "Confirme ton mot de passe",
+      "Ce fichier contiendra les mots de passe et tokens en clair. Saisis ton mot de passe web pour autoriser cet export."
+    );
+    if (password === null) return;
+
     setToast("configToast", "Export complet dangereux...");
     try {
-      const cfg = await apiGet("/api/config/export_full");
+      const cfg = await apiPost("/api/config/export_full", { password });
       const text = JSON.stringify(cfg, null, 2);
       $("configJsonBox").value = text;
       downloadTextFile(exportFullFilename(), text);
