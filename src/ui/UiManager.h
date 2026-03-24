@@ -37,7 +37,7 @@ private:
   static constexpr uint32_t RED_HISTORY_SAMPLE_MS = 1000;
   static constexpr uint32_t SOUND_UI_UPDATE_MS = 160;
   static constexpr uint32_t UI_TICK_PERIOD_MS = 250;
-  static constexpr uint32_t CLOCK_UI_UPDATE_MS = 20;
+  static constexpr uint32_t CLOCK_UI_UPDATE_MS = 33;
   static constexpr uint32_t CLOCK_DISPLAY_PHASE_MS = 900;
   static constexpr uint32_t SETTINGS_UI_UPDATE_MS = 1000;
   static constexpr uint32_t CALIBRATION_UI_UPDATE_MS = 250;
@@ -96,7 +96,9 @@ private:
   lv_obj_t* _lblClockStatusFocus = nullptr;
   lv_obj_t* _clockCardFocus = nullptr;
   lv_obj_t* _clockWrapFocus = nullptr;
+  lv_obj_t* _clockGroupFocus = nullptr;
   lv_obj_t* _liveBadge = nullptr;
+  lv_obj_t* _liveTextWrap = nullptr;
   lv_obj_t* _lblLiveBadge = nullptr;
   lv_obj_t* _lblLiveStatus = nullptr;
   lv_obj_t* _lblLiveHint = nullptr;
@@ -213,6 +215,8 @@ private:
   uint8_t _lastCalibrationActiveCount = 0;
   uint8_t _lastLiveEnabled = 255;
   uint8_t _requestedDashPage = UINT8_MAX;
+  bool _pendingUiSave = false;
+  uint32_t _pendingUiSaveAtMs = 0;
 
   void buildDashboard();
   void buildOtaStatusScreen();
@@ -253,6 +257,9 @@ private:
   lv_coord_t dashboardSoundMetricsWidth() const;
   lv_coord_t dashboardHistoryWidth() const;
   lv_coord_t dashboardFullscreenMargin() const;
+  uint16_t dashboardCardContentScalePct() const;
+  uint16_t dashboardCardContentZoom() const;
+  lv_coord_t dashboardCardContentScale(lv_coord_t value) const;
   bool updateClockDisplay(lv_obj_t* lblDate, lv_obj_t* lblMain, lv_obj_t* lblSec,
                           const char* dateText, const char* mainText, const char* secText);
   void layoutClockFocus();

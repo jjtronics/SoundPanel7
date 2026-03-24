@@ -61,8 +61,8 @@
    HAL SETTINGS
  *====================*/
 
-#define LV_DISP_DEF_REFR_PERIOD 30
-#define LV_INDEV_DEF_READ_PERIOD 30
+#define LV_DISP_DEF_REFR_PERIOD 16
+#define LV_INDEV_DEF_READ_PERIOD 16
 
 #define LV_TICK_CUSTOM 0
 #if LV_TICK_CUSTOM

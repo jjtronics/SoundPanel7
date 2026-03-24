@@ -792,6 +792,7 @@ void WebManager::routes() {
   _srv.on("/api/homeassistant", kSyncHttpGet, [this]() { handleHomeAssistantGet(); });
   _srv.on("/api/homeassistant", kSyncHttpPost, [this]() { handleHomeAssistantSave(); });
   _srv.on("/api/homeassistant/reveal", kSyncHttpGet, [this]() { handleHomeAssistantReveal(); });
+  _srv.on("/api/secret/reveal", kSyncHttpGet, [this]() { handleSecretReveal(); });
   _srv.on("/api/status", kSyncHttpGet, [this]() { handleStatus(); });
   _srv.on("/api/system", kSyncHttpGet, [this]() { handleSystemSummary(); });
 
@@ -1831,6 +1832,7 @@ void WebManager::handleHomeAssistantGet() {
   json.reserve(160);
   json += "{";
   appendBoolField(json, "tokenConfigured", homeAssistantTokenConfigured());
+  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken);
   sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
   sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
   json += "}";
@@ -1870,6 +1872,7 @@ void WebManager::handleHomeAssistantSave() {
   json += "{";
   json += "\"ok\":true,";
   appendBoolField(json, "tokenConfigured", homeAssistantTokenConfigured());
+  sp7json::appendEscapedField(json, "token", _s->homeAssistantToken);
   sp7json::appendEscapedField(json, "statusPath", "/api/ha/status");
   sp7json::appendEscapedField(json, "authScheme", "Bearer", false);
   json += "}";
@@ -1889,6 +1892,42 @@ void WebManager::handleHomeAssistantReveal() {
   json.reserve(128);
   json += "{";
   sp7json::appendEscapedField(json, "token", _s->homeAssistantToken, false);
+  json += "}";
+  replyJson(200, json);
+}
+
+const char* WebManager::secretValueForReveal(const String& name) const {
+  if (!_s) return nullptr;
+
+  if (name == "homeAssistantToken") return _s->homeAssistantToken;
+  if (name == "wifiPassword1") return _s->wifiCredentials[0].password;
+  if (name == "wifiPassword2") return _s->wifiCredentials[1].password;
+  if (name == "wifiPassword3") return _s->wifiCredentials[2].password;
+  if (name == "wifiPassword4") return _s->wifiCredentials[3].password;
+  if (name == "otaPassword") return _s->otaPassword;
+  if (name == "mqttPassword") return _s->mqttPassword;
+  if (name == "slackWebhookUrl") return _s->slackWebhookUrl;
+  if (name == "telegramBotToken") return _s->telegramBotToken;
+  if (name == "whatsappAccessToken") return _s->whatsappAccessToken;
+
+  return nullptr;
+}
+
+void WebManager::handleSecretReveal() {
+  if (!requireWebAuth()) return;
+  if (!requireSettingsJson()) return;
+
+  const String name = _srv.arg("name");
+  const char* value = secretValueForReveal(name);
+  if (!value) {
+    replyErrorJson(404, "secret not found");
+    return;
+  }
+
+  String json;
+  json.reserve(192);
+  json += "{";
+  sp7json::appendEscapedField(json, "value", value, false);
   json += "}";
   replyJson(200, json);
 }
@@ -2176,6 +2215,7 @@ void WebManager::handleWifiGet() {
     json += "{";
     json += "\"slot\":"; json += String(i + 1); json += ",";
     sp7json::appendEscapedField(json, "ssid", _s->wifiCredentials[i].ssid);
+    sp7json::appendEscapedField(json, "password", _s->wifiCredentials[i].password);
     json += "\"passwordConfigured\":";
     json += strlen(_s->wifiCredentials[i].password) ? "true" : "false";
     json += "}";
@@ -2489,6 +2529,7 @@ void WebManager::handleOtaGet() {
   json += "\"enabled\":"; json += (_s->otaEnabled ? "true" : "false"); json += ",";
   json += "\"port\":"; json += String(_s->otaPort); json += ",";
   sp7json::appendEscapedField(json, "hostname", _s->otaHostname);
+  sp7json::appendEscapedField(json, "password", _s->otaPassword);
   json += "\"passwordConfigured\":"; json += (strlen(_s->otaPassword) ? "true" : "false");
   json += "}";
 
@@ -2667,6 +2708,7 @@ void WebManager::handleMqttGet() {
   sp7json::appendEscapedField(json, "baseTopic", _s->mqttBaseTopic);
   json += "\"publishPeriodMs\":"; json += String(_s->mqttPublishPeriodMs); json += ",";
   json += "\"retain\":"; json += (_s->mqttRetain ? "true" : "false"); json += ",";
+  sp7json::appendEscapedField(json, "password", _s->mqttPassword);
   json += "\"passwordConfigured\":"; json += (strlen(_s->mqttPassword) ? "true" : "false");
   json += "}";
 
@@ -3150,7 +3192,7 @@ String WebManager::notificationsJson(bool includeSecrets) const {
 void WebManager::handleNotificationsGet() {
   if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
-  replyJson(200, notificationsJson(false));
+  replyJson(200, notificationsJson(true));
 }
 
 void WebManager::handleDebugLogsGet() {
@@ -3875,6 +3917,9 @@ R"HTML(
     }
     textarea{min-height:220px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
     .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .secretFieldRow{display:flex;gap:8px;align-items:center}
+    .secretFieldRow input{flex:1}
+    .secretToggleBtn{width:48px;min-width:48px;padding:0}
     .btn{
       appearance:none;border:1px solid var(--line);background:#172133;color:var(--txt);
       padding:10px 14px;border-radius:12px;font-weight:800;cursor:pointer;
@@ -4162,7 +4207,10 @@ R"HTML(
       </div>
       <div class="field">
         <label>Mot de passe</label>
-        <input id="authPassword" type="password" autocomplete="current-password" placeholder="Mot de passe"/>
+        <div class="secretFieldRow">
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="Mot de passe"/>
+          <button type="button" id="toggleAuthPasswordBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+        </div>
       </div>
       <div class="authHintStrong" id="authPasswordHint">Mot de passe conseille: 10+ caracteres avec 3 types parmi majuscule, minuscule, chiffre, symbole.</div>
       <div class="authActions">
@@ -4178,7 +4226,10 @@ R"HTML(
       <div class="secretModalLead" id="secretModalLead">Saisis ton mot de passe pour continuer.</div>
       <div class="field">
         <label for="secretModalPassword">Mot de passe</label>
-        <input id="secretModalPassword" type="password" autocomplete="current-password" placeholder="Mot de passe"/>
+        <div class="secretFieldRow">
+          <input id="secretModalPassword" type="password" autocomplete="current-password" placeholder="Mot de passe"/>
+          <button type="button" id="toggleSecretModalPasswordBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+        </div>
       </div>
       <div class="toast" id="secretModalToast"></div>
       <div class="secretModalActions">
@@ -4613,7 +4664,7 @@ R"HTML(
                     <div class="settingsSurfaceBlock" id="settings-display">
                       <div class="settingsSubhead">
                         <div>
-                          <h3 class="settingsSubtitle">Ecran tactile & diffusion LIVE</h3>
+                          <h3 class="settingsSubtitle">Ecran tactile & diffusion ON AIR</h3>
                         </div>
                       </div>
                       <div class="settingsSplit">
@@ -4634,7 +4685,7 @@ R"HTML(
                             <select id="dashboardPageAdv">
                               <option value="0">Principal</option>
                               <option value="1">Horloge</option>
-                              <option value="2">LIVE</option>
+                              <option value="2">ON AIR</option>
                               <option value="3">Sonometre</option>
                             </select>
                             <div class="hint">Change immediatement l'ecran affiche sur le panneau tactile.</div>
@@ -4657,7 +4708,7 @@ R"HTML(
                             <div class="choiceRow">
                               <button class="btn choice" id="dashboardFsOverview" data-dashboard-fullscreen="0" type="button" aria-pressed="false">Principal</button>
                               <button class="btn choice" id="dashboardFsClock" data-dashboard-fullscreen="1" type="button" aria-pressed="false">Horloge</button>
-                              <button class="btn choice" id="dashboardFsLive" data-dashboard-fullscreen="2" type="button" aria-pressed="false">LIVE</button>
+                              <button class="btn choice" id="dashboardFsLive" data-dashboard-fullscreen="2" type="button" aria-pressed="false">ON AIR</button>
                               <button class="btn choice" id="dashboardFsSound" data-dashboard-fullscreen="3" type="button" aria-pressed="false">Sonometre</button>
                             </div>
                             <div class="hint">Masque la barre du haut uniquement sur l'ecran tactile 7 pouces pour les vues selectionnees.</div>
@@ -4665,7 +4716,7 @@ R"HTML(
                         </div>
                         <div>
                           <div class="liveActionWrap">
-                            <button class="btn liveAction" id="liveActionBtn" aria-pressed="false">LIVE</button>
+                            <button class="btn liveAction" id="liveActionBtn" aria-pressed="false">ON AIR</button>
                             <div class="liveActionMeta">
                               <div>Flag broadcast tactile, API et MQTT</div>
                               <div class="liveActionState" id="liveActionState">OFF AIR</div>
@@ -4884,7 +4935,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Reseau 1 mot de passe</label>
-                            <input id="wifiPassword1" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                            <div class="secretFieldRow">
+                              <input id="wifiPassword1" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                              <button type="button" id="toggleWifiPassword1Btn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                           </div>
                           <div class="field">
                             <label>Reseau 2 SSID</label>
@@ -4892,7 +4946,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Reseau 2 mot de passe</label>
-                            <input id="wifiPassword2" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                            <div class="secretFieldRow">
+                              <input id="wifiPassword2" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                              <button type="button" id="toggleWifiPassword2Btn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                           </div>
                         </div>
                         <div>
@@ -4902,7 +4959,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Reseau 3 mot de passe</label>
-                            <input id="wifiPassword3" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                            <div class="secretFieldRow">
+                              <input id="wifiPassword3" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                              <button type="button" id="toggleWifiPassword3Btn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                           </div>
                           <div class="field">
                             <label>Reseau 4 SSID</label>
@@ -4910,7 +4970,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Reseau 4 mot de passe</label>
-                            <input id="wifiPassword4" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                            <div class="secretFieldRow">
+                              <input id="wifiPassword4" type="password" maxlength="64" placeholder="laisser vide = reseau ouvert"/>
+                              <button type="button" id="toggleWifiPassword4Btn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -4940,9 +5003,9 @@ R"HTML(
                       </div>
                       <div class="field">
                         <label>Bearer token Home Assistant</label>
-                        <div style="display:flex;gap:8px;">
+                        <div class="secretFieldRow">
                           <input id="homeAssistantTokenAdv" type="password" autocomplete="off" maxlength="64" placeholder="genere ou colle un token" style="flex:1;"/>
-                          <button type="button" id="toggleHomeAssistantTokenBtn" class="btn" style="width:48px;padding:0;" title="Afficher/Masquer">👁️</button>
+                          <button type="button" id="toggleHomeAssistantTokenBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
                         </div>
                       </div>
                       <div class="hint mono" id="homeAssistantStatusAdv">Token: --</div>
@@ -4984,7 +5047,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Password</label>
-                            <input id="mqttPasswordAdv" type="password" placeholder="laisser vide si non utilise"/>
+                            <div class="secretFieldRow">
+                              <input id="mqttPasswordAdv" type="password" placeholder="laisser vide si non utilise"/>
+                              <button type="button" id="toggleMqttPasswordAdvBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                           </div>
                         </div>
                         <div>
@@ -5069,9 +5135,9 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Slack incoming webhook</label>
-                            <div style="display:flex;gap:8px;">
+                            <div class="secretFieldRow">
                               <input id="slackWebhookUrlAdv" type="password" placeholder="https://hooks.slack.com/services/..." style="flex:1;"/>
-                              <button type="button" id="toggleSlackWebhookBtn" class="btn" style="width:48px;padding:0;" title="Afficher/Masquer">👁️</button>
+                              <button type="button" id="toggleSlackWebhookBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
                             </div>
                             <div class="hint">Laisse vide pour conserver l'URL deja stockee.</div>
                           </div>
@@ -5095,7 +5161,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Telegram bot token</label>
-                            <input id="telegramBotTokenAdv" type="password" placeholder="123456:ABCDEF..."/>
+                            <div class="secretFieldRow">
+                              <input id="telegramBotTokenAdv" type="password" placeholder="123456:ABCDEF..."/>
+                              <button type="button" id="toggleTelegramBotTokenAdvBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -5124,7 +5193,10 @@ R"HTML(
                           </div>
                           <div class="field">
                             <label>Access token Meta</label>
-                            <input id="whatsappAccessTokenAdv" type="password" placeholder="EAA..."/>
+                            <div class="secretFieldRow">
+                              <input id="whatsappAccessTokenAdv" type="password" placeholder="EAA..."/>
+                              <button type="button" id="toggleWhatsappAccessTokenAdvBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                            </div>
                             <div class="hint">Selon la politique Meta, certains envois WhatsApp peuvent necessiter des templates approuves.</div>
                           </div>
                         </div>
@@ -5230,7 +5302,10 @@ R"HTML(
                       </div>
                       <div class="field">
                         <label>Mot de passe OTA</label>
-                        <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
+                        <div class="secretFieldRow">
+                          <input id="otaPasswordAdv" type="password" placeholder="laisser vide = aucun mot de passe"/>
+                          <button type="button" id="toggleOtaPasswordAdvBtn" class="btn secretToggleBtn" title="Afficher ou masquer">👁️</button>
+                        </div>
                       </div>
                       <div class="btnRow">
                         <button class="btn accent" id="saveOtaAdv">Sauver OTA</button>
@@ -5353,7 +5428,7 @@ R"HTML(
                 <a class="settingsJumpLink" href="#settings-controls">
                   <div class="settingsJumpMain">
                     <div class="settingsJumpTitle">Exploitation</div>
-                    <div class="settingsJumpMeta">Seuils, LIVE, ecran tactile, PIN et comptes web</div>
+                    <div class="settingsJumpMeta">Seuils, ON AIR, ecran tactile, PIN et comptes web</div>
                   </div>
                   <div class="settingsJumpArrow">+</div>
                 </a>
@@ -6563,7 +6638,48 @@ R"HTML(
 
   function resetPasswordField(id, configuredPlaceholder, emptyPlaceholder, configured) {
     $(id).value = "";
+    $(id).type = "password";
     $(id).placeholder = configured ? configuredPlaceholder : emptyPlaceholder;
+  }
+
+  function setSecretCache(id, value) {
+    $(id).dataset.secretValue = String(value || "");
+  }
+
+  function syncSecretToggleButton(buttonId, visible) {
+    const btn = $(buttonId);
+    if (!btn) return;
+    btn.textContent = "👁️";
+    btn.title = visible ? "Masquer" : "Afficher";
+  }
+
+  async function toggleSecretField(inputId, buttonId, options = {}) {
+    const input = $(inputId);
+    if (!input) return;
+
+    const visibleType = options.visibleType || "text";
+    const configuredFlag = options.configuredFlag || "keepSecret";
+    const configured = input.dataset[configuredFlag] === "1";
+    const isHidden = input.type === "password";
+
+    if (isHidden) {
+      if (!String(input.value || "").length) {
+        const cachedValue = String(input.dataset.secretValue || "");
+        if (cachedValue.length) {
+          input.value = cachedValue;
+        } else if (options.revealName && configured) {
+          const result = await apiGet(`/api/secret/reveal?name=${encodeURIComponent(options.revealName)}`);
+          input.value = result.value || "";
+          input.dataset.secretValue = input.value || "";
+        }
+      }
+      input.type = visibleType;
+      syncSecretToggleButton(buttonId, true);
+      return;
+    }
+
+    input.type = "password";
+    syncSecretToggleButton(buttonId, false);
   }
 
   async function postAction(url, successMessage, toastId = "actionsToast") {
@@ -7209,13 +7325,13 @@ R"HTML(
     const configured = Boolean(config.tokenConfigured);
     const input = $("homeAssistantTokenAdv");
     setSecretField("homeAssistantTokenAdv", configured, "********", "genere ou colle un token");
-    input.type = "password";
+    setSecretCache("homeAssistantTokenAdv", config.token || "");
     $("homeAssistantStatusAdv").textContent = configured
       ? "Token actif"
       : "Token: non configure";
     $("homeAssistantPathAdv").textContent = `Endpoint HA: ${config.statusPath || "/api/ha/status"} (${config.authScheme || "Bearer"})`;
     $("clearHomeAssistantTokenBtn").disabled = !configured;
-    $("toggleHomeAssistantTokenBtn").disabled = !configured;
+    syncSecretToggleButton("toggleHomeAssistantTokenBtn", false);
   }
 
   async function loadHomeAssistantSettings() {
@@ -7244,31 +7360,12 @@ R"HTML(
   }
 
   async function toggleHomeAssistantToken() {
-    const input = $("homeAssistantTokenAdv");
-    const isHidden = input.type === "password";
-
-    if (isHidden) {
-      // Afficher le token
-      const tokenConfigured = input.dataset.keepSecret === "1";
-      if (!tokenConfigured) {
-        return; // Pas de token configuré à afficher
-      }
-
-      try {
-        const result = await apiGet("/api/homeassistant/reveal");
-        input.value = result.token || "";
-        input.type = "text";
-        input.dataset.keepSecret = "0";
-      } catch (err) {
-        console.error("Erreur lors de la récupération du token:", err);
-      }
-    } else {
-      // Masquer le token
-      input.value = "";
-      input.placeholder = "********";
-      input.type = "password";
-      input.dataset.keepSecret = "1";
-    }
+    await toggleSecretField("homeAssistantTokenAdv", "toggleHomeAssistantTokenBtn", {
+      revealName: "homeAssistantToken",
+      configuredPlaceholder: "********",
+      emptyPlaceholder: "genere ou colle un token",
+      clearOnHide: true
+    });
   }
 
   async function generateHomeAssistantToken() {
@@ -7293,31 +7390,12 @@ R"HTML(
   }
 
   async function toggleSlackWebhook() {
-    const input = $("slackWebhookUrlAdv");
-    const isHidden = input.type === "password";
-
-    if (isHidden) {
-      // Afficher le webhook
-      const webhookConfigured = input.dataset.keepSecret === "1";
-      if (!webhookConfigured) {
-        return; // Pas de webhook configuré à afficher
-      }
-
-      try {
-        const result = await apiGet("/api/slack/reveal");
-        input.value = result.webhookUrl || "";
-        input.type = "text";
-        input.dataset.keepSecret = "0";
-      } catch (err) {
-        console.error("Erreur lors de la récupération du webhook:", err);
-      }
-    } else {
-      // Masquer le webhook
-      input.value = "";
-      input.placeholder = "https://hooks.slack.com/services/...";
-      input.type = "password";
-      input.dataset.keepSecret = "1";
-    }
+    await toggleSecretField("slackWebhookUrlAdv", "toggleSlackWebhookBtn", {
+      revealName: "slackWebhookUrl",
+      configuredPlaceholder: "********",
+      emptyPlaceholder: "https://hooks.slack.com/services/...",
+      clearOnHide: true
+    });
   }
 
   async function saveTimeSettings() {
@@ -7329,11 +7407,13 @@ R"HTML(
       }), "Heure sauvee.", () => refreshStatus());
   }
 
-  function setWifiPasswordField(slot, configured, ssid) {
+  function setWifiPasswordField(slot, configured, ssid, password = "") {
     const id = `wifiPassword${slot}`;
     resetPasswordField(id, "********", "laisser vide = reseau ouvert", configured);
     $(id).dataset.keepPassword = configured ? "1" : "0";
     $(id).dataset.initialSsid = ssid || "";
+    setSecretCache(id, password);
+    syncSecretToggleButton(`toggleWifiPassword${slot}Btn`, false);
   }
 
   async function loadWifiSettings() {
@@ -7344,7 +7424,7 @@ R"HTML(
         const network = networks[slot - 1] || {};
         const ssid = String(network.ssid || "");
         setFieldValue(`wifiSsid${slot}`, ssid);
-        setWifiPasswordField(slot, Boolean(network.passwordConfigured), ssid);
+        setWifiPasswordField(slot, Boolean(network.passwordConfigured), ssid, network.password || "");
       }
       const current = w.connected ? (w.currentSsid || "(SSID inconnu)") : "hors ligne";
       $("wifiSummaryAdv").textContent = `Connexion: ${current}`;
@@ -7377,6 +7457,9 @@ R"HTML(
       setFieldValue("otaHostnameAdv", o.hostname);
       setNumericFieldValue("otaPortAdv", o.port, 3232);
       resetPasswordField("otaPasswordAdv", "********", "laisser vide = aucun mot de passe", o.passwordConfigured);
+      $("otaPasswordAdv").dataset.keepPassword = o.passwordConfigured ? "1" : "0";
+      setSecretCache("otaPasswordAdv", o.password || "");
+      syncSecretToggleButton("toggleOtaPasswordAdvBtn", false);
     } catch (err) {
       setToastError("toastOtaAdv", err);
     }
@@ -7630,6 +7713,8 @@ R"HTML(
       setFieldValue("mqttUsernameAdv", m.username);
       resetPasswordField("mqttPasswordAdv", "********", "laisser vide si non utilise", m.passwordConfigured);
       $("mqttPasswordAdv").dataset.keepPassword = m.passwordConfigured ? "1" : "0";
+      setSecretCache("mqttPasswordAdv", m.password || "");
+      syncSecretToggleButton("toggleMqttPasswordAdvBtn", false);
       setFieldValue("mqttClientIdAdv", m.clientId, "soundpanel7");
       setFieldValue("mqttBaseTopicAdv", m.baseTopic, "soundpanel7");
       setNumericFieldValue("mqttPublishPeriodMsAdv", m.publishPeriodMs, 1000);
@@ -7690,18 +7775,21 @@ R"HTML(
     setBoolSelectValue("slackEnabledAdv", config.slackEnabled);
     const slackConfigured = Boolean(config.slackWebhookConfigured);
     setSecretField("slackWebhookUrlAdv", slackConfigured, "********", "https://hooks.slack.com/services/...");
-    const slackInput = $("slackWebhookUrlAdv");
-    slackInput.type = "password";
-    $("toggleSlackWebhookBtn").disabled = !slackConfigured;
+    setSecretCache("slackWebhookUrlAdv", config.slackWebhookUrl || "");
+    syncSecretToggleButton("toggleSlackWebhookBtn", false);
     setFieldValue("slackChannelAdv", config.slackChannel);
     setBoolSelectValue("telegramEnabledAdv", config.telegramEnabled);
     setFieldValue("telegramChatIdAdv", config.telegramChatId);
     setSecretField("telegramBotTokenAdv", config.telegramTokenConfigured, "********", "123456:ABCDEF...");
+    setSecretCache("telegramBotTokenAdv", config.telegramBotToken || "");
+    syncSecretToggleButton("toggleTelegramBotTokenAdvBtn", false);
     setBoolSelectValue("whatsappEnabledAdv", config.whatsappEnabled);
     setFieldValue("whatsappApiVersionAdv", config.whatsappApiVersion || "v22.0");
     setFieldValue("whatsappPhoneIdAdv", config.whatsappPhoneNumberId);
     setFieldValue("whatsappRecipientAdv", config.whatsappRecipient);
     setSecretField("whatsappAccessTokenAdv", config.whatsappAccessTokenConfigured, "********", "EAA...");
+    setSecretCache("whatsappAccessTokenAdv", config.whatsappAccessToken || "");
+    syncSecretToggleButton("toggleWhatsappAccessTokenAdvBtn", false);
 
     const targets = [];
     if (config.slackEnabled) targets.push("Slack");
@@ -7807,7 +7895,7 @@ R"HTML(
       const response = await apiPost("/api/live", { enabled: nextEnabled });
       state.liveEnabled = Boolean(response.enabled);
       applyLiveActionState();
-      setToast("dashboardPageToast", state.liveEnabled ? "LIVE active." : "LIVE coupe.");
+      setToast("dashboardPageToast", state.liveEnabled ? "ON AIR actif." : "OFF AIR actif.");
     } catch (err) {
       applyLiveActionState();
       setToastError("dashboardPageToast", err);
@@ -7955,18 +8043,55 @@ R"HTML(
   $("factoryResetBtn").addEventListener("click", factoryReset);
   $("saveTimeAdv").addEventListener("click", saveTimeSettings);
   $("saveWifiAdv").addEventListener("click", saveWifiSettings);
+  [1, 2, 3, 4].forEach((slot) => {
+    $(`toggleWifiPassword${slot}Btn`).addEventListener("click", () => toggleSecretField(`wifiPassword${slot}`, `toggleWifiPassword${slot}Btn`, {
+      revealName: `wifiPassword${slot}`,
+      configuredFlag: "keepPassword",
+      configuredPlaceholder: "********",
+      emptyPlaceholder: "laisser vide = reseau ouvert",
+      clearOnHide: true
+    }));
+  });
   $("saveOtaAdv").addEventListener("click", saveOtaSettings);
+  $("toggleOtaPasswordAdvBtn").addEventListener("click", () => toggleSecretField("otaPasswordAdv", "toggleOtaPasswordAdvBtn", {
+    revealName: "otaPassword",
+    configuredFlag: "keepPassword",
+    configuredPlaceholder: "********",
+    emptyPlaceholder: "laisser vide = aucun mot de passe",
+    clearOnHide: true
+  }));
   if ($("checkReleaseBtn")) $("checkReleaseBtn").addEventListener("click", checkReleaseNow);
   if ($("installReleaseBtn")) $("installReleaseBtn").addEventListener("click", installReleaseNow);
   if ($("forceInstallReleaseBtn")) $("forceInstallReleaseBtn").addEventListener("click", forceInstallReleaseNow);
   $("saveMqttAdv").addEventListener("click", saveMqttSettings);
+  $("toggleMqttPasswordAdvBtn").addEventListener("click", () => toggleSecretField("mqttPasswordAdv", "toggleMqttPasswordAdvBtn", {
+    revealName: "mqttPassword",
+    configuredFlag: "keepPassword",
+    configuredPlaceholder: "********",
+    emptyPlaceholder: "laisser vide si non utilise",
+    clearOnHide: true
+  }));
   $("toggleSlackWebhookBtn").addEventListener("click", toggleSlackWebhook);
+  $("toggleTelegramBotTokenAdvBtn").addEventListener("click", () => toggleSecretField("telegramBotTokenAdv", "toggleTelegramBotTokenAdvBtn", {
+    revealName: "telegramBotToken",
+    configuredPlaceholder: "********",
+    emptyPlaceholder: "123456:ABCDEF...",
+    clearOnHide: true
+  }));
+  $("toggleWhatsappAccessTokenAdvBtn").addEventListener("click", () => toggleSecretField("whatsappAccessTokenAdv", "toggleWhatsappAccessTokenAdvBtn", {
+    revealName: "whatsappAccessToken",
+    configuredPlaceholder: "********",
+    emptyPlaceholder: "EAA...",
+    clearOnHide: true
+  }));
   $("saveNotificationsAdv").addEventListener("click", saveNotificationSettings);
   $("testNotificationsAdv").addEventListener("click", testNotificationSettings);
   $("toggleDebugLogsBtn").addEventListener("click", toggleDebugLogs);
   $("refreshDebugLogsBtn").addEventListener("click", refreshDebugLogs);
   $("clearDebugLogsBtn").addEventListener("click", clearDebugLogs);
   $("authSubmitBtn").addEventListener("click", submitAuth);
+  $("toggleAuthPasswordBtn").addEventListener("click", () => toggleSecretField("authPassword", "toggleAuthPasswordBtn"));
+  $("toggleSecretModalPasswordBtn").addEventListener("click", () => toggleSecretField("secretModalPassword", "toggleSecretModalPasswordBtn"));
   $("authUsername").addEventListener("input", () => {
     $("authUsername").value = sanitizeUsernameValue($("authUsername").value);
   });
@@ -7994,19 +8119,27 @@ R"HTML(
   $("homeAssistantTokenAdv").addEventListener("input", () => {
     $("homeAssistantTokenAdv").value = sanitizeHomeAssistantTokenValue($("homeAssistantTokenAdv").value);
     $("homeAssistantTokenAdv").dataset.keepSecret = "0";
+    $("homeAssistantTokenAdv").dataset.secretValue = $("homeAssistantTokenAdv").value || "";
   });
   [1, 2, 3, 4].forEach((slot) => {
     $(`wifiPassword${slot}`).addEventListener("input", () => {
       $(`wifiPassword${slot}`).dataset.keepPassword = "0";
+      $(`wifiPassword${slot}`).dataset.secretValue = $(`wifiPassword${slot}`).value || "";
     });
   });
   ["slackWebhookUrlAdv", "telegramBotTokenAdv", "whatsappAccessTokenAdv"].forEach((id) => {
     $(id).addEventListener("input", () => {
       $(id).dataset.keepSecret = "0";
+      $(id).dataset.secretValue = $(id).value || "";
     });
   });
   $("mqttPasswordAdv").addEventListener("input", () => {
     $("mqttPasswordAdv").dataset.keepPassword = "0";
+    $("mqttPasswordAdv").dataset.secretValue = $("mqttPasswordAdv").value || "";
+  });
+  $("otaPasswordAdv").addEventListener("input", () => {
+    $("otaPasswordAdv").dataset.keepPassword = "0";
+    $("otaPasswordAdv").dataset.secretValue = $("otaPasswordAdv").value || "";
   });
   $("configFile").addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];

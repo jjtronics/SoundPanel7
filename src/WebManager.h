@@ -114,6 +114,7 @@ private:
   String systemSummaryJson() const;
   String homeAssistantStatusJson() const;
   String liveMetricsJson() const;
+  const char* secretValueForReveal(const String& name) const;
   bool pinConfigured() const;
   bool webUsersConfigured() const;
   bool homeAssistantTokenConfigured() const;
@@ -168,6 +169,7 @@ private:
   void handleHomeAssistantGet();
   void handleHomeAssistantSave();
   void handleHomeAssistantReveal();
+  void handleSecretReveal();
   void handleHomeAssistantStatus();
 
   void applyBacklightNow(uint8_t percent);
