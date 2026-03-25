@@ -24,13 +24,6 @@ static WiFiMulti g_wifiMulti;
 static wl_status_t g_lastWifiStatus = WL_IDLE_STATUS;
 static String g_lastWifiIp;
 
-static String buildSetupApName() {
-  const uint64_t chipMac = ESP.getEfuseMac();
-  char suffix[5];
-  snprintf(suffix, sizeof(suffix), "%04llX", (unsigned long long)(chipMac & 0xFFFFULL));
-  return String(kSetupApName) + "-" + suffix;
-}
-
 bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   _s = settings;
   _store = store;
@@ -39,8 +32,29 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   _lastWifiAttemptMs = 0;
   _wifiAttemptFailures = 0;
   _legacyCredentialTried = false;
+  rebuildSetupApName();
 
   configureHostname();
+
+  WiFi.onEvent([this](WiFiEvent_t event, arduino_event_info_t info) {
+    switch (event) {
+      case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+        Serial0.printf("[Net][EVT] STA connected ssid=%s channel=%u\n",
+                       (const char*)info.wifi_sta_connected.ssid,
+                       (unsigned)info.wifi_sta_connected.channel);
+        break;
+      case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+        Serial0.printf("[Net][EVT] STA disconnected reason=%u ssid=%s\n",
+                       (unsigned)info.wifi_sta_disconnected.reason,
+                       (const char*)info.wifi_sta_disconnected.ssid);
+        break;
+      case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+        Serial0.printf("[Net][EVT] STA got ip=%s\n", WiFi.localIP().toString().c_str());
+        break;
+      default:
+        break;
+    }
+  });
 
   // WiFiManager behavior
   g_wm.setDebugOutput(false);
@@ -61,6 +75,7 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   _ntpConfigured = false;
   migrateLegacyCredentialIfNeeded();
   rebuildWifiMulti();
+  logStoredWifiCredentials("begin");
   ensureWifiConnection(true);
 
   return true;
@@ -70,6 +85,18 @@ void NetManager::configureHostname() {
   const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : kDefaultHostname;
   WiFi.setHostname(hostname);
   g_wm.setHostname(hostname);
+}
+
+void NetManager::logStoredWifiCredentials(const char* label) const {
+  if (!_s) return;
+  Serial0.printf("[Net] WiFi slots (%s):\n", label ? label : "?");
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    const WifiCredentialRecord& credential = _s->wifiCredentials[i];
+    Serial0.printf("[Net]   slot%u ssid='%s' pwdLen=%u\n",
+                   (unsigned)(i + 1),
+                   credential.ssid,
+                   (unsigned)strlen(credential.password));
+  }
 }
 
 uint8_t NetManager::wifiCredentialCount() const {
@@ -91,12 +118,28 @@ void NetManager::rebuildWifiMulti() {
   }
 }
 
+void NetManager::rebuildSetupApName() {
+  const uint64_t chipMac = ESP.getEfuseMac();
+  snprintf(_setupApName,
+           sizeof(_setupApName),
+           "%s-%04llX",
+           kSetupApName,
+           (unsigned long long)(chipMac & 0xFFFFULL));
+}
+
+const char* NetManager::setupApName() {
+  if (_setupApName[0] == '\0') {
+    rebuildSetupApName();
+  }
+  return _setupApName;
+}
+
 void NetManager::startConfigPortal() {
   if (g_wm.getConfigPortalActive()) return;
   if (_configPortalStateCallback) _configPortalStateCallback(true);
-  const String setupApName = buildSetupApName();
-  Serial0.printf("[Net] Starting WiFi portal '%s'\n", setupApName.c_str());
-  g_wm.startConfigPortal(setupApName.c_str());
+  const char* apName = setupApName();
+  Serial0.printf("[Net] Starting WiFi portal '%s'\n", apName);
+  g_wm.startConfigPortal(apName);
   if (g_wm.getConfigPortalActive()) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.enableSTA(true);
@@ -112,6 +155,7 @@ void NetManager::reloadWifiConfig() {
   configureHostname();
   migrateLegacyCredentialIfNeeded();
   rebuildWifiMulti();
+  logStoredWifiCredentials("reload");
   _ntpConfigured = false;
   _mdnsStarted = false;
   _legacyCredentialTried = false;
@@ -165,14 +209,19 @@ void NetManager::rememberWifiCredential(const String& ssid, const String& passwo
     return;
   }
 
+  WifiCredentialRecord persisted[WIFI_CREDENTIAL_MAX_COUNT];
+  for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+    _store->loadWifiCredential(i, persisted[i]);
+  }
+
   int existingIndex = -1;
   int freeIndex = -1;
   for (uint8_t i = 0; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
-    if (_s->wifiCredentials[i].ssid[0] == '\0') {
+    if (persisted[i].ssid[0] == '\0') {
       if (freeIndex < 0) freeIndex = i;
       continue;
     }
-    if (ssid == _s->wifiCredentials[i].ssid) {
+    if (ssid == persisted[i].ssid) {
       existingIndex = i;
       break;
     }
@@ -180,28 +229,47 @@ void NetManager::rememberWifiCredential(const String& ssid, const String& passwo
 
   WifiCredentialRecord credential{};
   memcpy(credential.ssid, ssid.c_str(), ssid.length() + 1);
-  memcpy(credential.password, password.c_str(), password.length() + 1);
-
-  if (existingIndex >= 0) {
-    _s->wifiCredentials[existingIndex] = credential;
-  } else if (freeIndex >= 0) {
-    _s->wifiCredentials[freeIndex] = credential;
+  if (existingIndex >= 0 && password.length() == 0 && persisted[existingIndex].password[0] != '\0') {
+    memcpy(credential.password,
+           persisted[existingIndex].password,
+           sizeof(credential.password));
+    Serial0.printf("[Net] Preserving stored password for SSID=%s\n", ssid.c_str());
   } else {
-    for (uint8_t i = 1; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
-      _s->wifiCredentials[i - 1] = _s->wifiCredentials[i];
-    }
-    _s->wifiCredentials[WIFI_CREDENTIAL_MAX_COUNT - 1] = credential;
+    memcpy(credential.password, password.c_str(), password.length() + 1);
   }
 
-  // Use granular save: 8 NVS writes instead of ~50 (reduces fragmentation)
-  _store->saveWifiCredentials(_s->wifiCredentials);
+  if (existingIndex >= 0) {
+    persisted[existingIndex] = credential;
+    _store->saveWifiCredential((uint8_t)existingIndex, credential);
+  } else if (freeIndex >= 0) {
+    persisted[freeIndex] = credential;
+    _store->saveWifiCredential((uint8_t)freeIndex, credential);
+  } else {
+    for (uint8_t i = 1; i < WIFI_CREDENTIAL_MAX_COUNT; i++) {
+      persisted[i - 1] = persisted[i];
+    }
+    persisted[WIFI_CREDENTIAL_MAX_COUNT - 1] = credential;
+    _store->saveWifiCredentials(persisted);
+  }
+
+  memcpy(_s->wifiCredentials, persisted, sizeof(_s->wifiCredentials));
   rebuildWifiMulti();
-  Serial0.printf("[Net] WiFi credential stored for SSID=%s\n", ssid.c_str());
+  logStoredWifiCredentials("save");
+  Serial0.printf("[Net] WiFi credential stored for SSID=%s (slots=%u)\n",
+                 ssid.c_str(),
+                 (unsigned)wifiCredentialCount());
 }
 
 void NetManager::onPortalWifiSaved() {
-  const String ssid = g_wm.getWiFiSSID(true);
-  const String password = g_wm.getWiFiPass(true);
+  String ssid = WiFi.SSID();
+  String password = WiFi.psk();
+  if (!ssid.length()) ssid = g_wm.getWiFiSSID(false);
+  if (!password.length()) password = g_wm.getWiFiPass(false);
+  if (!ssid.length()) ssid = g_wm.getWiFiSSID(true);
+  if (!password.length()) password = g_wm.getWiFiPass(true);
+  Serial0.printf("[Net] Portal save callback ssid='%s' pwdLen=%u\n",
+                 ssid.c_str(),
+                 (unsigned)password.length());
   rememberWifiCredential(ssid, password);
   _legacyCredentialTried = true;
   _wifiAttemptFailures = 0;
@@ -252,10 +320,9 @@ void NetManager::ensureWifiConnection(bool force) {
   }
 
   if (!_legacyCredentialTried && !portalActive) {
-    const String setupApName = buildSetupApName();
     Serial0.println("[Net] Trying legacy WiFiManager credential");
     _legacyCredentialTried = true;
-    if (g_wm.autoConnect(setupApName.c_str()) || isWifiConnected()) {
+    if (g_wm.autoConnect(setupApName()) || isWifiConnected()) {
       _wifiAttemptFailures = 0;
       return;
     }

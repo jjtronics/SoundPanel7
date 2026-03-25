@@ -39,13 +39,17 @@ private:
   uint32_t _lastWifiAttemptMs = 0;
   uint8_t _wifiAttemptFailures = 0;
   bool _legacyCredentialTried = false;
+  char _setupApName[32] = "";
   std::function<void(bool)> _configPortalStateCallback;
 
   void ensureMdns();
   void rebuildWifiMulti();
+  void rebuildSetupApName();
+  const char* setupApName();
   void ensureWifiConnection(bool force = false);
   void startConfigPortal();
   void configureHostname();
+  void logStoredWifiCredentials(const char* label) const;
   void migrateLegacyCredentialIfNeeded();
   void onPortalWifiSaved();
   void rememberWifiCredential(const String& ssid, const String& password);

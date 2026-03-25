@@ -1,0 +1,17 @@
+{
+  "type": "soundpanel7-config",
+  "version": 8,
+  "audioSource": 1,
+  "calibrationPointCount": 5,
+  "calibrationCaptureSec": 3,
+  "analogBaseOffsetDb": 0,
+  "analogExtraOffsetDb": 15,
+  "calPointRefDb": [35, 50, 70, 80, 90],
+  "calPointRawLogRms": [1.3779, 1.4131, 1.9797, 2.4076, 2.9448],
+  "calPointValid": [1, 1, 1, 1, 1],
+  "analogCalibrationPointCount": 5,
+  "analogCalibrationCaptureSec": 3,
+  "analogCalPointRefDb": [35, 50, 70, 80, 90],
+  "analogCalPointRawLogRms": [1.3779, 1.4131, 1.9797, 2.4076, 2.9448],
+  "analogCalPointValid": [1, 1, 1, 1, 1]
+}

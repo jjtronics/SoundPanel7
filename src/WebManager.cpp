@@ -12,6 +12,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <esp_heap_caps.h>
+#include <nvs.h>
 #include <esp_sntp.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
@@ -355,6 +356,16 @@ static void appendRuntimeStatsJson(String& json, const RuntimeStats& stats) {
   json += "\"heapPsramTotal\":"; json += String(stats.heapPsramTotal); json += ",";
   json += "\"heapPsramMin\":"; json += String(stats.heapPsramMin); json += ",";
   sp7json::appendEscapedField(json, "activePage", stats.activePage);
+}
+
+static void appendNvsStatsJson(String& json) {
+  nvs_stats_t stats{};
+  const esp_err_t err = nvs_get_stats(nullptr, &stats);
+  appendBoolField(json, "nvsStatsOk", err == ESP_OK);
+  json += "\"nvsUsedEntries\":"; json += String(err == ESP_OK ? stats.used_entries : 0U); json += ",";
+  json += "\"nvsFreeEntries\":"; json += String(err == ESP_OK ? stats.free_entries : 0U); json += ",";
+  json += "\"nvsTotalEntries\":"; json += String(err == ESP_OK ? stats.total_entries : 0U); json += ",";
+  json += "\"nvsNamespaceCount\":"; json += String(err == ESP_OK ? stats.namespace_count : 0U); json += ",";
 }
 
 static uint32_t currentUnixTimestamp() {
@@ -842,6 +853,7 @@ void WebManager::routes() {
 void WebManager::loop() {
   if (!_started) return;
   updateTardisAnimationNow();
+  syncNotificationResultFromTask();
 
   const bool localOtaInProgress = _ota && _ota->inProgress();
   const bool releaseInstallInProgress = _releaseUpdate && _releaseUpdate->installInProgress();
@@ -979,6 +991,26 @@ void WebManager::processPendingNotification() {
   // Update tracking immediately (don't wait for async result)
   if (req.updateAlertTracking) {
     _lastNotifiedAlertState = alertState;
+  }
+}
+
+void WebManager::syncNotificationResultFromTask() {
+  NotificationResult result{};
+  if (!NotificationTask::getLastResult(result)) return;
+  if (result.timestampSec == 0) return;
+  if (_notificationLastAttemptTs == result.timestampSec
+      && _notificationLastOk == result.ok
+      && _notificationLastEvent == result.event
+      && _notificationLastResult == result.result) {
+    return;
+  }
+
+  _notificationLastOk = result.ok;
+  _notificationLastAttemptTs = result.timestampSec;
+  _notificationLastEvent = result.event;
+  _notificationLastResult = result.result;
+  if (result.ok) {
+    _notificationLastSuccessTs = result.timestampSec;
   }
 }
 
@@ -1185,6 +1217,7 @@ String WebManager::systemSummaryJson() const {
   json += "\"mcuTempC\":"; json += (mcuTempOk ? String(mcuTempC, 1) : String("0")); json += ",";
   json += "\"fsTotalBytes\":"; json += String((uint32_t)fsTotalBytes); json += ",";
   json += "\"fsUsedBytes\":"; json += String((uint32_t)fsUsedBytes); json += ",";
+  appendNvsStatsJson(json);
   appendBoolField(json, "otaEnabled", _ota && _ota->enabled());
   appendBoolField(json, "otaStarted", _ota && _ota->started());
   appendBoolField(json, "mqttEnabled", _mqtt && _mqtt->enabled());
@@ -3192,6 +3225,7 @@ String WebManager::notificationsJson(bool includeSecrets) const {
 void WebManager::handleNotificationsGet() {
   if (!requireWebAuth()) return;
   if (!requireSettingsJson()) return;
+  syncNotificationResultFromTask();
   replyJson(200, notificationsJson(true));
 }
 
@@ -4552,9 +4586,13 @@ R"HTML(
                   <div class="v mono" id="settingsLvglTiming">--</div>
                 </div>
                 <div class="settingsSnapshot">
-                <div class="k">Heap / disque</div>
-                <div class="v mono" id="settingsLvglHeap">--</div>
-              </div>
+                  <div class="k">Heap / disque</div>
+                  <div class="v mono" id="settingsLvglHeap">--</div>
+                </div>
+                <div class="settingsSnapshot">
+                  <div class="k">Occupation NVS</div>
+                  <div class="v mono" id="settingsNvs">--</div>
+                </div>
               </div>
               <div class="settingsOverviewBlock">
                 <div class="settingsSubhead">
@@ -6171,9 +6209,13 @@ R"HTML(
     const heapPsramMin = Number(st.heapPsramMin ?? 0);
     const fsTotalBytes = Number(st.fsTotalBytes ?? 0);
     const fsUsedBytes = Number(st.fsUsedBytes ?? 0);
+    const nvsStatsOk = Boolean(st.nvsStatsOk);
+    const nvsUsedEntries = Number(st.nvsUsedEntries ?? 0);
+    const nvsTotalEntries = Number(st.nvsTotalEntries ?? 0);
     const heapInternalUsedPct = pctUsed(heapInternalFree, heapInternalTotal);
     const heapPsramUsedPct = pctUsed(heapPsramFree, heapPsramTotal);
     const fsUsedPct = pctFromUsage(fsUsedBytes, fsTotalBytes);
+    const nvsUsedPct = pctFromUsage(nvsUsedEntries, nvsTotalEntries);
     $("settingsIp").textContent = st.wifi ? `${st.ip || "-"} / ${st.rssi ?? 0} dBm` : "--";
     $("settingsUptime").textContent = formatUptime(st.uptime_s);
     $("settingsHistory").textContent = `${state.historyMinutes} min / ${state.historyCapacity} points`;
@@ -6214,6 +6256,9 @@ R"HTML(
       : "";
     $("settingsLvglHeap").textContent =
       `${intText} / OBJ ${lvglObjCount}${psramText}${fsText}`;
+    $("settingsNvs").textContent = nvsStatsOk
+      ? `${nvsUsedPct ?? 0}% utilise (${nvsUsedEntries}/${nvsTotalEntries})`
+      : "--";
     setMetricTone("settingsLvglLoad", loadTone(lvglLoadPct));
     setMetricTone("settingsLvglTiming", worstTone(timingTone(lvglUiWorkUs / 1000), timingTone(lvglHandlerUs / 1000)));
     setMetricTone("settingsLvglHeap", worstTone(
@@ -6221,6 +6266,7 @@ R"HTML(
       usageTone(heapInternalUsedPct ?? 0),
       fsUsedPct === null ? "ok" : usageTone(fsUsedPct)
     ));
+    setMetricTone("settingsNvs", nvsUsedPct === null ? "ok" : usageTone(nvsUsedPct));
     $("backupInfo").textContent = `Dernier backup: ${formatBackupDate(st.backupTs)}`;
 
   }

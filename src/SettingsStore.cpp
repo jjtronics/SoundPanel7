@@ -8,6 +8,7 @@
 
 #include <esp_mac.h>
 #include <esp_random.h>
+#include <nvs.h>
 #include <LittleFS.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/sha256.h>
@@ -66,6 +67,111 @@ bool readBackupFileString(const char* path, String& out) {
   }
   file.close();
   return out.length() > 0;
+}
+
+bool writeBackupFiles(const String& json, uint32_t ts) {
+  if (!ensureBackupFsMounted()) return false;
+  File backupFile = LittleFS.open(kBackupFilePath, "w");
+  if (!backupFile) return false;
+  const size_t written = backupFile.print(json);
+  backupFile.close();
+  if (written != json.length()) {
+    LittleFS.remove(kBackupFilePath);
+    LittleFS.remove(kBackupTsFilePath);
+    return false;
+  }
+
+  File tsFile = LittleFS.open(kBackupTsFilePath, "w");
+  if (!tsFile) {
+    LittleFS.remove(kBackupFilePath);
+    LittleFS.remove(kBackupTsFilePath);
+    return false;
+  }
+  const size_t tsWritten = tsFile.print(String(ts));
+  tsFile.close();
+  if (tsWritten == 0) {
+    LittleFS.remove(kBackupFilePath);
+    LittleFS.remove(kBackupTsFilePath);
+    return false;
+  }
+  return true;
+}
+
+bool readBackupJsonFromNamespace(const String& backupNs, String& json, uint32_t& ts) {
+  json = "";
+  ts = 0;
+
+  Preferences backupPrefs;
+  if (!backupPrefs.begin(backupNs.c_str(), true)) return false;
+
+  const uint8_t partCount = backupPrefs.getUChar("parts", 0);
+  if (partCount > 0 && partCount <= kBackupChunkMaxCount) {
+    const uint32_t expectedLen = backupPrefs.getUInt("len", 0);
+    json.reserve(expectedLen ? expectedLen : (uint32_t)partCount * kBackupChunkSize);
+    for (uint8_t i = 0; i < partCount; i++) {
+      char key[8];
+      snprintf(key, sizeof(key), "cfg%u", (unsigned)i);
+      const String chunk = backupPrefs.getString(key, "");
+      if (!chunk.length()) {
+        json = "";
+        break;
+      }
+      json += chunk;
+    }
+    if (expectedLen && json.length() != expectedLen) {
+      json = "";
+    }
+  }
+
+  if (!json.length()) {
+    json = backupPrefs.getString("cfg", "");
+  }
+  ts = backupPrefs.getUInt("ts", 0);
+  backupPrefs.end();
+  return json.length() > 0;
+}
+
+bool clearBackupNamespace(const String& backupNs) {
+  Preferences backupPrefs;
+  if (!backupPrefs.begin(backupNs.c_str(), false)) return false;
+  const bool ok = backupPrefs.clear();
+  backupPrefs.end();
+  return ok;
+}
+
+void logNvsStats(const char* label) {
+  nvs_stats_t stats{};
+  const esp_err_t err = nvs_get_stats(nullptr, &stats);
+  if (err != ESP_OK) {
+    Serial0.printf("[SET] NVS stats unavailable (%s): %d\n", label ? label : "?", (int)err);
+    return;
+  }
+  Serial0.printf("[SET] NVS %s used=%u free=%u total=%u ns=%u\n",
+                 label ? label : "?",
+                 (unsigned)stats.used_entries,
+                 (unsigned)stats.free_entries,
+                 (unsigned)stats.total_entries,
+                 (unsigned)stats.namespace_count);
+}
+
+void compactLegacyBackupStorage(const String& baseNs) {
+  const String backupNs = baseNs + "_bak";
+  String fileJson;
+  if (readBackupFileString(kBackupFilePath, fileJson)) {
+    if (clearBackupNamespace(backupNs)) {
+      Serial0.println("[SET] Cleared legacy NVS backup namespace");
+    }
+    return;
+  }
+
+  String legacyJson;
+  uint32_t legacyTs = 0;
+  if (!readBackupJsonFromNamespace(backupNs, legacyJson, legacyTs)) return;
+  if (!writeBackupFiles(legacyJson, legacyTs)) return;
+  if (clearBackupNamespace(backupNs)) {
+    Serial0.printf("[SET] Migrated legacy NVS backup to LittleFS (%u bytes)\n",
+                   (unsigned)legacyJson.length());
+  }
 }
 
 void applyAudioBoardProfileDefaults(SettingsV1& s) {
@@ -340,7 +446,12 @@ bool encodePinCode(const char* pin, char* out, size_t outSize) {
 
 bool SettingsStore::begin(const char* nvsNamespace) {
   _ns = nvsNamespace ? nvsNamespace : "sp7";
-  return _prefs.begin(_ns.c_str(), false);
+  const bool ok = _prefs.begin(_ns.c_str(), false);
+  if (!ok) return false;
+  logNvsStats("before-compact");
+  compactLegacyBackupStorage(_ns);
+  logNvsStats("after-compact");
+  return true;
 }
 
 void SettingsStore::syncActiveCalibrationProfile(SettingsV1& s) {
@@ -967,6 +1078,38 @@ void SettingsStore::saveWifiCredentials(const WifiCredentialRecord (&credentials
     _prefs.putString(keySsid, credentials[i].ssid);
     saveSecret(keyPass, purpose, credentials[i].password);
   }
+}
+
+void SettingsStore::loadWifiCredential(uint8_t index, WifiCredentialRecord& out) {
+  out = WifiCredentialRecord{};
+  if (index >= WIFI_CREDENTIAL_MAX_COUNT) return;
+
+  char keySsid[8];
+  char keyPass[8];
+  char purpose[8];
+  snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(index + 1));
+  snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(index + 1));
+  snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(index + 1));
+
+  _prefs.getString(keySsid, out.ssid, sizeof(out.ssid));
+  if (!loadSecret(keyPass, purpose, out.password, sizeof(out.password))) {
+    out.password[0] = '\0';
+  }
+  sanitizeWifiCredential(out);
+}
+
+void SettingsStore::saveWifiCredential(uint8_t index, const WifiCredentialRecord& credential) {
+  if (index >= WIFI_CREDENTIAL_MAX_COUNT) return;
+
+  char keySsid[8];
+  char keyPass[8];
+  char purpose[8];
+  snprintf(keySsid, sizeof(keySsid), "wf%us", (unsigned)(index + 1));
+  snprintf(keyPass, sizeof(keyPass), "wf%up", (unsigned)(index + 1));
+  snprintf(purpose, sizeof(purpose), "wifi%u", (unsigned)(index + 1));
+
+  _prefs.putString(keySsid, credential.ssid);
+  saveSecret(keyPass, purpose, credential.password);
 }
 
 void SettingsStore::saveThresholds(const ThresholdsV1& th) {
@@ -1892,27 +2035,12 @@ bool SettingsStore::saveBackup(const SettingsV1& s) {
     backupPrefs.end();
     return false;
   }
-  if (ensureBackupFsMounted()) {
-    File backupFile = LittleFS.open(kBackupFilePath, "w");
-    if (backupFile) {
-      const size_t written = backupFile.print(json);
-      backupFile.close();
-      if (written == json.length()) {
-        time_t now = time(nullptr);
-        const uint32_t ts = now > 946684800 ? (uint32_t)now : 0U;
-        File tsFile = LittleFS.open(kBackupTsFilePath, "w");
-        if (tsFile) {
-          const size_t tsWritten = tsFile.print(String(ts));
-          tsFile.close();
-          if (tsWritten > 0) {
-            backupPrefs.end();
-            return true;
-          }
-        }
-      }
-      LittleFS.remove(kBackupFilePath);
-      LittleFS.remove(kBackupTsFilePath);
-    }
+  time_t now = time(nullptr);
+  const uint32_t ts = now > 946684800 ? (uint32_t)now : 0U;
+  if (writeBackupFiles(json, ts)) {
+    backupPrefs.end();
+    clearBackupNamespace(_ns + "_bak");
+    return true;
   }
   const size_t chunkCount = (json.length() + kBackupChunkSize - 1U) / kBackupChunkSize;
   if (chunkCount == 0 || chunkCount > kBackupChunkMaxCount) {
@@ -1940,8 +2068,6 @@ bool SettingsStore::saveBackup(const SettingsV1& s) {
       break;
     }
   }
-  time_t now = time(nullptr);
-  const uint32_t ts = now > 946684800 ? (uint32_t)now : 0U;
   const size_t partsWritten = backupPrefs.putUChar("parts", (uint8_t)chunkCount);
   const size_t lenWritten = backupPrefs.putUInt("len", (uint32_t)json.length());
   const size_t tsWritten = backupPrefs.putUInt("ts", ts);

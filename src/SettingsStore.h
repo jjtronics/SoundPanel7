@@ -292,10 +292,12 @@ public:
   bool begin(const char* nvsNamespace = "sp7");
   void load(SettingsV1 &out);
   void save(const SettingsV1 &s);
+  void loadWifiCredential(uint8_t index, WifiCredentialRecord& out);
 
   // Granular save methods - only write what changed to reduce NVS fragmentation
   void saveRuntimeSettings(const SettingsV1& s);
   void saveWifiCredentials(const WifiCredentialRecord (&credentials)[WIFI_CREDENTIAL_MAX_COUNT]);
+  void saveWifiCredential(uint8_t index, const WifiCredentialRecord& credential);
   void saveThresholds(const ThresholdsV1& th);
   void saveUiSettings(uint8_t backlight, uint8_t liveEnabled, uint8_t touchEnabled, uint8_t dashboardPage, uint8_t dashboardFullscreenMask);
   void saveMqttSettings(bool enabled, const char* host, uint16_t port, const char* username, const char* password, const char* clientId, const char* baseTopic, uint16_t publishPeriodMs, bool retain);
