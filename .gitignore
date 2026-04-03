@@ -13,3 +13,4 @@ tmp/
 
 # Claude Code local configuration
 .claude/
+.aider*

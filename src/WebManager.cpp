@@ -48,6 +48,10 @@ static uint32_t tardisColorHex(uint8_t r, uint8_t g, uint8_t b) {
   return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
 }
 
+static uint32_t tardisColorRgbwHex(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
+  return ((uint32_t)w << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
 static float clamp01f(float value) {
   if (value < 0.0f) return 0.0f;
   if (value > 1.0f) return 1.0f;
@@ -291,8 +295,12 @@ static void appendUiStateJson(String& json, const SettingsV1* s, const SharedHis
   json += "\"tardisInteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN); json += ",";
   json += "\"tardisExteriorLedPin\":"; json += String((int)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN); json += ",";
   json += "\"tardisInteriorRgbPin\":"; json += String((int)SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIN); json += ",";
+  json += "\"tardisExteriorRgbwPin\":"; json += String((int)SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_PIN); json += ",";
   json += "\"tardisInteriorRgbMode\":"; json += String(s ? s->tardisInteriorRgbMode : TARDIS_INTERIOR_RGB_MODE_ALERT); json += ",";
   json += "\"tardisInteriorRgbColor\":"; json += String(s ? s->tardisInteriorRgbColor : TARDIS_INTERIOR_RGB_DEFAULT_COLOR); json += ",";
+  json += "\"tardisExteriorRgbwMode\":"; json += String(s ? s->tardisExteriorRgbwMode : TARDIS_EXTERIOR_RGBW_MODE_ALERT); json += ",";
+  json += "\"tardisExteriorRgbwColor\":"; json += String(s ? s->tardisExteriorRgbwColor : TARDIS_EXTERIOR_RGBW_DEFAULT_COLOR); json += ",";
+  json += "\"tardisExteriorRgbwWhite\":"; json += String(s ? s->tardisExteriorRgbwWhite : TARDIS_EXTERIOR_RGBW_DEFAULT_WHITE); json += ",";
   json += "\"audioResponseMode\":"; json += String(s ? s->audioResponseMode : 0); json += ",";
   json += "\"historyCapacity\":"; json += String(SharedHistory::POINT_COUNT); json += ",";
   json += "\"historySamplePeriodMs\":"; json += String(history ? history->samplePeriodMs() : 3000); json += ",";
@@ -911,6 +919,10 @@ void WebManager::updateAlertState(float dbInstant, float leq, float peak) {
       && _s->tardisModeEnabled && _s->tardisInteriorLedEnabled) {
     applyTardisInteriorRgbColor(tardisInteriorRgbColorForCurrentState());
   }
+  if (SOUNDPANEL7_TARDIS_SUPPORTED && SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_SUPPORTED
+      && _s->tardisModeEnabled && _s->tardisExteriorLedEnabled) {
+    applyTardisExteriorRgbwColor(tardisExteriorRgbwColorForCurrentState());
+  }
 
   if (nextAlertState == previousAlertState) return;
 
@@ -1352,6 +1364,19 @@ void WebManager::ensureTardisInteriorRgbReady() {
 #endif
 }
 
+void WebManager::ensureTardisExteriorRgbwReady() {
+#if !SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_SUPPORTED
+  return;
+#else
+  if (_tardisExteriorRgbwReady) return;
+  _tardisExteriorRgbw.begin();
+  _tardisExteriorRgbw.setBrightness(SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_BRIGHTNESS);
+  _tardisExteriorRgbw.clear();
+  _tardisExteriorRgbw.show();
+  _tardisExteriorRgbwReady = true;
+#endif
+}
+
 void WebManager::applyTardisInteriorRgbColor(uint32_t color) {
 #if !SOUNDPANEL7_TARDIS_INTERIOR_RGB_SUPPORTED
   (void)color;
@@ -1376,6 +1401,33 @@ void WebManager::applyTardisInteriorRgbColor(uint32_t color) {
 #endif
 }
 
+void WebManager::applyTardisExteriorRgbwColor(uint32_t color) {
+#if !SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_SUPPORTED
+  (void)color;
+  return;
+#else
+  ensureTardisExteriorRgbwReady();
+  if (_tardisExteriorRgbwAppliedColor == color) return;
+
+  const uint8_t white = (uint8_t)((color >> 24) & 0xFFU);
+  const uint8_t red = (uint8_t)((color >> 16) & 0xFFU);
+  const uint8_t green = (uint8_t)((color >> 8) & 0xFFU);
+  const uint8_t blue = (uint8_t)(color & 0xFFU);
+  const uint32_t packed = _tardisExteriorRgbw.Color(red, green, blue, white);
+  for (uint16_t i = 0; i < SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_PIXEL_COUNT; i++) {
+    _tardisExteriorRgbw.setPixelColor(i, packed);
+  }
+  _tardisExteriorRgbw.show();
+  _tardisExteriorRgbwAppliedColor = color;
+  Serial0.printf("[TARDIS] exterior RGBW GPIO%u -> W:%u R:%u G:%u B:%u\n",
+                 (unsigned)SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_PIN,
+                 (unsigned)white,
+                 (unsigned)red,
+                 (unsigned)green,
+                 (unsigned)blue);
+#endif
+}
+
 uint32_t WebManager::tardisInteriorRgbColorForCurrentState() const {
   if (!_s) return 0;
   if (_s->tardisInteriorRgbMode == TARDIS_INTERIOR_RGB_MODE_FIXED) {
@@ -1390,6 +1442,24 @@ uint32_t WebManager::tardisInteriorRgbColorForCurrentState() const {
     case 2: return tardisColorHex(0xFF, 0x00, 0x00);
     case 1: return tardisColorHex(0xF0, 0xA2, 0x02);
     default: return tardisColorHex(0x00, 0xFF, 0x00);
+  }
+}
+
+uint32_t WebManager::tardisExteriorRgbwColorForCurrentState() const {
+  if (!_s) return 0;
+  if (_s->tardisExteriorRgbwMode == TARDIS_EXTERIOR_RGBW_MODE_FIXED) {
+    return tardisColorRgbwHex(
+      (uint8_t)((_s->tardisExteriorRgbwColor >> 16) & 0xFFU),
+      (uint8_t)((_s->tardisExteriorRgbwColor >> 8) & 0xFFU),
+      (uint8_t)(_s->tardisExteriorRgbwColor & 0xFFU),
+      _s->tardisExteriorRgbwWhite
+    );
+  }
+
+  switch (_alertState) {
+    case 2: return tardisColorRgbwHex(0xFF, 0x10, 0x00, 0x00);
+    case 1: return tardisColorRgbwHex(0xFF, 0x7A, 0x00, 0x00);
+    default: return tardisColorRgbwHex(0x00, 0xFF, 0x38, 0x00);
   }
 }
 
@@ -1467,7 +1537,11 @@ void WebManager::applyTardisNow() {
 #else
   applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_INTERIOR_LED_PIN, interiorEnabled, "interior");
 #endif
+#if SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_SUPPORTED
+  applyTardisExteriorRgbwColor(exteriorEnabled ? tardisExteriorRgbwColorForCurrentState() : 0U);
+#else
   applyTardisPinNow((uint8_t)SOUNDPANEL7_TARDIS_EXTERIOR_LED_PIN, exteriorEnabled, "exterior");
+#endif
 #endif
 }
 
@@ -2026,6 +2100,9 @@ void WebManager::handleUiSave() {
   const bool tardisExteriorLedEnabled = sp7json::parseBool(body, "tardisExteriorLedEnabled", _s->tardisExteriorLedEnabled != 0);
   int tardisInteriorRgbMode = sp7json::parseInt(body, "tardisInteriorRgbMode", (int)_s->tardisInteriorRgbMode);
   String tardisInteriorRgbColorText = sp7json::parseString(body, "tardisInteriorRgbColorHex", "");
+  int tardisExteriorRgbwMode = sp7json::parseInt(body, "tardisExteriorRgbwMode", (int)_s->tardisExteriorRgbwMode);
+  String tardisExteriorRgbwColorText = sp7json::parseString(body, "tardisExteriorRgbwColorHex", "");
+  int tardisExteriorRgbwWhite = sp7json::parseInt(body, "tardisExteriorRgbwWhite", (int)_s->tardisExteriorRgbwWhite);
   int dashboardPage = sp7json::parseInt(body, "dashboardPage", (int)_s->dashboardPage);
   int dashboardFullscreenMask = sp7json::parseInt(body, "dashboardFullscreenMask", (int)_s->dashboardFullscreenMask);
   int whs = sp7json::parseInt(body, "warningHoldSec", (int)(_s->orangeAlertHoldMs / MS_PER_SECOND));
@@ -2047,6 +2124,10 @@ void WebManager::handleUiSave() {
   if (arm > 1) arm = 1;
   if (tardisInteriorRgbMode < (int)TARDIS_INTERIOR_RGB_MODE_ALERT) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_ALERT;
   if (tardisInteriorRgbMode > (int)TARDIS_INTERIOR_RGB_MODE_MAX) tardisInteriorRgbMode = (int)TARDIS_INTERIOR_RGB_MODE_MAX;
+  if (tardisExteriorRgbwMode < (int)TARDIS_EXTERIOR_RGBW_MODE_ALERT) tardisExteriorRgbwMode = (int)TARDIS_EXTERIOR_RGBW_MODE_ALERT;
+  if (tardisExteriorRgbwMode > (int)TARDIS_EXTERIOR_RGBW_MODE_MAX) tardisExteriorRgbwMode = (int)TARDIS_EXTERIOR_RGBW_MODE_MAX;
+  if (tardisExteriorRgbwWhite < 0) tardisExteriorRgbwWhite = 0;
+  if (tardisExteriorRgbwWhite > 255) tardisExteriorRgbwWhite = 255;
   dashboardPage = (int)normalizedDashboardPage((uint8_t)dashboardPage);
   dashboardFullscreenMask = (int)normalizedDashboardFullscreenMask((uint8_t)dashboardFullscreenMask);
   if (whs < 0) whs = 0;
@@ -2085,6 +2166,11 @@ void WebManager::handleUiSave() {
     if (tardisInteriorRgbColorText.length() == 7 && tardisInteriorRgbColorText[0] == '#') {
       _s->tardisInteriorRgbColor = (uint32_t)strtoul(tardisInteriorRgbColorText.c_str() + 1, nullptr, 16) & 0x00FFFFFFUL;
     }
+    _s->tardisExteriorRgbwMode = (uint8_t)tardisExteriorRgbwMode;
+    if (tardisExteriorRgbwColorText.length() == 7 && tardisExteriorRgbwColorText[0] == '#') {
+      _s->tardisExteriorRgbwColor = (uint32_t)strtoul(tardisExteriorRgbwColorText.c_str() + 1, nullptr, 16) & 0x00FFFFFFUL;
+    }
+    _s->tardisExteriorRgbwWhite = (uint8_t)tardisExteriorRgbwWhite;
   }
   _s->orangeAlertHoldMs = (uint32_t)whs * MS_PER_SECOND;
   _s->redAlertHoldMs = (uint32_t)chs * MS_PER_SECOND;
@@ -2104,10 +2190,11 @@ void WebManager::handleUiSave() {
   applyTouchNow(_s->touchEnabled != 0);
   applyTardisNow();
 
-  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d tardis=%d int=%d ext=%d intRgbMode=%d intRgbColor=#%06lX green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
+  Serial0.printf("[WEB] UI saved: backlight=%d touch=%d tardis=%d int=%d ext=%d intRgbMode=%d intRgbColor=#%06lX extRgbwMode=%d extRgbColor=#%06lX extW=%d green=%d orange=%d hist=%d page=%d fsm=%d mic=%s mode=%s warn=%ds crit=%ds cal=%ds\n",
                  bl, touchEnabled ? 1 : 0,
                  tardisModeEnabled ? 1 : 0, tardisInteriorLedEnabled ? 1 : 0, tardisExteriorLedEnabled ? 1 : 0,
                  tardisInteriorRgbMode, (unsigned long)(_s->tardisInteriorRgbColor & 0x00FFFFFFUL),
+                 tardisExteriorRgbwMode, (unsigned long)(_s->tardisExteriorRgbwColor & 0x00FFFFFFUL), tardisExteriorRgbwWhite,
                  g, o, hm, dashboardPage, dashboardFullscreenMask,
                  AudioEngine::sourceLabel(_s->audioSource),
                  AudioEngine::responseModeLabel(_s->audioResponseMode), whs, chs, ccs);
@@ -4828,6 +4915,23 @@ R"HTML(
                               </button>
                             </div>
                           </div>
+                          <div class="field" id="tardisExteriorRgbwModeField">
+                            <label for="tardisExteriorRgbwMode">Mode gyrophare</label>
+                            <select id="tardisExteriorRgbwMode">
+                              <option value="0">Alerte sonore</option>
+                              <option value="1">Couleur fixe</option>
+                            </select>
+                            <div class="hint">Alerte: vert, orange ou rouge selon le niveau du sonometre. Couleur fixe: teinte libre du gyrophare, avec un renfort blanc optionnel.</div>
+                          </div>
+                          <div class="field" id="tardisExteriorRgbwColorField">
+                            <label for="tardisExteriorRgbwColor">Couleur gyrophare</label>
+                            <input id="tardisExteriorRgbwColor" type="color" value="#7FD3FF">
+                          </div>
+                          <div class="field" id="tardisExteriorRgbwWhiteField">
+                            <label for="tardisExteriorRgbwWhite">Canal blanc</label>
+                            <input id="tardisExteriorRgbwWhite" type="range" min="0" max="255" step="1" value="48">
+                            <div class="hint"><span class="mono" id="tardisExteriorRgbwWhiteVal">48</span>/255 pour doser la partie blanche de la SK6812RGBW.</div>
+                          </div>
                         </div>
                         <div>
                           <div class="hint" id="tardisPinsHint">GPIO interieur -- / exterieur --. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.</div>
@@ -5551,8 +5655,12 @@ R"HTML(
     tardisInteriorLedPin: 15,
     tardisExteriorLedPin: 16,
     tardisInteriorRgbPin: 48,
+    tardisExteriorRgbwPin: 16,
     tardisInteriorRgbMode: 0,
     tardisInteriorRgbColor: 0x2D9CDB,
+    tardisExteriorRgbwMode: 0,
+    tardisExteriorRgbwColor: 0x7FD3FF,
+    tardisExteriorRgbwWhite: 48,
     tardisDirty: false,
     uiDirty: false,
     uiAudioSource: 1,
@@ -5671,17 +5779,23 @@ R"HTML(
     return `#${(numeric & 0xFFFFFF).toString(16).padStart(6, "0").toUpperCase()}`;
   }
 
+  function clampByte(value, fallback = 0) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(0, Math.min(255, Math.round(numeric)));
+  }
+
   function syncTardisUi() {
     setTardisSwitch("tardisModeEnabled", "tardisModeEnabledVal", state.tardisModeEnabled, "ACTIF");
     setTardisSwitch("tardisInteriorLedEnabled", "tardisInteriorLedEnabledVal", state.tardisInteriorLedEnabled, "ON");
     setTardisSwitch("tardisExteriorLedEnabled", "tardisExteriorLedEnabledVal", state.tardisExteriorLedEnabled, "ON");
 
     const pinsBadge = state.supportsTardisInteriorRgb
-      ? `RGB ${state.tardisInteriorRgbPin} / GPIO ${state.tardisExteriorLedPin}`
+      ? `RGB ${state.tardisInteriorRgbPin} / RGBW ${state.tardisExteriorRgbwPin || state.tardisExteriorLedPin}`
       : `GPIO ${state.tardisInteriorLedPin} / ${state.tardisExteriorLedPin}`;
     $("tardisPinsBadge").textContent = pinsBadge;
     $("tardisPinsHint").textContent = state.supportsTardisInteriorRgb
-      ? `LED RGB integree sur GPIO ${state.tardisInteriorRgbPin} pour l'interieur, GPIO exterieur ${state.tardisExteriorLedPin}. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.`
+      ? `LED RGB integree sur GPIO ${state.tardisInteriorRgbPin} pour l'interieur, SK6812RGBW exterieure sur GPIO ${state.tardisExteriorRgbwPin || state.tardisExteriorLedPin}. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.`
       : `GPIO interieur ${state.tardisInteriorLedPin} / exterieur ${state.tardisExteriorLedPin}. Broches dediees pour rester hors des pins micro 4, 11, 12 et 13.`;
 
     const ledsEnabled = Boolean(state.tardisModeEnabled);
@@ -5691,10 +5805,18 @@ R"HTML(
     $("tardisInteriorRgbColorField").style.display = state.supportsTardisInteriorRgb ? "" : "none";
     $("tardisInteriorRgbMode").value = String(Number(state.tardisInteriorRgbMode || 0));
     $("tardisInteriorRgbColor").value = tardisColorToHex(state.tardisInteriorRgbColor);
+    $("tardisExteriorRgbwMode").value = String(Number(state.tardisExteriorRgbwMode || 0));
+    $("tardisExteriorRgbwColor").value = tardisColorToHex(state.tardisExteriorRgbwColor);
+    $("tardisExteriorRgbwWhite").value = String(clampByte(state.tardisExteriorRgbwWhite, 48));
+    $("tardisExteriorRgbwWhiteVal").textContent = String(clampByte(state.tardisExteriorRgbwWhite, 48));
     $("tardisInteriorRgbMode").disabled = !ledsEnabled || !state.tardisInteriorLedEnabled;
     $("tardisInteriorRgbColor").disabled = !ledsEnabled
       || !state.tardisInteriorLedEnabled
       || Number(state.tardisInteriorRgbMode || 0) !== 1;
+    const exteriorFixedMode = Number(state.tardisExteriorRgbwMode || 0) === 1;
+    $("tardisExteriorRgbwMode").disabled = !ledsEnabled || !state.tardisExteriorLedEnabled;
+    $("tardisExteriorRgbwColor").disabled = !ledsEnabled || !state.tardisExteriorLedEnabled || !exteriorFixedMode;
+    $("tardisExteriorRgbwWhite").disabled = !ledsEnabled || !state.tardisExteriorLedEnabled || !exteriorFixedMode;
   }
 
   function sanitizeUsernameValue(value) {
@@ -6375,12 +6497,16 @@ R"HTML(
     if ("tardisInteriorLedPin" in merged) state.tardisInteriorLedPin = Number(merged.tardisInteriorLedPin ?? state.tardisInteriorLedPin ?? 15);
     if ("tardisExteriorLedPin" in merged) state.tardisExteriorLedPin = Number(merged.tardisExteriorLedPin ?? state.tardisExteriorLedPin ?? 16);
     if ("tardisInteriorRgbPin" in merged) state.tardisInteriorRgbPin = Number(merged.tardisInteriorRgbPin ?? state.tardisInteriorRgbPin ?? 48);
+    if ("tardisExteriorRgbwPin" in merged) state.tardisExteriorRgbwPin = Number(merged.tardisExteriorRgbwPin ?? state.tardisExteriorRgbwPin ?? 16);
     if (!state.tardisDirty) {
       if ("tardisModeEnabled" in merged) state.tardisModeEnabled = Boolean(merged.tardisModeEnabled);
       if ("tardisInteriorLedEnabled" in merged) state.tardisInteriorLedEnabled = Boolean(merged.tardisInteriorLedEnabled);
       if ("tardisExteriorLedEnabled" in merged) state.tardisExteriorLedEnabled = Boolean(merged.tardisExteriorLedEnabled);
       if ("tardisInteriorRgbMode" in merged) state.tardisInteriorRgbMode = Number(merged.tardisInteriorRgbMode ?? state.tardisInteriorRgbMode ?? 0);
       if ("tardisInteriorRgbColor" in merged) state.tardisInteriorRgbColor = Number(merged.tardisInteriorRgbColor ?? state.tardisInteriorRgbColor ?? 0x2D9CDB);
+      if ("tardisExteriorRgbwMode" in merged) state.tardisExteriorRgbwMode = Number(merged.tardisExteriorRgbwMode ?? state.tardisExteriorRgbwMode ?? 0);
+      if ("tardisExteriorRgbwColor" in merged) state.tardisExteriorRgbwColor = Number(merged.tardisExteriorRgbwColor ?? state.tardisExteriorRgbwColor ?? 0x7FD3FF);
+      if ("tardisExteriorRgbwWhite" in merged) state.tardisExteriorRgbwWhite = clampByte(merged.tardisExteriorRgbwWhite ?? state.tardisExteriorRgbwWhite ?? 48, 48);
       syncTardisUi();
     }
 
@@ -7078,6 +7204,9 @@ R"HTML(
       tardisExteriorLedEnabled: state.tardisExteriorLedEnabled,
       tardisInteriorRgbMode: Number(state.tardisInteriorRgbMode || 0),
       tardisInteriorRgbColorHex: $("tardisInteriorRgbColor").value || "#2D9CDB",
+      tardisExteriorRgbwMode: Number(state.tardisExteriorRgbwMode || 0),
+      tardisExteriorRgbwColorHex: $("tardisExteriorRgbwColor").value || "#7FD3FF",
+      tardisExteriorRgbwWhite: clampByte($("tardisExteriorRgbwWhite").value, 48),
     };
 
     try {
@@ -8013,6 +8142,25 @@ R"HTML(
   $("tardisInteriorRgbColor").addEventListener("input", () => {
     const value = $("tardisInteriorRgbColor").value || "#2D9CDB";
     state.tardisInteriorRgbColor = Number.parseInt(value.slice(1), 16) || 0x2D9CDB;
+    state.tardisDirty = true;
+  });
+
+  $("tardisExteriorRgbwMode").addEventListener("change", () => {
+    state.tardisExteriorRgbwMode = Number($("tardisExteriorRgbwMode").value || 0);
+    state.tardisDirty = true;
+    syncTardisUi();
+  });
+
+  $("tardisExteriorRgbwColor").addEventListener("input", () => {
+    const value = $("tardisExteriorRgbwColor").value || "#7FD3FF";
+    state.tardisExteriorRgbwColor = Number.parseInt(value.slice(1), 16) || 0x7FD3FF;
+    state.tardisDirty = true;
+  });
+
+  $("tardisExteriorRgbwWhite").addEventListener("input", () => {
+    const value = clampByte($("tardisExteriorRgbwWhite").value, 48);
+    state.tardisExteriorRgbwWhite = value;
+    $("tardisExteriorRgbwWhiteVal").textContent = String(value);
     state.tardisDirty = true;
   });
 

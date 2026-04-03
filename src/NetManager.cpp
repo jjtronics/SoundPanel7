@@ -34,8 +34,6 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   _legacyCredentialTried = false;
   rebuildSetupApName();
 
-  configureHostname();
-
   WiFi.onEvent([this](WiFiEvent_t event, arduino_event_info_t info) {
     switch (event) {
       case ARDUINO_EVENT_WIFI_STA_CONNECTED:
@@ -67,10 +65,7 @@ bool NetManager::begin(SettingsV1* settings, SettingsStore* store) {
   g_wm.setConnectTimeout(20);          // sec
   g_wm.setConfigPortalTimeout(0);      // 0 = jamais timeout du portal
 
-  WiFi.mode(WIFI_STA);
-  WiFi.persistent(false);
-  WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);
+  applyHostnameAndMode(WIFI_STA);
 
   _ntpConfigured = false;
   migrateLegacyCredentialIfNeeded();
@@ -85,6 +80,29 @@ void NetManager::configureHostname() {
   const char* hostname = (_s && _s->hostname[0] != '\0') ? _s->hostname : kDefaultHostname;
   WiFi.setHostname(hostname);
   g_wm.setHostname(hostname);
+}
+
+bool NetManager::applyHostnameAndMode(wifi_mode_t mode) {
+  const wifi_mode_t currentMode = WiFi.getMode();
+  if (currentMode != WIFI_MODE_NULL) {
+    WiFi.disconnect(false, false);
+    if (!WiFi.mode(WIFI_MODE_NULL)) {
+      Serial0.printf("[Net] Failed to stop WiFi before hostname apply (mode=%d)\n", (int)currentMode);
+      return false;
+    }
+  }
+
+  configureHostname();
+
+  if (!WiFi.mode(mode)) {
+    Serial0.printf("[Net] Failed to restore WiFi mode=%d after hostname apply\n", (int)mode);
+    return false;
+  }
+
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  return true;
 }
 
 void NetManager::logStoredWifiCredentials(const char* label) const {
@@ -138,12 +156,11 @@ void NetManager::startConfigPortal() {
   if (g_wm.getConfigPortalActive()) return;
   if (_configPortalStateCallback) _configPortalStateCallback(true);
   const char* apName = setupApName();
+  applyHostnameAndMode(WIFI_AP_STA);
   Serial0.printf("[Net] Starting WiFi portal '%s'\n", apName);
   g_wm.startConfigPortal(apName);
   if (g_wm.getConfigPortalActive()) {
-    WiFi.mode(WIFI_AP_STA);
     WiFi.enableSTA(true);
-    configureHostname();
     Serial0.println("[Net] WiFi portal running with STA retries enabled");
   }
   if (!g_wm.getConfigPortalActive() && _configPortalStateCallback) {
@@ -169,9 +186,7 @@ void NetManager::reloadWifiConfig() {
     if (_configPortalStateCallback) _configPortalStateCallback(false);
   }
 
-  if (WiFi.getMode() != WIFI_STA) {
-    WiFi.mode(WIFI_STA);
-  }
+  applyHostnameAndMode(WIFI_STA);
 
   bool currentConnectionManaged = false;
   if (isWifiConnected() && _s) {

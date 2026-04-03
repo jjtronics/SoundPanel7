@@ -75,8 +75,15 @@ private:
     SOUNDPANEL7_TARDIS_INTERIOR_RGB_PIN,
     NEO_GRB + NEO_KHZ800
   );
+  Adafruit_NeoPixel _tardisExteriorRgbw = Adafruit_NeoPixel(
+    SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_PIXEL_COUNT,
+    SOUNDPANEL7_TARDIS_EXTERIOR_RGBW_PIN,
+    NEO_GRBW + NEO_KHZ800
+  );
   bool _tardisInteriorRgbReady = false;
+  bool _tardisExteriorRgbwReady = false;
   uint32_t _tardisInteriorRgbAppliedColor = 0xFFFFFFFFUL;
+  uint32_t _tardisExteriorRgbwAppliedColor = 0xFFFFFFFFUL;
   uint32_t _tardisAnimationCycleStartMs = 0;
   uint32_t _tardisAnimationLastFrameMs = 0;
   uint8_t _tardisAnimationMode = 0xFF;
@@ -177,8 +184,11 @@ private:
   void applyTardisNow();
   void applyTardisPinNow(uint8_t pin, bool enabled, const char* label);
   void ensureTardisInteriorRgbReady();
+  void ensureTardisExteriorRgbwReady();
   void applyTardisInteriorRgbColor(uint32_t color);
+  void applyTardisExteriorRgbwColor(uint32_t color);
   uint32_t tardisInteriorRgbColorForCurrentState() const;
+  uint32_t tardisExteriorRgbwColorForCurrentState() const;
   void updateTardisAnimationNow(bool force = false);
   void applySettingsRuntimeState();
   void saveSettingsThreadSafe();  // SECURITY: Mutex-protected settings save (MED-02)

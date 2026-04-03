@@ -4,7 +4,7 @@
 #include "AppConfig.h"
 
 static constexpr uint32_t SETTINGS_MAGIC   = 0x53503730; // "SP70"
-static constexpr uint16_t SETTINGS_VERSION = 8;
+static constexpr uint16_t SETTINGS_VERSION = 9;
 static constexpr uint32_t MS_PER_SECOND = 1000UL;
 static constexpr uint32_t MS_PER_MINUTE = 60UL * MS_PER_SECOND;
 static constexpr uint32_t DEFAULT_NTP_SYNC_INTERVAL_MS = 10800000UL; // 3h, valeur par defaut ESP32
@@ -64,6 +64,11 @@ static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_TAKEOFF_MECHANICAL = TARDIS_IN
 static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_TAKEOFF_SINE = 3;
 static constexpr uint8_t TARDIS_INTERIOR_RGB_MODE_MAX = TARDIS_INTERIOR_RGB_MODE_TAKEOFF_SINE;
 static constexpr uint32_t TARDIS_INTERIOR_RGB_DEFAULT_COLOR = 0x2D9CDBUL;
+static constexpr uint8_t TARDIS_EXTERIOR_RGBW_MODE_ALERT = 0;
+static constexpr uint8_t TARDIS_EXTERIOR_RGBW_MODE_FIXED = 1;
+static constexpr uint8_t TARDIS_EXTERIOR_RGBW_MODE_MAX = TARDIS_EXTERIOR_RGBW_MODE_FIXED;
+static constexpr uint32_t TARDIS_EXTERIOR_RGBW_DEFAULT_COLOR = 0x7FD3FFUL;
+static constexpr uint8_t TARDIS_EXTERIOR_RGBW_DEFAULT_WHITE = 48;
 static constexpr uint8_t ALERT_NOTIFY_LEVEL_CRITICAL = 0;
 static constexpr uint8_t ALERT_NOTIFY_LEVEL_WARNING = 1;
 static constexpr uint8_t DASHBOARD_PAGE_OVERVIEW = 0;
@@ -196,6 +201,9 @@ struct SettingsV1 {
   uint8_t tardisExteriorLedEnabled = 0;
   uint8_t tardisInteriorRgbMode = TARDIS_INTERIOR_RGB_MODE_ALERT;
   uint32_t tardisInteriorRgbColor = TARDIS_INTERIOR_RGB_DEFAULT_COLOR;
+  uint8_t tardisExteriorRgbwMode = TARDIS_EXTERIOR_RGBW_MODE_ALERT;
+  uint32_t tardisExteriorRgbwColor = TARDIS_EXTERIOR_RGBW_DEFAULT_COLOR;
+  uint8_t tardisExteriorRgbwWhite = TARDIS_EXTERIOR_RGBW_DEFAULT_WHITE;
   char dashboardPin[PIN_STORAGE_MAX_LENGTH + 1] = "";
   char homeAssistantToken[HOME_ASSISTANT_TOKEN_MAX_LENGTH + 1] = "";
 

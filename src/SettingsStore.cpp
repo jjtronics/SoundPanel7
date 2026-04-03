@@ -713,6 +713,9 @@ void SettingsStore::load(SettingsV1 &out) {
   out.tardisExteriorLedEnabled = (uint8_t)_prefs.getUChar("td_ex", out.tardisExteriorLedEnabled);
   out.tardisInteriorRgbMode = (uint8_t)_prefs.getUChar("td_im", out.tardisInteriorRgbMode);
   out.tardisInteriorRgbColor = _prefs.getUInt("td_ic", out.tardisInteriorRgbColor);
+  out.tardisExteriorRgbwMode = (uint8_t)_prefs.getUChar("td_em", out.tardisExteriorRgbwMode);
+  out.tardisExteriorRgbwColor = _prefs.getUInt("td_ec", out.tardisExteriorRgbwColor);
+  out.tardisExteriorRgbwWhite = (uint8_t)_prefs.getUChar("td_ew", out.tardisExteriorRgbwWhite);
   _prefs.getString("ui_pin", out.dashboardPin, sizeof(out.dashboardPin));
   const bool pinMigrated = out.dashboardPin[0]
     && !isPinHashRecord(out.dashboardPin)
@@ -931,6 +934,9 @@ void SettingsStore::save(const SettingsV1 &s) {
   _prefs.putUChar("td_ex", persisted.tardisExteriorLedEnabled);
   _prefs.putUChar("td_im", persisted.tardisInteriorRgbMode);
   _prefs.putUInt("td_ic", persisted.tardisInteriorRgbColor);
+  _prefs.putUChar("td_em", persisted.tardisExteriorRgbwMode);
+  _prefs.putUInt("td_ec", persisted.tardisExteriorRgbwColor);
+  _prefs.putUChar("td_ew", persisted.tardisExteriorRgbwWhite);
   char dashboardPin[sizeof(persisted.dashboardPin)] = {0};
   if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(persisted.dashboardPin))
       && normalizePinStorage(dashboardPin, sizeof(dashboardPin))) {
@@ -1038,6 +1044,9 @@ void SettingsStore::saveRuntimeSettings(const SettingsV1& s) {
   _prefs.putUChar("td_ex", persisted.tardisExteriorLedEnabled);
   _prefs.putUChar("td_im", persisted.tardisInteriorRgbMode);
   _prefs.putUInt("td_ic", persisted.tardisInteriorRgbColor);
+  _prefs.putUChar("td_em", persisted.tardisExteriorRgbwMode);
+  _prefs.putUInt("td_ec", persisted.tardisExteriorRgbwColor);
+  _prefs.putUChar("td_ew", persisted.tardisExteriorRgbwWhite);
 
   _prefs.putUChar("a_src", persisted.audioSource);
   _prefs.putUShort("a_rms", persisted.analogRmsSamples);
@@ -1237,6 +1246,10 @@ void SettingsStore::sanitize(SettingsV1& s) {
     s.tardisInteriorRgbMode = TARDIS_INTERIOR_RGB_MODE_ALERT;
   }
   s.tardisInteriorRgbColor &= 0x00FFFFFFUL;
+  if (s.tardisExteriorRgbwMode > TARDIS_EXTERIOR_RGBW_MODE_MAX) {
+    s.tardisExteriorRgbwMode = TARDIS_EXTERIOR_RGBW_MODE_ALERT;
+  }
+  s.tardisExteriorRgbwColor &= 0x00FFFFFFUL;
 
   if (s.orangeAlertHoldMs > MAX_ALERT_HOLD_MS) s.orangeAlertHoldMs = MAX_ALERT_HOLD_MS;
   if (s.redAlertHoldMs > MAX_ALERT_HOLD_MS) s.redAlertHoldMs = MAX_ALERT_HOLD_MS;
@@ -1548,6 +1561,9 @@ String SettingsStore::exportJson(const SettingsV1& s, SecretExportMode secretMod
   json += "\"tardisExteriorLedEnabled\":"; json += (s.tardisExteriorLedEnabled ? "true" : "false"); json += ",";
   json += "\"tardisInteriorRgbMode\":"; json += String(s.tardisInteriorRgbMode); json += ",";
   json += "\"tardisInteriorRgbColor\":"; json += String(s.tardisInteriorRgbColor); json += ",";
+  json += "\"tardisExteriorRgbwMode\":"; json += String(s.tardisExteriorRgbwMode); json += ",";
+  json += "\"tardisExteriorRgbwColor\":"; json += String(s.tardisExteriorRgbwColor); json += ",";
+  json += "\"tardisExteriorRgbwWhite\":"; json += String(s.tardisExteriorRgbwWhite); json += ",";
   if (includeSecrets) {
     char dashboardPin[sizeof(s.dashboardPin)] = {0};
     if (sp7json::safeCopy(dashboardPin, sizeof(dashboardPin), String(s.dashboardPin))) {
@@ -1785,6 +1801,9 @@ bool SettingsStore::importJson(SettingsV1& s, const String& json, String* err) {
   next.tardisExteriorLedEnabled = sp7json::parseBool(json, "tardisExteriorLedEnabled", next.tardisExteriorLedEnabled != 0) ? 1 : 0;
   next.tardisInteriorRgbMode = (uint8_t)sp7json::parseInt(json, "tardisInteriorRgbMode", next.tardisInteriorRgbMode);
   next.tardisInteriorRgbColor = (uint32_t)sp7json::parseInt(json, "tardisInteriorRgbColor", (int)next.tardisInteriorRgbColor);
+  next.tardisExteriorRgbwMode = (uint8_t)sp7json::parseInt(json, "tardisExteriorRgbwMode", next.tardisExteriorRgbwMode);
+  next.tardisExteriorRgbwColor = (uint32_t)sp7json::parseInt(json, "tardisExteriorRgbwColor", (int)next.tardisExteriorRgbwColor);
+  next.tardisExteriorRgbwWhite = (uint8_t)sp7json::parseInt(json, "tardisExteriorRgbwWhite", next.tardisExteriorRgbwWhite);
   String dashboardPin = sp7json::parseString(json, "dashboardPin", String(next.dashboardPin));
   String homeAssistantToken = sp7json::parseString(json, "homeAssistantToken", String(next.homeAssistantToken));
 
@@ -2156,6 +2175,9 @@ bool SettingsStore::resetSection(SettingsV1& s, const String& scope, String* err
     s.tardisExteriorLedEnabled = def.tardisExteriorLedEnabled;
     s.tardisInteriorRgbMode = def.tardisInteriorRgbMode;
     s.tardisInteriorRgbColor = def.tardisInteriorRgbColor;
+    s.tardisExteriorRgbwMode = def.tardisExteriorRgbwMode;
+    s.tardisExteriorRgbwColor = def.tardisExteriorRgbwColor;
+    s.tardisExteriorRgbwWhite = def.tardisExteriorRgbwWhite;
     s.audioResponseMode = def.audioResponseMode;
   } else if (scope == "security") {
     memcpy(s.dashboardPin, def.dashboardPin, sizeof(s.dashboardPin));

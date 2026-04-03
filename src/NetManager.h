@@ -49,6 +49,7 @@ private:
   void ensureWifiConnection(bool force = false);
   void startConfigPortal();
   void configureHostname();
+  bool applyHostnameAndMode(wifi_mode_t mode);
   void logStoredWifiCredentials(const char* label) const;
   void migrateLegacyCredentialIfNeeded();
   void onPortalWifiSaved();
