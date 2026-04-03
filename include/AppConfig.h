@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-#define SOUNDPANEL7_VERSION "0.2.23"
+#define SOUNDPANEL7_VERSION "0.2.24"
 #define SOUNDPANEL7_BUILD_DATE __DATE__ " " __TIME__
 
 #ifndef SOUNDPANEL7_BUILD_ENV
